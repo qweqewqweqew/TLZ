@@ -1,11 +1,14 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
+#include "ElaAppBar.h"
 #include "ElaIconButton.h"
 #include "ElaMessageBar.h"
 #include "ElaPlainTextEdit.h"
 #include "ElaProgressBar.h"
+#include "ElaPushButton.h"
 #include "ElaStatusBar.h"
+#include "ElaText.h"
 
 #include <QDateTime>
 #include <QFrame>
@@ -39,9 +42,20 @@ QString pillStyle(const QString &state)
 
 QLabel *makeLabel(const QString &text, const QString &objectName = QString())
 {
-    auto *label = new QLabel(text);
+    auto *label = new ElaText(text);
     if (!objectName.isEmpty()) {
         label->setObjectName(objectName);
+    }
+    if (objectName == "systemTitle") {
+        label->setTextPixelSize(22);
+    } else if (objectName == "largeValue") {
+        label->setTextPixelSize(22);
+    } else if (objectName == "panelTitle") {
+        label->setTextPixelSize(16);
+    } else if (objectName == "sectionHint") {
+        label->setTextPixelSize(12);
+    } else {
+        label->setTextPixelSize(14);
     }
     label->setTextInteractionFlags(Qt::NoTextInteraction);
     return label;
@@ -150,12 +164,14 @@ void MainWindow::buildMainView()
         }
     )").arg(kPanelRadius));
 
-    auto *topBar = createPanel("系统总览");
-    topBar->setFixedHeight(82);
-    auto *topPanelLayout = qobject_cast<QVBoxLayout *>(topBar->layout());
+    auto *appBar = new ElaAppBar(root);
+    appBar->setFixedHeight(72);
+    appBar->setWindowButtonFlags(ElaAppBarType::NoneButtonHint);
+    auto *topContent = new QWidget(appBar);
     auto *topStatusLayout = new QHBoxLayout();
-    topStatusLayout->setContentsMargins(0, 0, 0, 0);
-    topStatusLayout->setSpacing(8);
+    topContent->setLayout(topStatusLayout);
+    topStatusLayout->setContentsMargins(10, 0, 10, 0);
+    topStatusLayout->setSpacing(10);
     topStatusLayout->addWidget(makeLabel("铜粒子打磨系统", "systemTitle"));
     topStatusLayout->addSpacing(14);
     topStatusLayout->addWidget(createStatusPill("设备：待机", "ok"));
@@ -165,12 +181,18 @@ void MainWindow::buildMainView()
     topStatusLayout->addStretch();
     topStatusLayout->addWidget(makeLabel(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"), "largeValue"));
 
-    auto *refreshButton = new ElaIconButton(ElaIconType::ArrowsRotate, 17, 34, 34, topBar);
+    auto *connectButton = new ElaPushButton("连接后端", appBar);
+    connectButton->setFixedSize(86, 34);
+    auto *alarmButton = new ElaPushButton("报警确认", appBar);
+    alarmButton->setFixedSize(86, 34);
+    auto *refreshButton = new ElaIconButton(ElaIconType::ArrowsRotate, 17, 34, 34, appBar);
     refreshButton->setToolTip("刷新显示状态");
+    topStatusLayout->addWidget(connectButton);
+    topStatusLayout->addWidget(alarmButton);
     topStatusLayout->addWidget(refreshButton);
 
-    topPanelLayout->addLayout(topStatusLayout);
-    rootLayout->addWidget(topBar);
+    appBar->setCustomWidget(ElaAppBarType::MiddleArea, topContent);
+    rootLayout->addWidget(appBar);
 
     auto *centerLayout = new QHBoxLayout();
     centerLayout->setSpacing(10);
@@ -262,6 +284,9 @@ void MainWindow::buildMainView()
     logToolbar->addWidget(createStatusPill("报警：0", "ok"));
     logToolbar->addWidget(createStatusPill("事件：3", "running"));
     logToolbar->addStretch();
+    auto *exportLogButton = new ElaPushButton("导出日志", bottomPanel);
+    exportLogButton->setFixedSize(82, 32);
+    logToolbar->addWidget(exportLogButton);
     auto *clearLogButton = new ElaIconButton(ElaIconType::TrashCan, 16, 32, 32, bottomPanel);
     clearLogButton->setToolTip("清空日志显示");
     logToolbar->addWidget(clearLogButton);
@@ -277,6 +302,15 @@ void MainWindow::buildMainView()
     rootLayout->addWidget(bottomPanel);
 
     connect(clearLogButton, &QPushButton::clicked, eventLog, &QPlainTextEdit::clear);
+    connect(connectButton, &QPushButton::clicked, this, [this]() {
+        ElaMessageBar::warning(ElaMessageBarType::BottomRight, "后端连接", "当前尚未接入真实通讯模块。", 2200, this);
+    });
+    connect(alarmButton, &QPushButton::clicked, this, [this]() {
+        ElaMessageBar::success(ElaMessageBarType::BottomRight, "报警确认", "当前无待确认报警。", 1800, this);
+    });
+    connect(exportLogButton, &QPushButton::clicked, this, [this]() {
+        ElaMessageBar::information(ElaMessageBarType::BottomRight, "日志导出", "当前为界面预览，导出功能后续接入。", 2200, this);
+    });
     connect(refreshButton, &QPushButton::clicked, this, [this]() {
         ElaMessageBar::information(ElaMessageBarType::BottomRight, "状态刷新", "当前为静态界面预览，后端通讯尚未接入。", 2200, this);
     });
