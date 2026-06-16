@@ -23,26 +23,26 @@
 namespace {
 
 constexpr int kPanelRadius = 8;
-const QColor kButtonDefault("#167360");
-const QColor kButtonHover("#1d8b75");
-const QColor kButtonPress("#115f50");
-const QColor kButtonText("#f5fffb");
+const QColor kButtonDefault("#2f6fb8");
+const QColor kButtonHover("#3b7ccc");
+const QColor kButtonPress("#275da0");
+const QColor kButtonText("#f7fbff");
 
 QString pillStyle(const QString &state)
 {
     if (state == "ok") {
-        return "background:#18342d;color:#bfe6d8;border:1px solid #2f7d65;";
+        return "background:#dceaff;color:#245b93;border:1px solid #86abd6;";
     }
     if (state == "running") {
-        return "background:#1b3132;color:#c8ece5;border:1px solid #3b8377;";
+        return "background:#d7e9fb;color:#1f5c96;border:1px solid #7ca3d5;";
     }
     if (state == "warn") {
-        return "background:#3a3424;color:#efe1b5;border:1px solid #8a7634;";
+        return "background:#edf4ff;color:#48698f;border:1px solid #9ab6d9;";
     }
     if (state == "error") {
-        return "background:#3a2729;color:#f1c5c9;border:1px solid #9a4d56;";
+        return "background:#dde8f8;color:#35577e;border:1px solid #7d9cc1;";
     }
-    return "background:#242a2d;color:#cbd3cf;border:1px solid #46504b;";
+    return "background:#e8f1fc;color:#4a678a;border:1px solid #95b0d1;";
 }
 
 QLabel *makeLabel(const QString &text, const QString &objectName = QString())
@@ -131,65 +131,65 @@ void MainWindow::buildMainView()
 
     setStyleSheet(QString(R"(
         QMainWindow {
-            background: #151817;
+            background: #eef4fb;
         }
         QWidget {
             font-family: "Microsoft YaHei";
             font-size: 14px;
-            color: #e3e9e5;
+            color: #18324f;
         }
         QFrame#panel {
-            background: #1d2220;
-            border: 1px solid #343b37;
+            background: #f7fbff;
+            border: 1px solid #244f87;
             border-radius: %1px;
         }
         QLabel#panelTitle {
-            color: #f4f7f5;
+            color: #15365d;
             font-size: 15px;
             font-weight: 600;
         }
         QLabel#systemTitle {
-            color: #ffffff;
+            color: #143a66;
             font-size: 20px;
             font-weight: 700;
         }
         QLabel#sectionHint {
-            color: #8d9a94;
+            color: #5f7696;
             font-size: 12px;
         }
         QLabel#largeValue {
-            color: #ffffff;
+            color: #143a66;
             font-size: 22px;
             font-weight: 600;
         }
         QLabel#metricName {
-            color: #a9b4ae;
+            color: #5c7492;
         }
         QLabel#metricValue {
-            color: #f4f7f5;
+            color: #15365d;
             font-weight: 600;
         }
         QLabel#imageMainText {
-            color: #89958f;
+            color: #5477a0;
             font-size: 21px;
             font-weight: 600;
         }
         QLabel#imageSubText {
-            color: #6f7d76;
+            color: #6b85a8;
             font-size: 13px;
         }
         ElaPlainTextEdit {
-            background: #111513;
-            color: #dce5e0;
-            border: 1px solid #343d38;
+            background: #f9fcff;
+            color: #18324f;
+            border: 1px solid #244f87;
             border-radius: 6px;
             padding: 8px;
-            selection-background-color: #167360;
+            selection-background-color: #b9d6f5;
         }
         QStatusBar {
-            background: #1a1f1d;
-            color: #aeb8b2;
-            border-top: 1px solid #303832;
+            background: #e2edf9;
+            color: #4a678a;
+            border-top: 1px solid #244f87;
         }
     )").arg(kPanelRadius));
 
@@ -261,8 +261,8 @@ void MainWindow::buildMainView()
     imageArea->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     imageArea->setStyleSheet(R"(
         QFrame#imageArea {
-            background: #121614;
-            border: 1px solid #3a433e;
+            background: #edf4fc;
+            border: 1px solid #244f87;
             border-radius: 6px;
         }
     )");
