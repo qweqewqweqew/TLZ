@@ -118,13 +118,17 @@ void MainWindow::buildMainView()
 
     auto *topBar = createPanel("顶部状态栏");
     topBar->setFixedHeight(74);
-    auto *topLayout = qobject_cast<QHBoxLayout *>(topBar->layout());
-    topLayout->addWidget(createStatusPill("设备：待机", "ok"));
-    topLayout->addWidget(createStatusPill("后端：已连接", "ok"));
-    topLayout->addWidget(createStatusPill("共享内存：等待图像", "warn"));
-    topLayout->addWidget(createStatusPill("当前任务：TLZ-0001", "running"));
-    topLayout->addStretch();
-    topLayout->addWidget(makeLabel(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"), "largeValue"));
+    auto *topPanelLayout = qobject_cast<QVBoxLayout *>(topBar->layout());
+    auto *topStatusLayout = new QHBoxLayout();
+    topStatusLayout->setContentsMargins(0, 0, 0, 0);
+    topStatusLayout->setSpacing(8);
+    topStatusLayout->addWidget(createStatusPill("设备：待机", "ok"));
+    topStatusLayout->addWidget(createStatusPill("后端：已连接", "ok"));
+    topStatusLayout->addWidget(createStatusPill("共享内存：等待图像", "warn"));
+    topStatusLayout->addWidget(createStatusPill("当前任务：TLZ-0001", "running"));
+    topStatusLayout->addStretch();
+    topStatusLayout->addWidget(makeLabel(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"), "largeValue"));
+    topPanelLayout->addLayout(topStatusLayout);
     rootLayout->addWidget(topBar);
 
     auto *centerLayout = new QHBoxLayout();
