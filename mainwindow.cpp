@@ -23,26 +23,26 @@
 namespace {
 
 constexpr int kPanelRadius = 8;
-const QColor kButtonDefault("#2f6fb8");
-const QColor kButtonHover("#3b7ccc");
-const QColor kButtonPress("#275da0");
+const QColor kButtonDefault("#2F6F9F");
+const QColor kButtonHover("#3A7FB3");
+const QColor kButtonPress("#255A83");
 const QColor kButtonText("#f7fbff");
 
 QString pillStyle(const QString &state)
 {
     if (state == "ok") {
-        return "background:#dceaff;color:#245b93;border:1px solid #86abd6;";
+        return "background:#E6F0F8;color:#245C7F;border:1px solid #8CAFC9;";
     }
     if (state == "running") {
-        return "background:#d7e9fb;color:#1f5c96;border:1px solid #7ca3d5;";
+        return "background:#DDEBF6;color:#235A82;border:1px solid #7FA8C6;";
     }
     if (state == "warn") {
-        return "background:#edf4ff;color:#48698f;border:1px solid #9ab6d9;";
+        return "background:#F1F4F7;color:#5F7182;border:1px solid #A7B6C4;";
     }
     if (state == "error") {
-        return "background:#dde8f8;color:#35577e;border:1px solid #7d9cc1;";
+        return "background:#F3E8EA;color:#8A3440;border:1px solid #C38A92;";
     }
-    return "background:#e8f1fc;color:#4a678a;border:1px solid #95b0d1;";
+    return "background:#EEF3F7;color:#667789;border:1px solid #A8B7C5;";
 }
 
 QLabel *makeLabel(const QString &text, const QString &objectName = QString())
@@ -53,6 +53,8 @@ QLabel *makeLabel(const QString &text, const QString &objectName = QString())
     }
     if (objectName == "systemTitle") {
         label->setTextPixelSize(22);
+    } else if (objectName == "topTime") {
+        label->setTextPixelSize(18);
     } else if (objectName == "largeValue") {
         label->setTextPixelSize(22);
     } else if (objectName == "panelTitle") {
@@ -131,72 +133,79 @@ void MainWindow::buildMainView()
 
     setStyleSheet(QString(R"(
         QMainWindow {
-            background: #eef4fb;
+            background: #E9EEF3;
         }
         QWidget {
             font-family: "Microsoft YaHei";
             font-size: 14px;
-            color: #18324f;
+            color: #1F2F3D;
         }
         QFrame#panel {
-            background: #f7fbff;
-            border: 1px solid #244f87;
+            background: #F7F9FB;
+            border: 1px solid #2F5F8F;
             border-radius: %1px;
         }
         QLabel#panelTitle {
-            color: #15365d;
+            color: #1F2F3D;
             font-size: 15px;
             font-weight: 600;
         }
         QLabel#systemTitle {
-            color: #143a66;
+            color: #F7F9FB;
             font-size: 20px;
             font-weight: 700;
         }
+        QLabel#topTime {
+            color: #F7F9FB;
+            font-size: 18px;
+            font-weight: 600;
+        }
         QLabel#sectionHint {
-            color: #5f7696;
+            color: #667789;
             font-size: 12px;
         }
         QLabel#largeValue {
-            color: #143a66;
+            color: #1F2F3D;
             font-size: 22px;
             font-weight: 600;
         }
         QLabel#metricName {
-            color: #5c7492;
+            color: #667789;
         }
         QLabel#metricValue {
-            color: #15365d;
+            color: #1F2F3D;
             font-weight: 600;
         }
         QLabel#imageMainText {
-            color: #5477a0;
+            color: #667789;
             font-size: 21px;
             font-weight: 600;
         }
         QLabel#imageSubText {
-            color: #6b85a8;
+            color: #667789;
             font-size: 13px;
         }
         ElaPlainTextEdit {
-            background: #f9fcff;
-            color: #18324f;
-            border: 1px solid #244f87;
+            background: #F4F7FA;
+            color: #1F2F3D;
+            border: 1px solid #2F5F8F;
             border-radius: 6px;
             padding: 8px;
-            selection-background-color: #b9d6f5;
+            selection-background-color: #C8DAEA;
         }
         QStatusBar {
-            background: #e2edf9;
-            color: #4a678a;
-            border-top: 1px solid #244f87;
+            background: #DDE6EE;
+            color: #667789;
+            border-top: 1px solid #2F5F8F;
         }
     )").arg(kPanelRadius));
 
     auto *appBar = new ElaAppBar(root);
     appBar->setFixedHeight(72);
+    appBar->setStyleSheet("#ElaAppBar{background:#24496F;border:1px solid #2F5F8F;border-radius:8px;}");
     appBar->setWindowButtonFlags(ElaAppBarType::NoneButtonHint);
     auto *topContent = new QWidget(appBar);
+    topContent->setStyleSheet("background:transparent;");
     auto *topStatusLayout = new QHBoxLayout();
     topContent->setLayout(topStatusLayout);
     topStatusLayout->setContentsMargins(10, 0, 10, 0);
@@ -208,7 +217,7 @@ void MainWindow::buildMainView()
     topStatusLayout->addWidget(createStatusPill("PLC：未连接", "warn"));
     topStatusLayout->addWidget(createStatusPill("共享内存：等待图像", "idle"));
     topStatusLayout->addStretch();
-    topStatusLayout->addWidget(makeLabel(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"), "largeValue"));
+    topStatusLayout->addWidget(makeLabel(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"), "topTime"));
 
     auto *connectButton = new ElaPushButton("连接后端", appBar);
     connectButton->setFixedSize(86, 34);
@@ -261,8 +270,8 @@ void MainWindow::buildMainView()
     imageArea->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     imageArea->setStyleSheet(R"(
         QFrame#imageArea {
-            background: #edf4fc;
-            border: 1px solid #244f87;
+            background: #F4F7FA;
+            border: 1px solid #2F5F8F;
             border-radius: 6px;
         }
     )");
