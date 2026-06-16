@@ -80,3 +80,10 @@ CMakeLists.txt.user*
 .rcc/
 .uic/
 /build*/
+
+# Vendored ElaWidgetTools: keep the library source, ignore examples and preview assets.
+/ElaWidgetTools-main/ElaWidgetTools-main/*
+!/ElaWidgetTools-main/ElaWidgetTools-main/LICENSE
+!/ElaWidgetTools-main/ElaWidgetTools-main/README.md
+!/ElaWidgetTools-main/ElaWidgetTools-main/ElaWidgetTools/
+!/ElaWidgetTools-main/ElaWidgetTools-main/ElaWidgetTools/**

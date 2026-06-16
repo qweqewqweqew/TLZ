@@ -1,35 +1,40 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
+#include "ElaIconButton.h"
+#include "ElaMessageBar.h"
+#include "ElaPlainTextEdit.h"
+#include "ElaProgressBar.h"
+#include "ElaStatusBar.h"
+
 #include <QDateTime>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QListWidget>
 #include <QSizePolicy>
-#include <QSpacerItem>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace {
 
-constexpr int kPanelRadius = 6;
+constexpr int kPanelRadius = 8;
 
 QString pillStyle(const QString &state)
 {
     if (state == "ok") {
-        return "background:#1f7a4d;color:#ffffff;border:1px solid #2aa365;";
+        return "background:#0f5132;color:#d1fae5;border:1px solid #198754;";
     }
     if (state == "running") {
-        return "background:#1d5f96;color:#ffffff;border:1px solid #2a7fc4;";
+        return "background:#123c69;color:#dbeafe;border:1px solid #2563eb;";
     }
     if (state == "warn") {
-        return "background:#8a6418;color:#ffffff;border:1px solid #c08a21;";
+        return "background:#5f4313;color:#fef3c7;border:1px solid #b7791f;";
     }
     if (state == "error") {
-        return "background:#8a2d2d;color:#ffffff;border:1px solid #c94747;";
+        return "background:#651f2a;color:#fee2e2;border:1px solid #dc3545;";
     }
-    return "background:#293342;color:#d9e2ec;border:1px solid #465569;";
+    return "background:#263241;color:#cbd5e1;border:1px solid #405064;";
 }
 
 QLabel *makeLabel(const QString &text, const QString &objectName = QString())
@@ -40,6 +45,16 @@ QLabel *makeLabel(const QString &text, const QString &objectName = QString())
     }
     label->setTextInteractionFlags(Qt::NoTextInteraction);
     return label;
+}
+
+ElaProgressBar *makeProgressBar(int value)
+{
+    auto *bar = new ElaProgressBar();
+    bar->setRange(0, 100);
+    bar->setValue(value);
+    bar->setTextVisible(false);
+    bar->setFixedHeight(8);
+    return bar;
 }
 
 } // namespace
@@ -62,17 +77,18 @@ void MainWindow::buildMainView()
     setWindowTitle("铜粒子打磨系统显示端");
     resize(1360, 820);
     menuBar()->hide();
-    statusBar()->hide();
+    setStatusBar(new ElaStatusBar(this));
+    statusBar()->showMessage("前端已启动 | 后端等待接入 | PLC 通讯等待接入 | 共享内存等待图像");
 
     auto *root = new QWidget(this);
     auto *rootLayout = new QVBoxLayout(root);
-    rootLayout->setContentsMargins(14, 14, 14, 14);
+    rootLayout->setContentsMargins(12, 12, 12, 10);
     rootLayout->setSpacing(10);
     setCentralWidget(root);
 
     setStyleSheet(QString(R"(
         QMainWindow {
-            background: #101820;
+            background: #0f141b;
         }
         QWidget {
             font-family: "Microsoft YaHei";
@@ -80,14 +96,19 @@ void MainWindow::buildMainView()
             color: #dce6f0;
         }
         QFrame#panel {
-            background: #17212b;
-            border: 1px solid #2d3a47;
+            background: #161d26;
+            border: 1px solid #2b3645;
             border-radius: %1px;
         }
         QLabel#panelTitle {
-            color: #ffffff;
+            color: #f8fafc;
             font-size: 15px;
             font-weight: 600;
+        }
+        QLabel#systemTitle {
+            color: #ffffff;
+            font-size: 20px;
+            font-weight: 700;
         }
         QLabel#sectionHint {
             color: #8fa4b8;
@@ -105,29 +126,49 @@ void MainWindow::buildMainView()
             color: #ffffff;
             font-weight: 600;
         }
-        QListWidget {
-            background: transparent;
-            border: none;
-            outline: none;
+        QLabel#imageMainText {
+            color: #7f93a8;
+            font-size: 21px;
+            font-weight: 600;
         }
-        QListWidget::item {
-            padding: 4px 2px;
-            color: #dce6f0;
+        QLabel#imageSubText {
+            color: #5f7489;
+            font-size: 13px;
+        }
+        ElaPlainTextEdit {
+            background: #0c1117;
+            color: #d9e2ec;
+            border: 1px solid #303c4d;
+            border-radius: 6px;
+            padding: 8px;
+            selection-background-color: #2563eb;
+        }
+        QStatusBar {
+            background: #151b23;
+            color: #aebdca;
+            border-top: 1px solid #283446;
         }
     )").arg(kPanelRadius));
 
-    auto *topBar = createPanel("顶部状态栏");
-    topBar->setFixedHeight(74);
+    auto *topBar = createPanel("系统总览");
+    topBar->setFixedHeight(82);
     auto *topPanelLayout = qobject_cast<QVBoxLayout *>(topBar->layout());
     auto *topStatusLayout = new QHBoxLayout();
     topStatusLayout->setContentsMargins(0, 0, 0, 0);
     topStatusLayout->setSpacing(8);
+    topStatusLayout->addWidget(makeLabel("铜粒子打磨系统", "systemTitle"));
+    topStatusLayout->addSpacing(14);
     topStatusLayout->addWidget(createStatusPill("设备：待机", "ok"));
-    topStatusLayout->addWidget(createStatusPill("后端：已连接", "ok"));
-    topStatusLayout->addWidget(createStatusPill("共享内存：等待图像", "warn"));
-    topStatusLayout->addWidget(createStatusPill("当前任务：TLZ-0001", "running"));
+    topStatusLayout->addWidget(createStatusPill("后端：等待接入", "warn"));
+    topStatusLayout->addWidget(createStatusPill("PLC：未连接", "warn"));
+    topStatusLayout->addWidget(createStatusPill("共享内存：等待图像", "idle"));
     topStatusLayout->addStretch();
     topStatusLayout->addWidget(makeLabel(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"), "largeValue"));
+
+    auto *refreshButton = new ElaIconButton(ElaIconType::ArrowsRotate, 17, 34, 34, topBar);
+    refreshButton->setToolTip("刷新显示状态");
+    topStatusLayout->addWidget(refreshButton);
+
     topPanelLayout->addLayout(topStatusLayout);
     rootLayout->addWidget(topBar);
 
@@ -135,12 +176,14 @@ void MainWindow::buildMainView()
     centerLayout->setSpacing(10);
     rootLayout->addLayout(centerLayout, 1);
 
-    auto *leftPanel = createPanel("流程状态");
-    leftPanel->setMinimumWidth(230);
-    leftPanel->setMaximumWidth(290);
+    auto *leftPanel = createPanel("工艺流程");
+    leftPanel->setMinimumWidth(240);
+    leftPanel->setMaximumWidth(300);
     auto *leftLayout = qobject_cast<QVBoxLayout *>(leftPanel->layout());
     leftLayout->addWidget(makeLabel("当前工序", "sectionHint"));
-    leftLayout->addWidget(makeLabel("路径规划结果等待中", "largeValue"));
+    leftLayout->addWidget(makeLabel("等待路径规划结果", "largeValue"));
+    leftLayout->addWidget(makeLabel("任务进度", "sectionHint"));
+    leftLayout->addWidget(makeProgressBar(0));
     leftLayout->addSpacing(10);
     leftLayout->addWidget(createStepRow("等待任务", "完成", "ok"));
     leftLayout->addWidget(createStepRow("扫描采集", "待开始", "idle"));
@@ -151,34 +194,32 @@ void MainWindow::buildMainView()
     leftLayout->addWidget(createStepRow("复检完成", "待开始", "idle"));
     leftLayout->addStretch();
     leftLayout->addWidget(makeLabel("关键设备状态", "sectionHint"));
-    leftLayout->addWidget(createStatusPill("PLC 在线", "ok"));
+    leftLayout->addWidget(createStatusPill("PLC 未连接", "warn"));
     leftLayout->addWidget(createStatusPill("相机 未接入", "warn"));
     leftLayout->addWidget(createStatusPill("算法服务 未接入", "warn"));
     centerLayout->addWidget(leftPanel);
 
-    auto *imagePanel = createPanel("图像显示");
+    auto *imagePanel = createPanel("3D 图像与路径显示");
     auto *imageLayout = qobject_cast<QVBoxLayout *>(imagePanel->layout());
     auto *imageArea = new QFrame();
     imageArea->setObjectName("imageArea");
-    imageArea->setMinimumSize(620, 430);
+    imageArea->setMinimumSize(620, 360);
     imageArea->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     imageArea->setStyleSheet(R"(
         QFrame#imageArea {
-            background: #0b1118;
+            background: #090d13;
             border: 1px solid #334252;
-            border-radius: 4px;
+            border-radius: 6px;
         }
     )");
     auto *imageAreaLayout = new QVBoxLayout(imageArea);
     imageAreaLayout->setContentsMargins(18, 18, 18, 18);
     imageAreaLayout->addStretch();
-    auto *imageText = makeLabel("高度图 / 缺陷 / 路径叠加显示区");
+    auto *imageText = makeLabel("高度图 / 缺陷点 / 路径叠加显示区", "imageMainText");
     imageText->setAlignment(Qt::AlignCenter);
-    imageText->setStyleSheet("color:#6f8499;font-size:20px;font-weight:600;");
     imageAreaLayout->addWidget(imageText);
-    auto *imageSubText = makeLabel("等待 ImageReady 消息后从共享内存读取图像");
+    auto *imageSubText = makeLabel("等待 ImageReady 消息后从共享内存读取图像", "imageSubText");
     imageSubText->setAlignment(Qt::AlignCenter);
-    imageSubText->setStyleSheet("color:#52677c;font-size:13px;");
     imageAreaLayout->addWidget(imageSubText);
     imageAreaLayout->addStretch();
     imageLayout->addWidget(imageArea, 1);
@@ -192,32 +233,57 @@ void MainWindow::buildMainView()
     centerLayout->addWidget(imagePanel, 1);
 
     auto *rightPanel = createPanel("运行数据");
-    rightPanel->setMinimumWidth(260);
-    rightPanel->setMaximumWidth(330);
+    rightPanel->setMinimumWidth(270);
+    rightPanel->setMaximumWidth(340);
     auto *rightLayout = qobject_cast<QVBoxLayout *>(rightPanel->layout());
+    rightLayout->addWidget(makeLabel("运动轴", "sectionHint"));
     rightLayout->addWidget(createMetricRow("当前坐标 X", "0.000", "mm"));
     rightLayout->addWidget(createMetricRow("当前坐标 Y", "0.000", "mm"));
     rightLayout->addWidget(createMetricRow("当前坐标 Z", "0.000", "mm"));
     rightLayout->addSpacing(8);
+    rightLayout->addWidget(makeLabel("加工状态", "sectionHint"));
     rightLayout->addWidget(createMetricRow("主轴转速", "0", "rpm"));
     rightLayout->addWidget(createMetricRow("进给速度", "0", "mm/min"));
     rightLayout->addWidget(createMetricRow("扭矩反馈", "0", "N.m"));
+    rightLayout->addWidget(makeProgressBar(0));
     rightLayout->addSpacing(8);
+    rightLayout->addWidget(makeLabel("算法结果", "sectionHint"));
     rightLayout->addWidget(createMetricRow("粒子数量", "-", "个"));
     rightLayout->addWidget(createMetricRow("最大高度", "-", "mm"));
     rightLayout->addWidget(createMetricRow("路径段数", "-", "段"));
     rightLayout->addStretch();
     centerLayout->addWidget(rightPanel);
 
-    auto *bottomPanel = createPanel("报警与事件");
-    bottomPanel->setFixedHeight(150);
+    auto *bottomPanel = createPanel("报警与事件日志");
+    bottomPanel->setFixedHeight(230);
     auto *bottomLayout = qobject_cast<QVBoxLayout *>(bottomPanel->layout());
-    auto *eventList = new QListWidget();
-    eventList->addItem("[09:00:00] 系统启动，等待后端连接");
-    eventList->addItem("[09:00:01] 后端连接状态：占位");
-    eventList->addItem("[09:00:02] 图像共享内存状态：等待");
-    bottomLayout->addWidget(eventList);
+    auto *logToolbar = new QHBoxLayout();
+    logToolbar->setContentsMargins(0, 0, 0, 0);
+    logToolbar->addWidget(createStatusPill("报警：0", "ok"));
+    logToolbar->addWidget(createStatusPill("事件：3", "running"));
+    logToolbar->addStretch();
+    auto *clearLogButton = new ElaIconButton(ElaIconType::TrashCan, 16, 32, 32, bottomPanel);
+    clearLogButton->setToolTip("清空日志显示");
+    logToolbar->addWidget(clearLogButton);
+    bottomLayout->addLayout(logToolbar);
+
+    auto *eventLog = new ElaPlainTextEdit(bottomPanel);
+    eventLog->setReadOnly(true);
+    eventLog->setPlainText(
+        "[09:00:00] 系统启动，等待后端连接\n"
+        "[09:00:01] PLC 通讯状态：等待接入\n"
+        "[09:00:02] 图像共享内存状态：等待 ImageReady\n");
+    bottomLayout->addWidget(eventLog, 1);
     rootLayout->addWidget(bottomPanel);
+
+    connect(clearLogButton, &QPushButton::clicked, eventLog, &QPlainTextEdit::clear);
+    connect(refreshButton, &QPushButton::clicked, this, [this]() {
+        ElaMessageBar::information(ElaMessageBarType::BottomRight, "状态刷新", "当前为静态界面预览，后端通讯尚未接入。", 2200, this);
+    });
+
+    QTimer::singleShot(350, this, [this]() {
+        ElaMessageBar::success(ElaMessageBarType::BottomRight, "界面初始化", "ElaWidgetTools 组件已接入。", 1800, this);
+    });
 }
 
 QFrame *MainWindow::createPanel(const QString &title)
@@ -241,9 +307,9 @@ QLabel *MainWindow::createStatusPill(const QString &text, const QString &state)
 {
     auto *label = makeLabel(text);
     label->setAlignment(Qt::AlignCenter);
-    label->setMinimumHeight(30);
+    label->setMinimumHeight(28);
     label->setContentsMargins(10, 0, 10, 0);
-    label->setStyleSheet(QString("border-radius:4px;padding:4px 10px;%1").arg(pillStyle(state)));
+    label->setStyleSheet(QString("border-radius:4px;padding:3px 10px;%1").arg(pillStyle(state)));
     return label;
 }
 
