@@ -11,6 +11,7 @@
 #include "ElaText.h"
 
 #include <QDateTime>
+#include <QColor>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -22,22 +23,26 @@
 namespace {
 
 constexpr int kPanelRadius = 8;
+const QColor kButtonDefault("#167360");
+const QColor kButtonHover("#1d8b75");
+const QColor kButtonPress("#115f50");
+const QColor kButtonText("#f5fffb");
 
 QString pillStyle(const QString &state)
 {
     if (state == "ok") {
-        return "background:#0f5132;color:#d1fae5;border:1px solid #198754;";
+        return "background:#18342d;color:#bfe6d8;border:1px solid #2f7d65;";
     }
     if (state == "running") {
-        return "background:#123c69;color:#dbeafe;border:1px solid #2563eb;";
+        return "background:#1b3132;color:#c8ece5;border:1px solid #3b8377;";
     }
     if (state == "warn") {
-        return "background:#5f4313;color:#fef3c7;border:1px solid #b7791f;";
+        return "background:#3a3424;color:#efe1b5;border:1px solid #8a7634;";
     }
     if (state == "error") {
-        return "background:#651f2a;color:#fee2e2;border:1px solid #dc3545;";
+        return "background:#3a2729;color:#f1c5c9;border:1px solid #9a4d56;";
     }
-    return "background:#263241;color:#cbd5e1;border:1px solid #405064;";
+    return "background:#242a2d;color:#cbd3cf;border:1px solid #46504b;";
 }
 
 QLabel *makeLabel(const QString &text, const QString &objectName = QString())
@@ -71,6 +76,30 @@ ElaProgressBar *makeProgressBar(int value)
     return bar;
 }
 
+void applyPrimaryButtonStyle(ElaPushButton *button)
+{
+    button->setBorderRadius(6);
+    button->setLightDefaultColor(kButtonDefault);
+    button->setDarkDefaultColor(kButtonDefault);
+    button->setLightHoverColor(kButtonHover);
+    button->setDarkHoverColor(kButtonHover);
+    button->setLightPressColor(kButtonPress);
+    button->setDarkPressColor(kButtonPress);
+    button->setLightTextColor(kButtonText);
+    button->setDarkTextColor(kButtonText);
+}
+
+void applyIconButtonStyle(ElaIconButton *button)
+{
+    button->setBorderRadius(6);
+    button->setLightHoverColor(kButtonDefault);
+    button->setDarkHoverColor(kButtonDefault);
+    button->setLightIconColor(kButtonText);
+    button->setDarkIconColor(kButtonText);
+    button->setLightHoverIconColor(kButtonText);
+    button->setDarkHoverIconColor(kButtonText);
+}
+
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -102,20 +131,20 @@ void MainWindow::buildMainView()
 
     setStyleSheet(QString(R"(
         QMainWindow {
-            background: #0f141b;
+            background: #151817;
         }
         QWidget {
             font-family: "Microsoft YaHei";
             font-size: 14px;
-            color: #dce6f0;
+            color: #e3e9e5;
         }
         QFrame#panel {
-            background: #161d26;
-            border: 1px solid #2b3645;
+            background: #1d2220;
+            border: 1px solid #343b37;
             border-radius: %1px;
         }
         QLabel#panelTitle {
-            color: #f8fafc;
+            color: #f4f7f5;
             font-size: 15px;
             font-weight: 600;
         }
@@ -125,7 +154,7 @@ void MainWindow::buildMainView()
             font-weight: 700;
         }
         QLabel#sectionHint {
-            color: #8fa4b8;
+            color: #8d9a94;
             font-size: 12px;
         }
         QLabel#largeValue {
@@ -134,33 +163,33 @@ void MainWindow::buildMainView()
             font-weight: 600;
         }
         QLabel#metricName {
-            color: #9fb2c5;
+            color: #a9b4ae;
         }
         QLabel#metricValue {
-            color: #ffffff;
+            color: #f4f7f5;
             font-weight: 600;
         }
         QLabel#imageMainText {
-            color: #7f93a8;
+            color: #89958f;
             font-size: 21px;
             font-weight: 600;
         }
         QLabel#imageSubText {
-            color: #5f7489;
+            color: #6f7d76;
             font-size: 13px;
         }
         ElaPlainTextEdit {
-            background: #0c1117;
-            color: #d9e2ec;
-            border: 1px solid #303c4d;
+            background: #111513;
+            color: #dce5e0;
+            border: 1px solid #343d38;
             border-radius: 6px;
             padding: 8px;
-            selection-background-color: #2563eb;
+            selection-background-color: #167360;
         }
         QStatusBar {
-            background: #151b23;
-            color: #aebdca;
-            border-top: 1px solid #283446;
+            background: #1a1f1d;
+            color: #aeb8b2;
+            border-top: 1px solid #303832;
         }
     )").arg(kPanelRadius));
 
@@ -183,10 +212,13 @@ void MainWindow::buildMainView()
 
     auto *connectButton = new ElaPushButton("连接后端", appBar);
     connectButton->setFixedSize(86, 34);
+    applyPrimaryButtonStyle(connectButton);
     auto *alarmButton = new ElaPushButton("报警确认", appBar);
     alarmButton->setFixedSize(86, 34);
+    applyPrimaryButtonStyle(alarmButton);
     auto *refreshButton = new ElaIconButton(ElaIconType::ArrowsRotate, 17, 34, 34, appBar);
     refreshButton->setToolTip("刷新显示状态");
+    applyIconButtonStyle(refreshButton);
     topStatusLayout->addWidget(connectButton);
     topStatusLayout->addWidget(alarmButton);
     topStatusLayout->addWidget(refreshButton);
@@ -229,8 +261,8 @@ void MainWindow::buildMainView()
     imageArea->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     imageArea->setStyleSheet(R"(
         QFrame#imageArea {
-            background: #090d13;
-            border: 1px solid #334252;
+            background: #121614;
+            border: 1px solid #3a433e;
             border-radius: 6px;
         }
     )");
@@ -286,9 +318,11 @@ void MainWindow::buildMainView()
     logToolbar->addStretch();
     auto *exportLogButton = new ElaPushButton("导出日志", bottomPanel);
     exportLogButton->setFixedSize(82, 32);
+    applyPrimaryButtonStyle(exportLogButton);
     logToolbar->addWidget(exportLogButton);
     auto *clearLogButton = new ElaIconButton(ElaIconType::TrashCan, 16, 32, 32, bottomPanel);
     clearLogButton->setToolTip("清空日志显示");
+    applyIconButtonStyle(clearLogButton);
     logToolbar->addWidget(clearLogButton);
     bottomLayout->addLayout(logToolbar);
 
