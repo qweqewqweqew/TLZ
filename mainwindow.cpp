@@ -326,7 +326,7 @@ void MainWindow::buildMainView()
     )").arg(kPanelRadius));
 
     auto *appBar = new ElaAppBar(root);
-    appBar->setFixedHeight(72);
+    appBar->setFixedHeight(38);
     appBar->setStyleSheet("#ElaAppBar{background:#0F151C;border:1px solid #303C49;border-radius:8px;}");
     appBar->setWindowButtonFlags(ElaAppBarType::NoneButtonHint);
     auto *topContent = new QWidget(appBar);
@@ -334,37 +334,17 @@ void MainWindow::buildMainView()
     topContent->installEventFilter(this);
     appBar->installEventFilter(this);
     m_titleDragArea = topContent;
-    auto *topStatusLayout = new QHBoxLayout();
-    topContent->setLayout(topStatusLayout);
-    topStatusLayout->setContentsMargins(10, 0, 10, 0);
-    topStatusLayout->setSpacing(10);
+    auto *titleLayout = new QHBoxLayout();
+    topContent->setLayout(titleLayout);
+    titleLayout->setContentsMargins(10, 0, 8, 0);
+    titleLayout->setSpacing(8);
 
     auto *logoLabel = new QLabel(topContent);
-    logoLabel->setFixedSize(28, 28);
-    logoLabel->setPixmap(QPixmap(":/img/logo.png").scaled(28, 28, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    logoLabel->setFixedSize(24, 24);
+    logoLabel->setPixmap(QPixmap(":/img/logo.png").scaled(24, 24, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     logoLabel->setStyleSheet("background:transparent;border:none;");
-    topStatusLayout->addWidget(logoLabel);
-    topStatusLayout->addWidget(makeLabel("铜粒子打磨系统", "systemTitle"));
-    topStatusLayout->addSpacing(14);
-    topStatusLayout->addWidget(createStatusPill("设备：待机", "idle"));
-    topStatusLayout->addWidget(createStatusPill("后端：等待接入", "idle"));
-    topStatusLayout->addWidget(createStatusPill("PLC：未连接", "error"));
-    topStatusLayout->addWidget(createStatusPill("共享内存：等待图像", "idle"));
-    topStatusLayout->addStretch();
-    topStatusLayout->addWidget(makeLabel(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"), "topTime"));
-
-    auto *connectButton = new ElaPushButton("连接后端", appBar);
-    connectButton->setFixedSize(86, 34);
-    applyPrimaryButtonStyle(connectButton);
-    auto *alarmButton = new ElaPushButton("报警确认", appBar);
-    alarmButton->setFixedSize(86, 34);
-    applyPrimaryButtonStyle(alarmButton);
-    auto *refreshButton = new ElaIconButton(ElaIconType::ArrowsRotate, 17, 34, 34, appBar);
-    refreshButton->setToolTip("刷新显示状态");
-    applyIconButtonStyle(refreshButton);
-    topStatusLayout->addWidget(connectButton);
-    topStatusLayout->addWidget(alarmButton);
-    topStatusLayout->addWidget(refreshButton);
+    titleLayout->addWidget(logoLabel);
+    titleLayout->addStretch();
 
     auto *minimizeButton = createTitleButton(":/img/minimize.png", "最小化", appBar);
     m_maximizeButton = createTitleButton(":/img/max.png", "最大化", appBar);
@@ -382,10 +362,9 @@ void MainWindow::buildMainView()
             background: #A73440;
         }
     )");
-    topStatusLayout->addSpacing(4);
-    topStatusLayout->addWidget(minimizeButton);
-    topStatusLayout->addWidget(m_maximizeButton);
-    topStatusLayout->addWidget(closeButton);
+    titleLayout->addWidget(minimizeButton);
+    titleLayout->addWidget(m_maximizeButton);
+    titleLayout->addWidget(closeButton);
 
     connect(minimizeButton, &QToolButton::clicked, this, &QWidget::showMinimized);
     connect(m_maximizeButton, &QToolButton::clicked, this, [this]() {
@@ -397,6 +376,36 @@ void MainWindow::buildMainView()
 
     appBar->setCustomWidget(ElaAppBarType::MiddleArea, topContent);
     rootLayout->addWidget(appBar);
+
+    auto *headerPanel = new QFrame(root);
+    headerPanel->setFixedHeight(66);
+    headerPanel->setStyleSheet("QFrame{background:#0F151C;border:1px solid #303C49;border-radius:8px;}");
+    auto *headerLayout = new QHBoxLayout(headerPanel);
+    headerLayout->setContentsMargins(12, 0, 12, 0);
+    headerLayout->setSpacing(10);
+
+    headerLayout->addWidget(makeLabel("铜粒子打磨系统", "systemTitle"));
+    headerLayout->addSpacing(18);
+    headerLayout->addWidget(createStatusPill("设备：待机", "idle"));
+    headerLayout->addWidget(createStatusPill("后端：等待接入", "idle"));
+    headerLayout->addWidget(createStatusPill("PLC：未连接", "error"));
+    headerLayout->addWidget(createStatusPill("共享内存：等待图像", "idle"));
+    headerLayout->addStretch();
+    headerLayout->addWidget(makeLabel(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"), "topTime"));
+
+    auto *connectButton = new ElaPushButton("连接后端", headerPanel);
+    connectButton->setFixedSize(86, 34);
+    applyPrimaryButtonStyle(connectButton);
+    auto *alarmButton = new ElaPushButton("报警确认", headerPanel);
+    alarmButton->setFixedSize(86, 34);
+    applyPrimaryButtonStyle(alarmButton);
+    auto *refreshButton = new ElaIconButton(ElaIconType::ArrowsRotate, 17, 34, 34, headerPanel);
+    refreshButton->setToolTip("刷新显示状态");
+    applyIconButtonStyle(refreshButton);
+    headerLayout->addWidget(connectButton);
+    headerLayout->addWidget(alarmButton);
+    headerLayout->addWidget(refreshButton);
+    rootLayout->addWidget(headerPanel);
 
     auto *centerLayout = new QHBoxLayout();
     centerLayout->setSpacing(10);
