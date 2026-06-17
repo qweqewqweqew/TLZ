@@ -1,7 +1,6 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
-#include "ElaAppBar.h"
 #include "ElaIconButton.h"
 #include "ElaMessageBar.h"
 #include "ElaPlainTextEdit.h"
@@ -325,30 +324,27 @@ void MainWindow::buildMainView()
         }
     )").arg(kPanelRadius));
 
-    auto *appBar = new ElaAppBar(root);
-    appBar->setFixedHeight(38);
-    appBar->setStyleSheet("#ElaAppBar{background:#0F151C;border:1px solid #303C49;border-radius:8px;}");
-    appBar->setWindowButtonFlags(ElaAppBarType::NoneButtonHint);
-    auto *topContent = new QWidget(appBar);
-    topContent->setStyleSheet("background:transparent;");
-    topContent->installEventFilter(this);
-    appBar->installEventFilter(this);
-    m_titleDragArea = topContent;
+    auto *titleBar = new QFrame(root);
+    titleBar->setObjectName("titleBar");
+    titleBar->setFixedHeight(44);
+    titleBar->setStyleSheet("QFrame#titleBar{background:#0F151C;border:1px solid #303C49;border-radius:8px;}");
+    titleBar->installEventFilter(this);
+    m_titleDragArea = titleBar;
     auto *titleLayout = new QHBoxLayout();
-    topContent->setLayout(titleLayout);
+    titleBar->setLayout(titleLayout);
     titleLayout->setContentsMargins(10, 0, 8, 0);
     titleLayout->setSpacing(8);
 
-    auto *logoLabel = new QLabel(topContent);
-    logoLabel->setFixedSize(24, 24);
-    logoLabel->setPixmap(QPixmap(":/img/logo.png").scaled(24, 24, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    auto *logoLabel = new QLabel(titleBar);
+    logoLabel->setFixedSize(36, 36);
+    logoLabel->setPixmap(QPixmap(":/img/logo.png").scaled(36, 36, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     logoLabel->setStyleSheet("background:transparent;border:none;");
     titleLayout->addWidget(logoLabel);
     titleLayout->addStretch();
 
-    auto *minimizeButton = createTitleButton(":/img/minimize.png", "最小化", appBar);
-    m_maximizeButton = createTitleButton(":/img/max.png", "最大化", appBar);
-    auto *closeButton = createTitleButton(":/img/close.png", "关闭", appBar);
+    auto *minimizeButton = createTitleButton(":/img/minimize.png", "最小化", titleBar);
+    m_maximizeButton = createTitleButton(":/img/max.png", "最大化", titleBar);
+    auto *closeButton = createTitleButton(":/img/close.png", "关闭", titleBar);
     closeButton->setStyleSheet(R"(
         QToolButton {
             background: transparent;
@@ -374,8 +370,7 @@ void MainWindow::buildMainView()
     connect(closeButton, &QToolButton::clicked, this, &QWidget::close);
     updateMaximizeButtonIcon();
 
-    appBar->setCustomWidget(ElaAppBarType::MiddleArea, topContent);
-    rootLayout->addWidget(appBar);
+    rootLayout->addWidget(titleBar);
 
     auto *headerPanel = new QFrame(root);
     headerPanel->setFixedHeight(66);
@@ -384,8 +379,6 @@ void MainWindow::buildMainView()
     headerLayout->setContentsMargins(12, 0, 12, 0);
     headerLayout->setSpacing(10);
 
-    headerLayout->addWidget(makeLabel("铜粒子打磨系统", "systemTitle"));
-    headerLayout->addSpacing(18);
     headerLayout->addWidget(createStatusPill("设备：待机", "idle"));
     headerLayout->addWidget(createStatusPill("后端：等待接入", "idle"));
     headerLayout->addWidget(createStatusPill("PLC：未连接", "error"));
