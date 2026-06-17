@@ -23,26 +23,26 @@
 namespace {
 
 constexpr int kPanelRadius = 8;
-const QColor kButtonDefault("#2F6F9F");
-const QColor kButtonHover("#3A7FB3");
-const QColor kButtonPress("#255A83");
+const QColor kButtonDefault("#2D6F9F");
+const QColor kButtonHover("#377FAF");
+const QColor kButtonPress("#245B83");
 const QColor kButtonText("#F7FBFF");
 
 QString pillStyle(const QString &state)
 {
     if (state == "ok") {
-        return "background:#2A333B;color:#B9C7D3;border:1px solid #4E6070;";
+        return "background:#24313B;color:#B8C7D3;border:1px solid #3A4755;";
     }
     if (state == "running") {
-        return "background:#26333F;color:#B4C9D8;border:1px solid #496177;";
+        return "background:#223446;color:#B7D0E2;border:1px solid #3A4755;";
     }
     if (state == "warn") {
-        return "background:#2F3036;color:#C7CDD5;border:1px solid #5D6570;";
+        return "background:#2D333A;color:#C9D2DA;border:1px solid #3A4755;";
     }
     if (state == "error") {
-        return "background:#3A2A2E;color:#E0B9BF;border:1px solid #7A4A53;";
+        return "background:#3A2B31;color:#E0B9BF;border:1px solid #66505A;";
     }
-    return "background:#2B3138;color:#B9C1CA;border:1px solid #4F5B66;";
+    return "background:#242E38;color:#B8C2CC;border:1px solid #3A4755;";
 }
 
 QLabel *makeLabel(const QString &text, const QString &objectName = QString())
@@ -133,76 +133,76 @@ void MainWindow::buildMainView()
 
     setStyleSheet(QString(R"(
         QMainWindow {
-            background: #1E2329;
+            background: #1A232E;
         }
         QWidget {
             font-family: "Microsoft YaHei";
             font-size: 14px;
-            color: #E1E7EE;
+            color: #E4EAF0;
         }
         QFrame#panel {
-            background: #2A3036;
-            border: 1px solid #4B5B69;
+            background: #252F3A;
+            border: 1px solid #3A4755;
             border-radius: %1px;
         }
         QLabel#panelTitle {
-            color: #F0F4F8;
+            color: #F1F5F9;
             font-size: 15px;
             font-weight: 600;
         }
         QLabel#systemTitle {
-            color: #F0F4F8;
+            color: #F1F5F9;
             font-size: 20px;
             font-weight: 700;
         }
         QLabel#topTime {
-            color: #F0F4F8;
+            color: #DDE7F0;
             font-size: 18px;
             font-weight: 600;
         }
         QLabel#sectionHint {
-            color: #93A0AA;
+            color: #95A5B5;
             font-size: 12px;
         }
         QLabel#largeValue {
-            color: #F0F4F8;
+            color: #F1F5F9;
             font-size: 22px;
             font-weight: 600;
         }
         QLabel#metricName {
-            color: #9AA6B1;
+            color: #9BAABA;
         }
         QLabel#metricValue {
-            color: #F0F4F8;
+            color: #F1F5F9;
             font-weight: 600;
         }
         QLabel#imageMainText {
-            color: #9AA6B1;
+            color: #94A4B5;
             font-size: 21px;
             font-weight: 600;
         }
         QLabel#imageSubText {
-            color: #90A0AE;
+            color: #8797A8;
             font-size: 13px;
         }
         ElaPlainTextEdit {
-            background: #23292F;
-            color: #E1E7EE;
-            border: 1px solid #4B5B69;
+            background: #202A34;
+            color: #E4EAF0;
+            border: 1px solid #3A4755;
             border-radius: 6px;
             padding: 8px;
-            selection-background-color: #2F6F9F;
+            selection-background-color: #2D6F9F;
         }
         QStatusBar {
-            background: #23292F;
-            color: #A6B2BC;
-            border-top: 1px solid #4B5B69;
+            background: #202A34;
+            color: #9BAABA;
+            border-top: 1px solid #3A4755;
         }
     )").arg(kPanelRadius));
 
     auto *appBar = new ElaAppBar(root);
     appBar->setFixedHeight(72);
-    appBar->setStyleSheet("#ElaAppBar{background:#232A33;border:1px solid #4B5B69;border-radius:8px;}");
+    appBar->setStyleSheet("#ElaAppBar{background:#0F151C;border:1px solid #3A4755;border-radius:8px;}");
     appBar->setWindowButtonFlags(ElaAppBarType::NoneButtonHint);
     auto *topContent = new QWidget(appBar);
     topContent->setStyleSheet("background:transparent;");
@@ -270,8 +270,8 @@ void MainWindow::buildMainView()
     imageArea->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     imageArea->setStyleSheet(R"(
         QFrame#imageArea {
-            background: #23292F;
-            border: 1px solid #4B5B69;
+            background: #202A34;
+            border: 1px solid #3A4755;
             border-radius: 6px;
         }
     )");
