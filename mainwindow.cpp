@@ -9,7 +9,7 @@
 #include "ElaStatusBar.h"
 #include "ElaText.h"
 
-#include <QDateTime>
+#include <QAction>
 #include <QColor>
 #include <QEvent>
 #include <QFrame>
@@ -17,6 +17,7 @@
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPixmap>
@@ -157,8 +158,8 @@ QToolButton *createTitleButton(const QString &iconPath, const QString &tooltip, 
 {
     auto *button = new QToolButton(parent);
     button->setIcon(QIcon(iconPath));
-    button->setIconSize(QSize(15, 15));
-    button->setFixedSize(35, 35);
+    button->setIconSize(QSize(20, 20));
+    button->setFixedSize(40, 40);
     button->setToolTip(tooltip);
     button->setCursor(Qt::ArrowCursor);
     button->setStyleSheet(R"(
@@ -336,8 +337,8 @@ void MainWindow::buildMainView()
     titleLayout->setSpacing(8);
 
     auto *logoLabel = new QLabel(titleBar);
-    logoLabel->setFixedSize(36, 36);
-    logoLabel->setPixmap(QPixmap(":/img/logo.png").scaled(36, 36, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    logoLabel->setFixedSize(48, 48);
+    logoLabel->setPixmap(QPixmap(":/img/logo.png").scaled(48, 48, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     logoLabel->setStyleSheet("background:transparent;border:none;");
     titleLayout->addWidget(logoLabel);
     titleLayout->addWidget(makeLabel("铜粒子打磨系统", "systemTitle"));
@@ -380,25 +381,49 @@ void MainWindow::buildMainView()
     headerLayout->setContentsMargins(12, 0, 12, 0);
     headerLayout->setSpacing(10);
 
-    headerLayout->addWidget(createStatusPill("设备：待机", "idle"));
-    headerLayout->addWidget(createStatusPill("后端：等待接入", "idle"));
-    headerLayout->addWidget(createStatusPill("PLC：未连接", "error"));
-    headerLayout->addWidget(createStatusPill("共享内存：等待图像", "idle"));
+    auto *menuButton = new QToolButton(headerPanel);
+    menuButton->setText("设置");
+    menuButton->setPopupMode(QToolButton::InstantPopup);
+    menuButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    menuButton->setFixedSize(104, 34);
+    menuButton->setCursor(Qt::PointingHandCursor);
+    menuButton->setStyleSheet(R"(
+        QToolButton {
+            background: #18222C;
+            color: #E6EEF5;
+            border: 1px solid #303C49;
+            border-radius: 6px;
+            padding: 0 12px;
+            font-weight: 600;
+        }
+        QToolButton:hover {
+            background: #202C38;
+            border-color: #3A78A1;
+        }
+        QToolButton::menu-indicator {
+            image: none;
+        }
+    )");
+    auto *topMenu = new QMenu(menuButton);
+    topMenu->setStyleSheet(R"(
+        QMenu {
+            background: #18222C;
+            color: #E6EEF5;
+            border: 1px solid #303C49;
+            padding: 6px;
+        }
+        QMenu::item {
+            padding: 8px 42px 8px 14px;
+            border-radius: 4px;
+        }
+        QMenu::item:selected {
+            background: #2D6F9F;
+        }
+    )");
+    auto *settingsAction = topMenu->addAction("设置");
+    menuButton->setMenu(topMenu);
+    headerLayout->addWidget(menuButton);
     headerLayout->addStretch();
-    headerLayout->addWidget(makeLabel(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"), "topTime"));
-
-    auto *connectButton = new ElaPushButton("连接后端", headerPanel);
-    connectButton->setFixedSize(86, 34);
-    applyPrimaryButtonStyle(connectButton);
-    auto *alarmButton = new ElaPushButton("报警确认", headerPanel);
-    alarmButton->setFixedSize(86, 34);
-    applyPrimaryButtonStyle(alarmButton);
-    auto *refreshButton = new ElaIconButton(ElaIconType::ArrowsRotate, 17, 34, 34, headerPanel);
-    refreshButton->setToolTip("刷新显示状态");
-    applyIconButtonStyle(refreshButton);
-    headerLayout->addWidget(connectButton);
-    headerLayout->addWidget(alarmButton);
-    headerLayout->addWidget(refreshButton);
     rootLayout->addWidget(headerPanel);
 
     auto *centerLayout = new QHBoxLayout();
@@ -406,8 +431,7 @@ void MainWindow::buildMainView()
     rootLayout->addLayout(centerLayout, 1);
 
     auto *leftPanel = createPanel("工艺流程");
-    leftPanel->setMinimumWidth(240);
-    leftPanel->setMaximumWidth(300);
+    leftPanel->setMinimumWidth(360);
     auto *leftLayout = qobject_cast<QVBoxLayout *>(leftPanel->layout());
     leftLayout->addWidget(makeLabel("当前工序", "sectionHint"));
     leftLayout->addWidget(makeLabel("等待路径规划结果", "largeValue"));
@@ -426,14 +450,15 @@ void MainWindow::buildMainView()
     leftLayout->addWidget(createStatusPill("PLC 未连接", "error"));
     leftLayout->addWidget(createStatusPill("相机 未接入", "error"));
     leftLayout->addWidget(createStatusPill("算法服务 未接入", "error"));
-    centerLayout->addWidget(leftPanel);
+    centerLayout->addWidget(leftPanel, 1);
 
-    auto *imagePanel = createPanel("3D 图像与路径显示");
+    auto *imagePanel = createPanel("图像显示");
+    imagePanel->setFixedWidth(960);
     auto *imageLayout = qobject_cast<QVBoxLayout *>(imagePanel->layout());
     auto *imageArea = new ImageViewFrame();
     imageArea->setObjectName("imageArea");
-    imageArea->setMinimumSize(620, 360);
-    imageArea->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    imageArea->setFixedSize(900, 360);
+    imageArea->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     imageArea->setStyleSheet(R"(
         QFrame#imageArea {
             background: #0E141A;
@@ -444,14 +469,11 @@ void MainWindow::buildMainView()
     auto *imageAreaLayout = new QVBoxLayout(imageArea);
     imageAreaLayout->setContentsMargins(18, 18, 18, 18);
     imageAreaLayout->addStretch();
-    auto *imageText = makeLabel("高度图 / 缺陷点 / 路径叠加显示区", "imageMainText");
+    auto *imageText = makeLabel("等待图像");
     imageText->setAlignment(Qt::AlignCenter);
     imageAreaLayout->addWidget(imageText);
-    auto *imageSubText = makeLabel("等待 ImageReady 消息后从共享内存读取图像", "imageSubText");
-    imageSubText->setAlignment(Qt::AlignCenter);
-    imageAreaLayout->addWidget(imageSubText);
     imageAreaLayout->addStretch();
-    imageLayout->addWidget(imageArea, 1);
+    imageLayout->addWidget(imageArea, 0, Qt::AlignHCenter);
 
     auto *imageInfoLayout = new QHBoxLayout();
     imageInfoLayout->addWidget(createStatusPill("FrameId：-", "idle"));
@@ -459,11 +481,10 @@ void MainWindow::buildMainView()
     imageInfoLayout->addWidget(createStatusPill("路径段：-", "idle"));
     imageInfoLayout->addStretch();
     imageLayout->addLayout(imageInfoLayout);
-    centerLayout->addWidget(imagePanel, 1);
+    centerLayout->addWidget(imagePanel);
 
     auto *rightPanel = createPanel("运行数据");
-    rightPanel->setMinimumWidth(270);
-    rightPanel->setMaximumWidth(340);
+    rightPanel->setMinimumWidth(360);
     auto *rightLayout = qobject_cast<QVBoxLayout *>(rightPanel->layout());
     rightLayout->addWidget(makeLabel("运动轴", "sectionHint"));
     rightLayout->addWidget(createMetricRow("当前坐标 X", "0.000", "mm"));
@@ -481,7 +502,7 @@ void MainWindow::buildMainView()
     rightLayout->addWidget(createMetricRow("最大高度", "-", "mm"));
     rightLayout->addWidget(createMetricRow("路径段数", "-", "段"));
     rightLayout->addStretch();
-    centerLayout->addWidget(rightPanel);
+    centerLayout->addWidget(rightPanel, 1);
 
     auto *bottomPanel = createPanel("报警与事件日志");
     bottomPanel->setFixedHeight(230);
@@ -511,19 +532,12 @@ void MainWindow::buildMainView()
     rootLayout->addWidget(bottomPanel);
 
     connect(clearLogButton, &QPushButton::clicked, eventLog, &QPlainTextEdit::clear);
-    connect(connectButton, &QPushButton::clicked, this, [this]() {
-        ElaMessageBar::warning(ElaMessageBarType::BottomRight, "后端连接", "当前尚未接入真实通讯模块。", 2200, this);
-    });
-    connect(alarmButton, &QPushButton::clicked, this, [this]() {
-        ElaMessageBar::success(ElaMessageBarType::BottomRight, "报警确认", "当前无待确认报警。", 1800, this);
+    connect(settingsAction, &QAction::triggered, this, [this]() {
+        ElaMessageBar::information(ElaMessageBarType::BottomRight, "设置", "设置功能后续接入。", 2000, this);
     });
     connect(exportLogButton, &QPushButton::clicked, this, [this]() {
         ElaMessageBar::information(ElaMessageBarType::BottomRight, "日志导出", "当前为界面预览，导出功能后续接入。", 2200, this);
     });
-    connect(refreshButton, &QPushButton::clicked, this, [this]() {
-        ElaMessageBar::information(ElaMessageBarType::BottomRight, "状态刷新", "当前为静态界面预览，后端通讯尚未接入。", 2200, this);
-    });
-
     QTimer::singleShot(350, this, [this]() {
         ElaMessageBar::success(ElaMessageBarType::BottomRight, "界面初始化", "ElaWidgetTools 组件已接入。", 1800, this);
     });
