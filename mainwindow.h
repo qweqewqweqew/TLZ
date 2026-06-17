@@ -24,7 +24,7 @@ public:
 private:
     void buildMainView();
     QFrame *createPanel(const QString &title);
-    QLabel *createStatusPill(const QString &text, const QString &state);
+    QWidget *createStatusPill(const QString &text, const QString &state);
     QWidget *createStepRow(const QString &name, const QString &stateText, const QString &state);
     QWidget *createMetricRow(const QString &name, const QString &value, const QString &unit = QString());
 

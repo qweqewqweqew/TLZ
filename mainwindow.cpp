@@ -31,18 +31,32 @@ const QColor kButtonText("#F7FBFF");
 QString pillStyle(const QString &state)
 {
     if (state == "ok") {
-        return "background:#24313B;color:#B8C7D3;border:1px solid #3A4755;";
+        return "background:rgba(46,204,113,0.12);border:1px solid #3A4755;";
     }
     if (state == "running") {
-        return "background:#223446;color:#B7D0E2;border:1px solid #3A4755;";
+        return "background:rgba(52,152,219,0.14);border:1px solid #3A4755;";
     }
     if (state == "warn") {
-        return "background:#2D333A;color:#C9D2DA;border:1px solid #3A4755;";
+        return "background:rgba(241,196,15,0.15);border:1px solid #3A4755;";
     }
     if (state == "error") {
-        return "background:#3A2B31;color:#E0B9BF;border:1px solid #66505A;";
+        return "background:rgba(231,76,60,0.13);border:1px solid #3A4755;";
     }
-    return "background:#242E38;color:#B8C2CC;border:1px solid #3A4755;";
+    return "background:rgba(241,196,15,0.15);border:1px solid #3A4755;";
+}
+
+QString statusDotColor(const QString &state)
+{
+    if (state == "ok") {
+        return "#2ECC71";
+    }
+    if (state == "running") {
+        return "#3498DB";
+    }
+    if (state == "error") {
+        return "#E74C3C";
+    }
+    return "#F1C40F";
 }
 
 QLabel *makeLabel(const QString &text, const QString &objectName = QString())
@@ -161,33 +175,33 @@ void MainWindow::buildMainView()
             font-weight: 600;
         }
         QLabel#sectionHint {
-            color: #95A5B5;
+            color: #8A9AA8;
             font-size: 12px;
         }
         QLabel#largeValue {
-            color: #F1F5F9;
+            color: #E6EEF5;
             font-size: 22px;
             font-weight: 600;
         }
         QLabel#metricName {
-            color: #9BAABA;
+            color: #8A9AA8;
         }
         QLabel#metricValue {
-            color: #F1F5F9;
+            color: #E6EEF5;
             font-weight: 600;
         }
         QLabel#imageMainText {
-            color: #94A4B5;
+            color: #5A6A78;
             font-size: 21px;
             font-weight: 600;
         }
         QLabel#imageSubText {
-            color: #8797A8;
+            color: #5A6A78;
             font-size: 13px;
         }
         ElaPlainTextEdit {
             background: #202A34;
-            color: #E4EAF0;
+            color: #AABBCC;
             border: 1px solid #3A4755;
             border-radius: 6px;
             padding: 8px;
@@ -195,7 +209,7 @@ void MainWindow::buildMainView()
         }
         QStatusBar {
             background: #202A34;
-            color: #9BAABA;
+            color: #8A9AA8;
             border-top: 1px solid #3A4755;
         }
     )").arg(kPanelRadius));
@@ -212,9 +226,9 @@ void MainWindow::buildMainView()
     topStatusLayout->setSpacing(10);
     topStatusLayout->addWidget(makeLabel("铜粒子打磨系统", "systemTitle"));
     topStatusLayout->addSpacing(14);
-    topStatusLayout->addWidget(createStatusPill("设备：待机", "ok"));
-    topStatusLayout->addWidget(createStatusPill("后端：等待接入", "warn"));
-    topStatusLayout->addWidget(createStatusPill("PLC：未连接", "warn"));
+    topStatusLayout->addWidget(createStatusPill("设备：待机", "idle"));
+    topStatusLayout->addWidget(createStatusPill("后端：等待接入", "idle"));
+    topStatusLayout->addWidget(createStatusPill("PLC：未连接", "error"));
     topStatusLayout->addWidget(createStatusPill("共享内存：等待图像", "idle"));
     topStatusLayout->addStretch();
     topStatusLayout->addWidget(makeLabel(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"), "topTime"));
@@ -257,9 +271,9 @@ void MainWindow::buildMainView()
     leftLayout->addWidget(createStepRow("复检完成", "待开始", "idle"));
     leftLayout->addStretch();
     leftLayout->addWidget(makeLabel("关键设备状态", "sectionHint"));
-    leftLayout->addWidget(createStatusPill("PLC 未连接", "warn"));
-    leftLayout->addWidget(createStatusPill("相机 未接入", "warn"));
-    leftLayout->addWidget(createStatusPill("算法服务 未接入", "warn"));
+    leftLayout->addWidget(createStatusPill("PLC 未连接", "error"));
+    leftLayout->addWidget(createStatusPill("相机 未接入", "error"));
+    leftLayout->addWidget(createStatusPill("算法服务 未接入", "error"));
     centerLayout->addWidget(leftPanel);
 
     auto *imagePanel = createPanel("3D 图像与路径显示");
@@ -270,7 +284,7 @@ void MainWindow::buildMainView()
     imageArea->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     imageArea->setStyleSheet(R"(
         QFrame#imageArea {
-            background: #202A34;
+            background: #0E141A;
             border: 1px solid #3A4755;
             border-radius: 6px;
         }
@@ -380,14 +394,28 @@ QFrame *MainWindow::createPanel(const QString &title)
     return panel;
 }
 
-QLabel *MainWindow::createStatusPill(const QString &text, const QString &state)
+QWidget *MainWindow::createStatusPill(const QString &text, const QString &state)
 {
+    auto *status = new QWidget();
+    status->setMinimumHeight(28);
+    status->setStyleSheet(QString("border-radius:4px;%1").arg(pillStyle(state)));
+
+    auto *layout = new QHBoxLayout(status);
+    layout->setContentsMargins(8, 3, 10, 3);
+    layout->setSpacing(6);
+
+    auto *dot = makeLabel("●");
+    dot->setFixedWidth(10);
+    dot->setAlignment(Qt::AlignCenter);
+    dot->setStyleSheet(QString("color:%1;font-size:12px;").arg(statusDotColor(state)));
+
     auto *label = makeLabel(text);
+    label->setStyleSheet("color:#AABBCC;");
     label->setAlignment(Qt::AlignCenter);
-    label->setMinimumHeight(28);
-    label->setContentsMargins(10, 0, 10, 0);
-    label->setStyleSheet(QString("border-radius:4px;padding:3px 10px;%1").arg(pillStyle(state)));
-    return label;
+
+    layout->addWidget(dot);
+    layout->addWidget(label);
+    return status;
 }
 
 QWidget *MainWindow::createStepRow(const QString &name, const QString &stateText, const QString &state)
