@@ -327,7 +327,7 @@ void MainWindow::buildMainView()
     auto *titleBar = new QFrame(root);
     titleBar->setObjectName("titleBar");
     titleBar->setFixedHeight(44);
-    titleBar->setStyleSheet("QFrame#titleBar{background:#0F151C;border:1px solid #303C49;border-radius:8px;}");
+    titleBar->setStyleSheet("QFrame#titleBar{background:transparent;border:none;}");
     titleBar->installEventFilter(this);
     m_titleDragArea = titleBar;
     auto *titleLayout = new QHBoxLayout();
@@ -340,6 +340,7 @@ void MainWindow::buildMainView()
     logoLabel->setPixmap(QPixmap(":/img/logo.png").scaled(36, 36, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     logoLabel->setStyleSheet("background:transparent;border:none;");
     titleLayout->addWidget(logoLabel);
+    titleLayout->addWidget(makeLabel("铜粒子打磨系统", "systemTitle"));
     titleLayout->addStretch();
 
     auto *minimizeButton = createTitleButton(":/img/minimize.png", "最小化", titleBar);
