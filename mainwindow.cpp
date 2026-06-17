@@ -16,6 +16,7 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPainter>
 #include <QSizePolicy>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -30,19 +31,8 @@ const QColor kButtonText("#F7FBFF");
 
 QString pillStyle(const QString &state)
 {
-    if (state == "ok") {
-        return "background:rgba(46,204,113,0.12);border:1px solid #3A4755;";
-    }
-    if (state == "running") {
-        return "background:rgba(52,152,219,0.14);border:1px solid #3A4755;";
-    }
-    if (state == "warn") {
-        return "background:rgba(241,196,15,0.15);border:1px solid #3A4755;";
-    }
-    if (state == "error") {
-        return "background:rgba(231,76,60,0.13);border:1px solid #3A4755;";
-    }
-    return "background:rgba(241,196,15,0.15);border:1px solid #3A4755;";
+    Q_UNUSED(state)
+    return "background:#18222C;border:1px solid #303C49;";
 }
 
 QString statusDotColor(const QString &state)
@@ -71,6 +61,10 @@ QLabel *makeLabel(const QString &text, const QString &objectName = QString())
         label->setTextPixelSize(18);
     } else if (objectName == "largeValue") {
         label->setTextPixelSize(22);
+    } else if (objectName == "imageMainText") {
+        label->setTextPixelSize(18);
+    } else if (objectName == "imageSubText") {
+        label->setTextPixelSize(12);
     } else if (objectName == "panelTitle") {
         label->setTextPixelSize(16);
     } else if (objectName == "sectionHint") {
@@ -91,6 +85,45 @@ ElaProgressBar *makeProgressBar(int value)
     bar->setFixedHeight(8);
     return bar;
 }
+
+class ImageViewFrame : public QFrame
+{
+public:
+    explicit ImageViewFrame(QWidget *parent = nullptr)
+        : QFrame(parent)
+    {
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        QFrame::paintEvent(event);
+
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, false);
+
+        const QRect area = rect().adjusted(1, 1, -2, -2);
+        painter.fillRect(area, QColor("#0E141A"));
+
+        QPen gridPen(QColor(58, 71, 85, 70));
+        gridPen.setWidth(1);
+        painter.setPen(gridPen);
+
+        constexpr int gridSize = 48;
+        for (int x = area.left() + gridSize; x < area.right(); x += gridSize) {
+            painter.drawLine(x, area.top(), x, area.bottom());
+        }
+        for (int y = area.top() + gridSize; y < area.bottom(); y += gridSize) {
+            painter.drawLine(area.left(), y, area.right(), y);
+        }
+
+        QPen centerPen(QColor(0, 229, 255, 45));
+        centerPen.setWidth(1);
+        painter.setPen(centerPen);
+        painter.drawLine(area.center().x(), area.top(), area.center().x(), area.bottom());
+        painter.drawLine(area.left(), area.center().y(), area.right(), area.center().y());
+    }
+};
 
 void applyPrimaryButtonStyle(ElaPushButton *button)
 {
@@ -156,7 +189,7 @@ void MainWindow::buildMainView()
         }
         QFrame#panel {
             background: #252F3A;
-            border: 1px solid #3A4755;
+            border: 1px solid #303C49;
             border-radius: %1px;
         }
         QLabel#panelTitle {
@@ -202,7 +235,7 @@ void MainWindow::buildMainView()
         ElaPlainTextEdit {
             background: #202A34;
             color: #AABBCC;
-            border: 1px solid #3A4755;
+            border: 1px solid #303C49;
             border-radius: 6px;
             padding: 8px;
             selection-background-color: #2D6F9F;
@@ -210,13 +243,13 @@ void MainWindow::buildMainView()
         QStatusBar {
             background: #202A34;
             color: #8A9AA8;
-            border-top: 1px solid #3A4755;
+            border-top: 1px solid #303C49;
         }
     )").arg(kPanelRadius));
 
     auto *appBar = new ElaAppBar(root);
     appBar->setFixedHeight(72);
-    appBar->setStyleSheet("#ElaAppBar{background:#0F151C;border:1px solid #3A4755;border-radius:8px;}");
+    appBar->setStyleSheet("#ElaAppBar{background:#0F151C;border:1px solid #303C49;border-radius:8px;}");
     appBar->setWindowButtonFlags(ElaAppBarType::NoneButtonHint);
     auto *topContent = new QWidget(appBar);
     topContent->setStyleSheet("background:transparent;");
@@ -278,7 +311,7 @@ void MainWindow::buildMainView()
 
     auto *imagePanel = createPanel("3D 图像与路径显示");
     auto *imageLayout = qobject_cast<QVBoxLayout *>(imagePanel->layout());
-    auto *imageArea = new QFrame();
+    auto *imageArea = new ImageViewFrame();
     imageArea->setObjectName("imageArea");
     imageArea->setMinimumSize(620, 360);
     imageArea->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
@@ -391,6 +424,11 @@ QFrame *MainWindow::createPanel(const QString &title)
     titleRow->addStretch();
     layout->addLayout(titleRow);
 
+    auto *divider = new QFrame(panel);
+    divider->setFixedHeight(1);
+    divider->setStyleSheet("background:#303C49;border:none;");
+    layout->addWidget(divider);
+
     return panel;
 }
 
@@ -404,7 +442,7 @@ QWidget *MainWindow::createStatusPill(const QString &text, const QString &state)
     layout->setContentsMargins(8, 3, 10, 3);
     layout->setSpacing(6);
 
-    auto *dot = makeLabel("●");
+    auto *dot = makeLabel(QString(QChar(0x25CF)));
     dot->setFixedWidth(10);
     dot->setAlignment(Qt::AlignCenter);
     dot->setStyleSheet(QString("color:%1;font-size:12px;").arg(statusDotColor(state)));
@@ -421,17 +459,35 @@ QWidget *MainWindow::createStatusPill(const QString &text, const QString &state)
 QWidget *MainWindow::createStepRow(const QString &name, const QString &stateText, const QString &state)
 {
     auto *row = new QWidget();
+    row->setMinimumHeight(28);
     auto *layout = new QHBoxLayout(row);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(8);
 
     auto *nameLabel = makeLabel(name);
-    auto *stateLabel = createStatusPill(stateText, state);
-    stateLabel->setMinimumWidth(72);
+    nameLabel->setStyleSheet("color:#E4EAF0;");
+
+    auto *stateWidget = new QWidget(row);
+    auto *stateLayout = new QHBoxLayout(stateWidget);
+    stateLayout->setContentsMargins(0, 0, 0, 0);
+    stateLayout->setSpacing(5);
+
+    auto *dot = makeLabel(QString(QChar(0x25CF)));
+    dot->setFixedWidth(10);
+    dot->setAlignment(Qt::AlignCenter);
+    dot->setStyleSheet(QString("color:%1;font-size:12px;").arg(statusDotColor(state)));
+
+    auto *stateLabel = makeLabel(stateText);
+    stateLabel->setMinimumWidth(52);
+    stateLabel->setStyleSheet("color:#8A9AA8;");
+    stateLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+    stateLayout->addWidget(dot);
+    stateLayout->addWidget(stateLabel);
 
     layout->addWidget(nameLabel);
     layout->addStretch();
-    layout->addWidget(stateLabel);
+    layout->addWidget(stateWidget);
     return row;
 }
 
