@@ -12,13 +12,18 @@
 
 #include <QDateTime>
 #include <QColor>
+#include <QEvent>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QPainter>
+#include <QPixmap>
 #include <QSizePolicy>
 #include <QTimer>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 namespace {
@@ -149,6 +154,30 @@ void applyIconButtonStyle(ElaIconButton *button)
     button->setDarkHoverIconColor(kButtonText);
 }
 
+QToolButton *createTitleButton(const QString &iconPath, const QString &tooltip, QWidget *parent)
+{
+    auto *button = new QToolButton(parent);
+    button->setIcon(QIcon(iconPath));
+    button->setIconSize(QSize(15, 15));
+    button->setFixedSize(35, 35);
+    button->setToolTip(tooltip);
+    button->setCursor(Qt::ArrowCursor);
+    button->setStyleSheet(R"(
+        QToolButton {
+            background: transparent;
+            border: none;
+            border-radius: 4px;
+        }
+        QToolButton:hover {
+            background: #22303D;
+        }
+        QToolButton:pressed {
+            background: #2A3A49;
+        }
+    )");
+    return button;
+}
+
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -164,8 +193,57 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched != m_titleDragArea && watched != m_titleDragArea->parent()) {
+        return QMainWindow::eventFilter(watched, event);
+    }
+
+    if (event->type() == QEvent::MouseButtonDblClick) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() == Qt::LeftButton) {
+            isMaximized() ? showNormal() : showMaximized();
+            updateMaximizeButtonIcon();
+            return true;
+        }
+    }
+
+    if (event->type() == QEvent::MouseButtonPress) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() == Qt::LeftButton && !isMaximized()) {
+            m_dragging = true;
+            m_dragPosition = mouseEvent->globalPos() - frameGeometry().topLeft();
+            return true;
+        }
+    }
+
+    if (event->type() == QEvent::MouseMove && m_dragging) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        move(mouseEvent->globalPos() - m_dragPosition);
+        return true;
+    }
+
+    if (event->type() == QEvent::MouseButtonRelease) {
+        m_dragging = false;
+    }
+
+    return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::updateMaximizeButtonIcon()
+{
+    if (!m_maximizeButton) {
+        return;
+    }
+
+    m_maximizeButton->setIcon(QIcon(isMaximized() ? ":/img/mini.png" : ":/img/max.png"));
+    m_maximizeButton->setToolTip(isMaximized() ? "还原" : "最大化");
+}
+
 void MainWindow::buildMainView()
 {
+    setWindowFlags(Qt::FramelessWindowHint | Qt::Window);
+    setWindowIcon(QIcon(":/img/logo.png"));
     setWindowTitle("铜粒子打磨系统显示端");
     resize(1360, 820);
     menuBar()->hide();
@@ -253,10 +331,19 @@ void MainWindow::buildMainView()
     appBar->setWindowButtonFlags(ElaAppBarType::NoneButtonHint);
     auto *topContent = new QWidget(appBar);
     topContent->setStyleSheet("background:transparent;");
+    topContent->installEventFilter(this);
+    appBar->installEventFilter(this);
+    m_titleDragArea = topContent;
     auto *topStatusLayout = new QHBoxLayout();
     topContent->setLayout(topStatusLayout);
     topStatusLayout->setContentsMargins(10, 0, 10, 0);
     topStatusLayout->setSpacing(10);
+
+    auto *logoLabel = new QLabel(topContent);
+    logoLabel->setFixedSize(28, 28);
+    logoLabel->setPixmap(QPixmap(":/img/logo.png").scaled(28, 28, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    logoLabel->setStyleSheet("background:transparent;border:none;");
+    topStatusLayout->addWidget(logoLabel);
     topStatusLayout->addWidget(makeLabel("铜粒子打磨系统", "systemTitle"));
     topStatusLayout->addSpacing(14);
     topStatusLayout->addWidget(createStatusPill("设备：待机", "idle"));
@@ -278,6 +365,35 @@ void MainWindow::buildMainView()
     topStatusLayout->addWidget(connectButton);
     topStatusLayout->addWidget(alarmButton);
     topStatusLayout->addWidget(refreshButton);
+
+    auto *minimizeButton = createTitleButton(":/img/minimize.png", "最小化", appBar);
+    m_maximizeButton = createTitleButton(":/img/max.png", "最大化", appBar);
+    auto *closeButton = createTitleButton(":/img/close.png", "关闭", appBar);
+    closeButton->setStyleSheet(R"(
+        QToolButton {
+            background: transparent;
+            border: none;
+            border-radius: 4px;
+        }
+        QToolButton:hover {
+            background: #8B2B35;
+        }
+        QToolButton:pressed {
+            background: #A73440;
+        }
+    )");
+    topStatusLayout->addSpacing(4);
+    topStatusLayout->addWidget(minimizeButton);
+    topStatusLayout->addWidget(m_maximizeButton);
+    topStatusLayout->addWidget(closeButton);
+
+    connect(minimizeButton, &QToolButton::clicked, this, &QWidget::showMinimized);
+    connect(m_maximizeButton, &QToolButton::clicked, this, [this]() {
+        isMaximized() ? showNormal() : showMaximized();
+        updateMaximizeButtonIcon();
+    });
+    connect(closeButton, &QToolButton::clicked, this, &QWidget::close);
+    updateMaximizeButtonIcon();
 
     appBar->setCustomWidget(ElaAppBarType::MiddleArea, topContent);
     rootLayout->addWidget(appBar);

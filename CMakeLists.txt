@@ -24,6 +24,7 @@ add_executable(MzTLZ
     mainwindow.cpp
     mainwindow.h
     mainwindow.ui
+    resources.qrc
 )
 
 target_link_libraries(MzTLZ
