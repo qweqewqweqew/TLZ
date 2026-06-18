@@ -12,6 +12,6 @@ int main(int argc, char *argv[])
     eTheme->setThemeMode(ElaThemeType::Dark);
 
     MainWindow w;
-    w.show();
+    w.showMaximized();
     return a.exec();
 }

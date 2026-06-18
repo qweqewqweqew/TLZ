@@ -6,8 +6,8 @@
 
 class QFrame;
 class QLabel;
-class QToolButton;
 class QWidget;
+class ElaIconButton;
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -35,7 +35,7 @@ private:
 
     Ui::MainWindow *ui;
     QWidget *m_titleDragArea{nullptr};
-    QToolButton *m_maximizeButton{nullptr};
+    ElaIconButton *m_maximizeButton{nullptr};
     QPoint m_dragPosition;
     bool m_dragging{false};
 };

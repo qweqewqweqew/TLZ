@@ -1,13 +1,16 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
+#include "ElaIcon.h"
 #include "ElaIconButton.h"
+#include "ElaMenu.h"
 #include "ElaMessageBar.h"
 #include "ElaPlainTextEdit.h"
 #include "ElaProgressBar.h"
 #include "ElaPushButton.h"
 #include "ElaStatusBar.h"
 #include "ElaText.h"
+#include "ElaToolButton.h"
 
 #include <QAction>
 #include <QColor>
@@ -154,27 +157,15 @@ void applyIconButtonStyle(ElaIconButton *button)
     button->setDarkHoverIconColor(kButtonText);
 }
 
-QToolButton *createTitleButton(const QString &iconPath, const QString &tooltip, QWidget *parent)
+ElaIconButton *createTitleButton(const QString &iconPath, const QString &tooltip, QWidget *parent)
 {
-    auto *button = new QToolButton(parent);
-    button->setIcon(QIcon(iconPath));
-    button->setIconSize(QSize(20, 20));
+    auto *button = new ElaIconButton(QPixmap(iconPath), parent);
     button->setFixedSize(40, 40);
     button->setToolTip(tooltip);
     button->setCursor(Qt::ArrowCursor);
-    button->setStyleSheet(R"(
-        QToolButton {
-            background: transparent;
-            border: none;
-            border-radius: 4px;
-        }
-        QToolButton:hover {
-            background: #22303D;
-        }
-        QToolButton:pressed {
-            background: #2A3A49;
-        }
-    )");
+    button->setBorderRadius(4);
+    button->setLightHoverColor(QColor("#22303D"));
+    button->setDarkHoverColor(QColor("#22303D"));
     return button;
 }
 
@@ -236,7 +227,7 @@ void MainWindow::updateMaximizeButtonIcon()
         return;
     }
 
-    m_maximizeButton->setIcon(QIcon(isMaximized() ? ":/img/mini.png" : ":/img/max.png"));
+    m_maximizeButton->setPixmap(QPixmap(isMaximized() ? ":/img/mini.png" : ":/img/max.png"));
     m_maximizeButton->setToolTip(isMaximized() ? "还原" : "最大化");
 }
 
@@ -347,29 +338,18 @@ void MainWindow::buildMainView()
     auto *minimizeButton = createTitleButton(":/img/minimize.png", "最小化", titleBar);
     m_maximizeButton = createTitleButton(":/img/max.png", "最大化", titleBar);
     auto *closeButton = createTitleButton(":/img/close.png", "关闭", titleBar);
-    closeButton->setStyleSheet(R"(
-        QToolButton {
-            background: transparent;
-            border: none;
-            border-radius: 4px;
-        }
-        QToolButton:hover {
-            background: #8B2B35;
-        }
-        QToolButton:pressed {
-            background: #A73440;
-        }
-    )");
+    closeButton->setLightHoverColor(QColor("#8B2B35"));
+    closeButton->setDarkHoverColor(QColor("#8B2B35"));
     titleLayout->addWidget(minimizeButton);
     titleLayout->addWidget(m_maximizeButton);
     titleLayout->addWidget(closeButton);
 
-    connect(minimizeButton, &QToolButton::clicked, this, &QWidget::showMinimized);
-    connect(m_maximizeButton, &QToolButton::clicked, this, [this]() {
+    connect(minimizeButton, &QPushButton::clicked, this, &QWidget::showMinimized);
+    connect(m_maximizeButton, &QPushButton::clicked, this, [this]() {
         isMaximized() ? showNormal() : showMaximized();
         updateMaximizeButtonIcon();
     });
-    connect(closeButton, &QToolButton::clicked, this, &QWidget::close);
+    connect(closeButton, &QPushButton::clicked, this, &QWidget::close);
     updateMaximizeButtonIcon();
 
     rootLayout->addWidget(titleBar);
@@ -381,46 +361,15 @@ void MainWindow::buildMainView()
     headerLayout->setContentsMargins(12, 0, 12, 0);
     headerLayout->setSpacing(10);
 
-    auto *menuButton = new QToolButton(headerPanel);
+    auto *menuButton = new ElaToolButton(headerPanel);
     menuButton->setText("设置");
+    menuButton->setElaIcon(ElaIconType::Gear);
     menuButton->setPopupMode(QToolButton::InstantPopup);
-    menuButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    menuButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     menuButton->setFixedSize(104, 34);
     menuButton->setCursor(Qt::PointingHandCursor);
-    menuButton->setStyleSheet(R"(
-        QToolButton {
-            background: #18222C;
-            color: #E6EEF5;
-            border: 1px solid #303C49;
-            border-radius: 6px;
-            padding: 0 12px;
-            font-weight: 600;
-        }
-        QToolButton:hover {
-            background: #202C38;
-            border-color: #3A78A1;
-        }
-        QToolButton::menu-indicator {
-            image: none;
-        }
-    )");
-    auto *topMenu = new QMenu(menuButton);
-    topMenu->setStyleSheet(R"(
-        QMenu {
-            background: #18222C;
-            color: #E6EEF5;
-            border: 1px solid #303C49;
-            padding: 6px;
-        }
-        QMenu::item {
-            padding: 8px 42px 8px 14px;
-            border-radius: 4px;
-        }
-        QMenu::item:selected {
-            background: #2D6F9F;
-        }
-    )");
-    auto *settingsAction = topMenu->addAction("设置");
+    auto *topMenu = new ElaMenu(menuButton);
+    auto *settingsAction = topMenu->addElaIconAction(ElaIconType::Gear, "设置");
     menuButton->setMenu(topMenu);
     headerLayout->addWidget(menuButton);
     headerLayout->addStretch();
@@ -431,7 +380,7 @@ void MainWindow::buildMainView()
     rootLayout->addLayout(centerLayout, 1);
 
     auto *leftPanel = createPanel("工艺流程");
-    leftPanel->setMinimumWidth(360);
+    leftPanel->setMinimumWidth(520);
     auto *leftLayout = qobject_cast<QVBoxLayout *>(leftPanel->layout());
     leftLayout->addWidget(makeLabel("当前工序", "sectionHint"));
     leftLayout->addWidget(makeLabel("等待路径规划结果", "largeValue"));
@@ -450,14 +399,14 @@ void MainWindow::buildMainView()
     leftLayout->addWidget(createStatusPill("PLC 未连接", "error"));
     leftLayout->addWidget(createStatusPill("相机 未接入", "error"));
     leftLayout->addWidget(createStatusPill("算法服务 未接入", "error"));
-    centerLayout->addWidget(leftPanel, 1);
+    centerLayout->addWidget(leftPanel, 2);
 
     auto *imagePanel = createPanel("图像显示");
     imagePanel->setFixedWidth(960);
     auto *imageLayout = qobject_cast<QVBoxLayout *>(imagePanel->layout());
     auto *imageArea = new ImageViewFrame();
     imageArea->setObjectName("imageArea");
-    imageArea->setFixedSize(900, 360);
+    imageArea->setFixedSize(720, 600);
     imageArea->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     imageArea->setStyleSheet(R"(
         QFrame#imageArea {
@@ -475,16 +424,10 @@ void MainWindow::buildMainView()
     imageAreaLayout->addStretch();
     imageLayout->addWidget(imageArea, 0, Qt::AlignHCenter);
 
-    auto *imageInfoLayout = new QHBoxLayout();
-    imageInfoLayout->addWidget(createStatusPill("FrameId：-", "idle"));
-    imageInfoLayout->addWidget(createStatusPill("缺陷：-", "idle"));
-    imageInfoLayout->addWidget(createStatusPill("路径段：-", "idle"));
-    imageInfoLayout->addStretch();
-    imageLayout->addLayout(imageInfoLayout);
     centerLayout->addWidget(imagePanel);
 
     auto *rightPanel = createPanel("运行数据");
-    rightPanel->setMinimumWidth(360);
+    rightPanel->setMinimumWidth(340);
     auto *rightLayout = qobject_cast<QVBoxLayout *>(rightPanel->layout());
     rightLayout->addWidget(makeLabel("运动轴", "sectionHint"));
     rightLayout->addWidget(createMetricRow("当前坐标 X", "0.000", "mm"));
