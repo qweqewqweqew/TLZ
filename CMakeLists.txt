@@ -14,7 +14,7 @@ if(MSVC)
     add_compile_options(/utf-8 /Zm500 /bigobj)
 endif()
 
-find_package(Qt5 5.15 REQUIRED COMPONENTS Core Widgets PrintSupport)
+find_package(Qt5 5.15 REQUIRED COMPONENTS Core Widgets PrintSupport WebSockets)
 
 set(ELAWIDGETTOOLS_BUILD_STATIC_LIB OFF CACHE BOOL "Build ElaWidgetTools as a shared library." FORCE)
 add_subdirectory(
@@ -24,10 +24,30 @@ add_subdirectory(
 
 add_executable(MzTLZ
     WIN32 MACOSX_BUNDLE
+    AppStyle.cpp
+    AppStyle.h
+    EventLogPanel.cpp
+    EventLogPanel.h
+    ImageDisplayPanel.cpp
+    ImageDisplayPanel.h
+    ImageViewFrame.cpp
+    ImageViewFrame.h
     main.cpp
     Logger.h
     mainwindow.cpp
     mainwindow.h
+    RunDataPanel.cpp
+    RunDataPanel.h
+    RunningStatusPanel.cpp
+    RunningStatusPanel.h
+    TelemetryPlotWidget.cpp
+    TelemetryPlotWidget.h
+    TelemetryWebSocketServer.cpp
+    TelemetryWebSocketServer.h
+    TitleBar.cpp
+    TitleBar.h
+    UiHelpers.cpp
+    UiHelpers.h
     mainwindow.ui
     qcustomplot.cpp
     qcustomplot.h
@@ -39,6 +59,7 @@ target_link_libraries(MzTLZ
         Qt5::Core
         Qt5::Widgets
         Qt5::PrintSupport
+        Qt5::WebSockets
         ElaWidgetTools
 )
 
