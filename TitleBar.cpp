@@ -72,6 +72,8 @@ TitleBar::TitleBar(QWidget *parent)
     auto *topMenu = new ElaMenu(settingsButton);
     auto *settingsAction = topMenu->addElaIconAction(ElaIconType::Gear, "系统设置");
     m_simulationAction = topMenu->addElaIconAction(ElaIconType::ChartLine, "开始模拟");
+    auto *teachAction = topMenu->addElaIconAction(ElaIconType::LocationCrosshairs, "示教模块");
+    auto *historyAction = topMenu->addElaIconAction(ElaIconType::ClockRotateLeft, "历史记录");
     settingsButton->setMenu(topMenu);
     titleLayout->addWidget(settingsButton);
 
@@ -86,6 +88,8 @@ TitleBar::TitleBar(QWidget *parent)
     titleLayout->addWidget(closeButton);
 
     connect(settingsAction, &QAction::triggered, this, &TitleBar::settingsRequested);
+    connect(teachAction, &QAction::triggered, this, &TitleBar::teachingModuleRequested);
+    connect(historyAction, &QAction::triggered, this, &TitleBar::historyRequested);
     connect(m_simulationAction, &QAction::triggered, this, [this]() {
         m_simulationRunning = !m_simulationRunning;
         updateSimulationActionText();

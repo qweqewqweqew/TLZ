@@ -4,11 +4,13 @@
 #include <QMainWindow>
 
 class EventLogPanel;
+class HistoryDialog;
 class ImageDisplayPanel;
+class Ros2Bridge;
 class RunDataPanel;
 class RunningStatusPanel;
+class TeachingDialog;
 class QTimer;
-class TelemetryWebSocketServer;
 class TitleBar;
 
 QT_BEGIN_NAMESPACE
@@ -33,7 +35,7 @@ private:
 
     void buildMainView();
     void connectTitleBar();
-    void startTelemetryServer();
+    void startRos2Bridge();
     void appendEventLog(const QString &level, const QString &message);
     void toggleMaximized();
     void setSimulationRunning(bool running);
@@ -49,7 +51,9 @@ private:
     EventLogPanel *m_eventLogPanel{nullptr};
     RunDataPanel *m_runDataPanel{nullptr};
     QTimer *m_waveformTimer{nullptr};
-    TelemetryWebSocketServer *m_telemetryServer{nullptr};
+    Ros2Bridge *m_ros2Bridge{nullptr};
+    TeachingDialog *m_teachingDialog{nullptr};
+    HistoryDialog *m_historyDialog{nullptr};
     double m_currentT{0};
     bool m_simulationRunning{false};
 };

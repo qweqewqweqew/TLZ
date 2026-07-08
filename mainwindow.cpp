@@ -5,18 +5,22 @@
 #include "ElaMessageBar.h"
 #include "ElaStatusBar.h"
 #include "EventLogPanel.h"
+#include "HistoryDialog.h"
 #include "ImageDisplayPanel.h"
 #include "Logger.h"
+#include "Ros2Bridge.h"
 #include "RunDataPanel.h"
 #include "RunningStatusPanel.h"
-#include "TelemetryWebSocketServer.h"
+#include "TeachingDialog.h"
 #include "TitleBar.h"
 #include "UiHelpers.h"
 
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QIcon>
+#include <QImage>
 #include <QEvent>
+#include <QMenuBar>
 #include <QTimer>
 #include <QtMath>
 #include <QVBoxLayout>
@@ -34,8 +38,8 @@ MainWindow::~MainWindow()
     if (m_waveformTimer) {
         m_waveformTimer->stop();
     }
-    if (m_telemetryServer) {
-        m_telemetryServer->stop();
+    if (m_ros2Bridge) {
+        m_ros2Bridge->stop();
     }
     delete ui;
 }
@@ -118,7 +122,7 @@ void MainWindow::buildMainView()
     m_waveformTimer = new QTimer(this);
     connect(m_waveformTimer, &QTimer::timeout, this, &MainWindow::onWaveformUpdate);
 
-    startTelemetryServer();
+    startRos2Bridge();
 }
 
 void MainWindow::connectTitleBar()
@@ -126,6 +130,23 @@ void MainWindow::connectTitleBar()
     connect(m_titleBar, &TitleBar::settingsRequested, this, [this]() {
         ElaMessageBar::information(ElaMessageBarType::BottomRight, "系统设置", "设置功能后续接入。", 2000, this);
         appendEventLog("INFO", "用户打开了系统设置");
+    });
+    connect(m_titleBar, &TitleBar::teachingModuleRequested, this, [this]() {
+        if (!m_teachingDialog) {
+            m_teachingDialog = new TeachingDialog(m_ros2Bridge, this);
+        }
+        m_teachingDialog->show();
+        m_teachingDialog->raise();
+        m_teachingDialog->activateWindow();
+    });
+    connect(m_titleBar, &TitleBar::historyRequested, this, [this]() {
+        if (!m_historyDialog) {
+            m_historyDialog = new HistoryDialog(this);
+        }
+        m_historyDialog->show();
+        m_historyDialog->raise();
+        m_historyDialog->activateWindow();
+        appendEventLog("INFO", "用户打开了历史记录");
     });
     connect(m_titleBar, &TitleBar::simulationToggled, this, &MainWindow::setSimulationRunning);
     connect(m_titleBar, &TitleBar::minimizeRequested, this, &QWidget::showMinimized);
@@ -137,18 +158,64 @@ void MainWindow::connectTitleBar()
     m_titleBar->setMaximizedState(isMaximized());
 }
 
-void MainWindow::startTelemetryServer()
+void MainWindow::startRos2Bridge()
 {
-    m_telemetryServer = new TelemetryWebSocketServer(this);
-    connect(m_telemetryServer, &TelemetryWebSocketServer::telemetryReceived,
-            this, &MainWindow::appendTelemetrySample);
-    connect(m_telemetryServer, &TelemetryWebSocketServer::infoMessage, this, [this](const QString &message) {
+    m_ros2Bridge = new Ros2Bridge(this);
+    connect(m_ros2Bridge, &Ros2Bridge::infoMessage, this, [this](const QString &message) {
         appendEventLog("INFO", message);
     });
-    connect(m_telemetryServer, &TelemetryWebSocketServer::errorMessage, this, [this](const QString &message) {
+    connect(m_ros2Bridge, &Ros2Bridge::errorMessage, this, [this](const QString &message) {
         appendEventLog("ERROR", message);
     });
-    m_telemetryServer->start(9002);
+    connect(m_ros2Bridge, &Ros2Bridge::scanResultReceived, this,
+            [this](quint8 imageType,
+                   quint64 frameId,
+                   const QString &shmName,
+                   quint64 offset,
+                   quint64 dataSize,
+                   quint32 width,
+                   quint32 height,
+                   quint32 pixelFormat) {
+                appendEventLog("INFO",
+                               QString("相机图像通知 type=%1 frame=%2 shm=%3 offset=%4 size=%5 %6x%7 fmt=%8")
+                                   .arg(imageType)
+                                   .arg(frameId)
+                                   .arg(shmName)
+                                   .arg(offset)
+                                   .arg(dataSize)
+                                   .arg(width)
+                                   .arg(height)
+                                   .arg(pixelFormat));
+            });
+    connect(m_ros2Bridge, &Ros2Bridge::scanFrameReady, this,
+            [this](const QImage &range,
+                   const QImage &intensity,
+                   quint64 frameId,
+                   quint64 timestampNs,
+                   quint32 width,
+                   quint32 height,
+                   quint32 pixelFormat) {
+                Q_UNUSED(width);
+                Q_UNUSED(height);
+                Q_UNUSED(pixelFormat);
+                if (m_imagePanel) {
+                    m_imagePanel->updateScanFrame(range, intensity, frameId, timestampNs);
+                }
+            });
+    connect(m_ros2Bridge, &Ros2Bridge::algorithmResultReceived, this,
+            [this](bool success, quint64 frameId, quint64 taskId, const QString &message) {
+                appendEventLog(success ? "INFO" : "ERROR",
+                               QString("后端结果 frame=%1 task=%2 message=%3")
+                                   .arg(frameId)
+                                   .arg(taskId)
+                                   .arg(message));
+            });
+    connect(m_ros2Bridge, &Ros2Bridge::backendStateReceived, this,
+            [this](const QString &state) {
+                appendEventLog("INFO", QString("后端状态: %1").arg(state));
+            });
+
+    m_ros2Bridge->start();
 }
 
 void MainWindow::appendEventLog(const QString &level, const QString &message)

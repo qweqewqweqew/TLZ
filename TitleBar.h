@@ -20,6 +20,8 @@ public:
 signals:
     void settingsRequested();
     void simulationToggled(bool running);
+    void teachingModuleRequested();
+    void historyRequested();
     void minimizeRequested();
     void maximizeRestoreRequested();
     void closeRequested();
