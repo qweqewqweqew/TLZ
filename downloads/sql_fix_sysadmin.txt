@@ -1,0 +1,5 @@
+﻿== stop normal service ==
+== start single user sqlcmd ==
+== grant sysadmin ==
+== restart normal service ==
+== verify ==

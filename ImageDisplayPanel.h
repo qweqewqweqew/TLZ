@@ -1,8 +1,11 @@
 #ifndef IMAGEDISPLAYPANEL_H
 #define IMAGEDISPLAYPANEL_H
 
+#include "MillingPathVM.h"
+
 #include <QFrame>
 #include <QImage>
+#include <QVector>
 
 class ElaPushButton;
 class ImageViewFrame;
@@ -20,6 +23,11 @@ public:
                          const QImage &intensity,
                          quint64 frameId,
                          quint64 timestampNs);
+
+    // 设置/清除叠加显示的打磨路径（来自 MillingPaths msg）。
+    // calibrationApplied=false 时，叠加层会半透明 + 角标提示"未标定"。
+    void setMillingPaths(const QVector<MillingPathVM> &paths, bool calibrationApplied);
+    void clearMillingPaths();
 
 private:
     enum class ViewMode { Range2D, Intensity };

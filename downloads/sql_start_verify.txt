@@ -1,0 +1,23 @@
+﻿== start service ==
+== service state ==
+
+
+Name        : MSSQL$SQLEXPRESS
+Status      : Running
+StartType   : Automatic
+DisplayName : SQL Server (SQLEXPRESS)
+ServiceName : MSSQL$SQLEXPRESS
+
+
+
+
+== sqlcmd ==
+VersionInfo                                                                                                                                                                                                                                                                                                 
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Microsoft SQL Server 2022 (RTM-CU25) (KB5081477) - 16.0.4255.1 (X64) 
+	Apr 23 2026 22:38:54 
+	Copyright (C) 2022 Microsoft Corporation
+	Express Edition (64-bit) on Windows 10 Pro 10.0 <X64> (Build 26200: )
+                                                                                              
+
+(1 行受影响)

@@ -2,11 +2,17 @@
 
 #include "ShmImageReader.h"
 
-#include <mz_interfaces/msg/algorithm_result.hpp>
+#include <mz_interfaces/msg/milling_path.hpp>
+#include <mz_interfaces/msg/milling_paths.hpp>
+#include <mz_interfaces/msg/milling_progress.hpp>
+#include <mz_interfaces/msg/plc_feedback.hpp>
+#include <mz_interfaces/msg/plc_path_command_params.hpp>
 #include <mz_interfaces/msg/scan_result.hpp>
 #include <rclcpp/executors/single_threaded_executor.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/string.hpp>
+
+#include <QMetaType>
 
 #include <algorithm>
 #include <cstdint>
@@ -17,10 +23,15 @@
 namespace {
 
 constexpr char kNodeName[] = "mz_tlz";
-constexpr char kScanCompleteTopic[] = "scan_complete";
-constexpr char kAlgorithmResultTopic[] = "algorithm_result";
+constexpr char kScanRangeTopic[] = "scan_range";
+constexpr char kScanIntensityTopic[] = "scan_intensity";
 constexpr char kBackendStateTopic[] = "backend_state";
 constexpr char kTeachRequestTopic[] = "teach_request";
+constexpr char kMillingPathsTopic[] = "milling/paths";
+constexpr char kMillingProgressTopic[] = "milling/progress";
+constexpr char kPlcFeedbackTopic[] = "plc/feedback";
+constexpr char kPlcPathCommandParamsTopic[] = "plc_path_command_params";
+constexpr std::uint64_t kInvalidFrame = ~std::uint64_t(0);
 
 void emitScanSegment(Ros2Bridge *bridge,
                      const mz_interfaces::msg::ScanResult &message,
@@ -46,16 +57,6 @@ void emitScanSegment(Ros2Bridge *bridge,
                                  .arg(message.width)
                                  .arg(message.height)
                                  .arg(message.pixel_format));
-}
-
-void emitScanResult(Ros2Bridge *bridge, const mz_interfaces::msg::ScanResult &message)
-{
-    if (message.range_size > 0) {
-        emitScanSegment(bridge, message, 0, 0, message.range_size);
-    }
-    if (message.intensity_size > 0) {
-        emitScanSegment(bridge, message, 1, message.range_size, message.intensity_size);
-    }
 }
 
 // ---------- UI 侧的显示适配：把 SHM 原始字节转成 QImage ----------
@@ -116,15 +117,34 @@ QImage wrapMono8ToGrayscale8(const RawSlice &s, int width, int height)
 
 struct Ros2BridgeEntities final
 {
-    rclcpp::Subscription<mz_interfaces::msg::ScanResult>::SharedPtr scanResult;
-    rclcpp::Subscription<mz_interfaces::msg::AlgorithmResult>::SharedPtr algorithmResult;
+    rclcpp::Subscription<mz_interfaces::msg::ScanResult>::SharedPtr scanRange;
+    rclcpp::Subscription<mz_interfaces::msg::ScanResult>::SharedPtr scanIntensity;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr backendState;
+    rclcpp::Subscription<mz_interfaces::msg::MillingPaths>::SharedPtr millingPaths;
+    rclcpp::Subscription<mz_interfaces::msg::MillingProgress>::SharedPtr millingProgress;
+    rclcpp::Subscription<mz_interfaces::msg::PlcFeedback>::SharedPtr plcFeedback;
+    rclcpp::Subscription<mz_interfaces::msg::PlcPathCommandParams>::SharedPtr plcPathCommandParams;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr teachRequest;
+
+    bool pendingHasRange{false};
+    bool pendingHasIntensity{false};
+    std::uint64_t pendingFrameId{0};
+    std::uint64_t pendingTimestampNs{0};
+    std::uint32_t pendingWidth{0};
+    std::uint32_t pendingHeight{0};
+    std::uint32_t pendingPixelFormat{0};
+    QImage pendingRange;
+    QImage pendingIntensity;
 };
 
 Ros2Bridge::Ros2Bridge(QObject *parent)
     : QObject(parent)
 {
+    // 让 QVector<MillingPathVM> 能通过 Qt::QueuedConnection 跨线程传递（ROS 回调线程 → GUI 线程）
+    qRegisterMetaType<MillingPathVM>("MillingPathVM");
+    qRegisterMetaType<QVector<MillingPathVM>>("QVector<MillingPathVM>");
+    qRegisterMetaType<PlcFeedbackVM>("PlcFeedbackVM");
+    qRegisterMetaType<PlcPathCommandParamsVM>("PlcPathCommandParamsVM");
 }
 
 Ros2Bridge::~Ros2Bridge()
@@ -148,28 +168,60 @@ bool Ros2Bridge::start()
         m_entities = std::make_shared<Ros2BridgeEntities>();
         const auto qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
 
-        m_entities->scanResult = m_node->create_subscription<mz_interfaces::msg::ScanResult>(
-            kScanCompleteTopic,
-            qos,
-            [this](const mz_interfaces::msg::ScanResult::SharedPtr msg) {
+        auto clearPendingScanFrame = [this]() {
+            if (!m_entities) return;
+            m_entities->pendingHasRange = false;
+            m_entities->pendingHasIntensity = false;
+            m_entities->pendingFrameId = 0;
+            m_entities->pendingTimestampNs = 0;
+            m_entities->pendingWidth = 0;
+            m_entities->pendingHeight = 0;
+            m_entities->pendingPixelFormat = 0;
+            m_entities->pendingRange = QImage();
+            m_entities->pendingIntensity = QImage();
+        };
+
+        auto emitPendingScanFrame = [this, clearPendingScanFrame]() {
+            if (!m_entities || (!m_entities->pendingHasRange && !m_entities->pendingHasIntensity)) {
+                return;
+            }
+            emit scanFrameReady(m_entities->pendingRange,
+                                m_entities->pendingIntensity,
+                                m_entities->pendingFrameId,
+                                m_entities->pendingTimestampNs,
+                                m_entities->pendingWidth,
+                                m_entities->pendingHeight,
+                                m_entities->pendingPixelFormat);
+            clearPendingScanFrame();
+        };
+
+        auto handleScanResult =
+            [this, emitPendingScanFrame, clearPendingScanFrame](
+                const mz_interfaces::msg::ScanResult::SharedPtr msg,
+                std::uint8_t imageType) {
                 if (!msg) return;
 
-                // 1. 先按原有逻辑广播每段的元数据（用于事件日志）
-                emitScanResult(this, *msg);
+                const std::uint64_t offset = msg->offset;
+                const std::uint64_t dataSize = msg->data_size;
 
-                // 2. 若 frame_id == uint64(-1) 说明相机端标记失败，跳过读取
-                constexpr std::uint64_t kInvalidFrame = ~std::uint64_t(0);
+                emitScanSegment(this, *msg, imageType, offset, dataSize);
+
                 if (msg->frame_id == kInvalidFrame) {
-                    emit errorMessage(
-                        QString("相机上报采集失败: frame_id=-1 shm=%1")
-                            .arg(QString::fromStdString(msg->shm_name)));
+                    if (imageType == 0) {
+                        emit errorMessage(
+                            QString("相机 Range 采集失败: frame_id=-1 shm=%1")
+                                .arg(QString::fromStdString(msg->shm_name)));
+                        clearPendingScanFrame();
+                    } else {
+                        emit infoMessage("相机未提供 Intensity 图像");
+                        emitPendingScanFrame();
+                    }
                     return;
                 }
-                if (msg->range_size == 0 && msg->intensity_size == 0) {
+                if (dataSize == 0) {
                     return;
                 }
 
-                // 3. 打开/复用共享内存视图，切出两段字节
                 std::lock_guard<std::mutex> lock(m_readerMutex);
                 if (!m_shmReader) {
                     m_shmReader = std::make_unique<ShmImageReader>();
@@ -182,46 +234,64 @@ bool Ros2Bridge::start()
                     return;
                 }
 
-                RawSlice rangeSlice;
-                RawSlice intensitySlice;
                 err.clear();
-                m_shmReader->sliceScanFrame(msg->range_size,
-                                            msg->intensity_size,
-                                            &rangeSlice,
-                                            &intensitySlice,
-                                            &err);
+                const RawSlice slice = m_shmReader->slice(offset, dataSize, &err);
                 if (!err.empty()) {
-                    emit errorMessage(QString("切分共享内存失败: %1")
+                    emit errorMessage(QString("读取共享内存切片失败: %1")
                                           .arg(QString::fromStdString(err)));
                 }
-
-                // 4. UI 侧适配：把原始字节解码成用于显示的 QImage。
-                //    RawSlice 指向 mapping view 内部，只在本作用域内使用，
-                //    stretchMono16ToGrayscale8 / wrapMono8ToGrayscale8 内部
-                //    会把像素拷贝进 QImage，之后就与 SHM 无关了。
-                const QImage rangeImg = stretchMono16ToGrayscale8(
-                    rangeSlice, int(msg->width), int(msg->height));
-                const QImage intensityImg = wrapMono8ToGrayscale8(
-                    intensitySlice, int(msg->width), int(msg->height));
-
-                if (!rangeImg.isNull() || !intensityImg.isNull()) {
-                    emit scanFrameReady(rangeImg,
-                                        intensityImg,
-                                        msg->frame_id,
-                                        msg->timestamp_ns,
-                                        msg->width,
-                                        msg->height,
-                                        msg->pixel_format);
+                if (slice.empty()) {
+                    return;
                 }
+
+                const QImage image = (imageType == 0)
+                    ? stretchMono16ToGrayscale8(slice, int(msg->width), int(msg->height))
+                    : wrapMono8ToGrayscale8(slice, int(msg->width), int(msg->height));
+                if (image.isNull()) {
+                    return;
+                }
+
+                if ((m_entities->pendingHasRange || m_entities->pendingHasIntensity) &&
+                    m_entities->pendingFrameId != msg->frame_id) {
+                    emitPendingScanFrame();
+                }
+
+                m_entities->pendingFrameId = msg->frame_id;
+                if (imageType == 0) {
+                    m_entities->pendingHasRange = true;
+                    m_entities->pendingRange = image;
+                    m_entities->pendingTimestampNs = msg->timestamp_ns;
+                    m_entities->pendingWidth = msg->width;
+                    m_entities->pendingHeight = msg->height;
+                    m_entities->pendingPixelFormat = msg->pixel_format;
+                } else {
+                    m_entities->pendingHasIntensity = true;
+                    m_entities->pendingIntensity = image;
+                    if (!m_entities->pendingHasRange) {
+                        m_entities->pendingTimestampNs = msg->timestamp_ns;
+                        m_entities->pendingWidth = msg->width;
+                        m_entities->pendingHeight = msg->height;
+                        m_entities->pendingPixelFormat = msg->pixel_format;
+                    }
+                }
+
+                if (m_entities->pendingHasRange && m_entities->pendingHasIntensity) {
+                    emitPendingScanFrame();
+                }
+            };
+
+        m_entities->scanRange = m_node->create_subscription<mz_interfaces::msg::ScanResult>(
+            kScanRangeTopic,
+            qos,
+            [handleScanResult](const mz_interfaces::msg::ScanResult::SharedPtr msg) {
+                handleScanResult(msg, 0);
             });
 
-        m_entities->algorithmResult = m_node->create_subscription<mz_interfaces::msg::AlgorithmResult>(
-            kAlgorithmResultTopic,
+        m_entities->scanIntensity = m_node->create_subscription<mz_interfaces::msg::ScanResult>(
+            kScanIntensityTopic,
             qos,
-            [this](const mz_interfaces::msg::AlgorithmResult::SharedPtr msg) {
-                if (msg) {
-                    handleAlgorithmResult(msg->success, msg->frame_id, msg->task_id, msg->message);
-                }
+            [handleScanResult](const mz_interfaces::msg::ScanResult::SharedPtr msg) {
+                handleScanResult(msg, 1);
             });
 
         m_entities->backendState = m_node->create_subscription<std_msgs::msg::String>(
@@ -232,6 +302,101 @@ bool Ros2Bridge::start()
                     handleBackendState(msg->data);
                 }
             });
+
+        m_entities->millingPaths = m_node->create_subscription<mz_interfaces::msg::MillingPaths>(
+            kMillingPathsTopic,
+            qos,
+            [this](const mz_interfaces::msg::MillingPaths::SharedPtr msg) {
+                if (!msg) return;
+
+                QVector<MillingPathVM> paths;
+                paths.reserve(int(msg->paths.size()));
+                for (const auto &p : msg->paths) {
+                    MillingPathVM vm;
+                    vm.uStart = p.u_start;
+                    vm.vStart = p.v_start;
+                    vm.uEnd   = p.u_end;
+                    vm.vEnd   = p.v_end;
+                    vm.rSpeed = p.r_speed;
+                    vm.xSpeed = p.x_speed;
+                    vm.ySpeed = p.y_speed;
+                    vm.doCut  = p.do_cut;
+                    paths.push_back(vm);
+                }
+
+                emit millingPathsReceived(
+                    int(msg->task_id),
+                    int(msg->path_total),
+                    int(msg->max_particle_height),
+                    msg->calibration_applied,
+                    paths);
+
+                emit infoMessage(QString("收到打磨路径: task=%1 total=%2 maxH=%3 calib=%4 size=%5")
+                                     .arg(msg->task_id)
+                                     .arg(msg->path_total)
+                                     .arg(msg->max_particle_height)
+                                     .arg(msg->calibration_applied ? "true" : "false")
+                                     .arg(paths.size()));
+            });
+
+        m_entities->millingProgress = m_node->create_subscription<mz_interfaces::msg::MillingProgress>(
+            kMillingProgressTopic,
+            qos,
+            [this](const mz_interfaces::msg::MillingProgress::SharedPtr msg) {
+                if (!msg) return;
+
+                const QString message = QString::fromStdString(msg->message);
+                emit millingProgressReceived(
+                    int(msg->task_id),
+                    msg->progress,
+                    msg->finished,
+                    msg->success,
+                    message);
+            });
+
+        m_entities->plcFeedback = m_node->create_subscription<mz_interfaces::msg::PlcFeedback>(
+            kPlcFeedbackTopic,
+            qos,
+            [this](const mz_interfaces::msg::PlcFeedback::SharedPtr msg) {
+                if (!msg) return;
+
+                PlcFeedbackVM vm;
+                vm.statusWord = msg->status_word;
+                vm.completedPath = msg->completed_path;
+                vm.currentPath = msg->current_path;
+                vm.faultCode = msg->fault_code;
+                vm.pathParams.xPos = msg->path_params.x_pos;
+                vm.pathParams.yPos = msg->path_params.y_pos;
+                vm.pathParams.zPos = msg->path_params.z_pos;
+                vm.pathParams.xSpeed = msg->path_params.x_speed;
+                vm.pathParams.ySpeed = msg->path_params.y_speed;
+                vm.pathParams.zSpeed = msg->path_params.z_speed;
+                vm.pathParams.spindleSpeed = msg->path_params.spindle_speed;
+                vm.pathParams.spindleTorque = msg->path_params.spindle_torque;
+
+                emit plcFeedbackReceived(vm);
+            });
+
+        m_entities->plcPathCommandParams =
+            m_node->create_subscription<mz_interfaces::msg::PlcPathCommandParams>(
+                kPlcPathCommandParamsTopic,
+                qos,
+                [this](const mz_interfaces::msg::PlcPathCommandParams::SharedPtr msg) {
+                    if (!msg) return;
+
+                    PlcPathCommandParamsVM vm;
+                    vm.x = msg->x;
+                    vm.y = msg->y;
+                    vm.z = msg->z;
+                    vm.feedSpeed = msg->feed_speed;
+                    vm.feedAmount = msg->feed_amount;
+                    vm.spindleSpeed = msg->spindle_speed;
+                    vm.plungeCount = msg->plunge_count;
+                    vm.plungeAmount = msg->plunge_amount;
+                    vm.feedDirection = msg->feed_direction;
+
+                    emit plcPathCommandReceived(vm);
+                });
 
         m_entities->teachRequest = m_node->create_publisher<std_msgs::msg::String>(
             kTeachRequestTopic, qos);
@@ -248,7 +413,7 @@ bool Ros2Bridge::start()
             }
         });
 
-        emit infoMessage("ROS2 通信节点已启动，监听 scan_complete / algorithm_result / backend_state");
+        emit infoMessage("ROS2 通信节点已启动，监听 scan_range / scan_intensity / backend_state / milling/paths / milling/progress / plc/feedback / plc_path_command_params");
         return true;
     } catch (const std::exception &ex) {
         emit errorMessage(QString("ROS2 通信节点启动失败: %1").arg(QString::fromStdString(ex.what())));
@@ -295,20 +460,6 @@ void Ros2Bridge::stop()
 bool Ros2Bridge::isRunning() const
 {
     return m_running;
-}
-
-void Ros2Bridge::handleAlgorithmResult(bool success,
-                                       std::uint64_t frameId,
-                                       std::uint64_t taskId,
-                                       const std::string &message)
-{
-    const QString text = QString::fromStdString(message);
-    emit algorithmResultReceived(success, frameId, taskId, text);
-    emit infoMessage(QString("收到后端结果: frame=%1 task=%2 success=%3 message=%4")
-                         .arg(frameId)
-                         .arg(taskId)
-                         .arg(success ? "true" : "false")
-                         .arg(text));
 }
 
 void Ros2Bridge::handleBackendState(const std::string &state)

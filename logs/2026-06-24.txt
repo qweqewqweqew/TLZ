@@ -1,0 +1,10 @@
+[16:44:47.669] [main.cpp:13] 程序启动
+[16:44:48.598] [mainwindow.cpp:163] [ERROR] WebSocket 启动失败: The bound address is already in use
+[16:44:48.937] [mainwindow.cpp:163] [INFO] 界面初始化完成
+[16:44:52.632] [main.cpp:22] 程序退出，返回码: 0
+[16:45:25.606] [main.cpp:13] 程序启动
+[16:45:26.119] [mainwindow.cpp:163] [INFO] WebSocket 已启动: ws://127.0.0.1:9002
+[16:45:26.461] [mainwindow.cpp:163] [INFO] 界面初始化完成
+[16:45:29.077] [mainwindow.cpp:163] [INFO] WebSocket 客户端已连接: 127.0.0.1
+[16:45:31.827] [mainwindow.cpp:163] [INFO] WebSocket 客户端已断开: 127.0.0.1
+[16:45:33.329] [main.cpp:22] 程序退出，返回码: 0

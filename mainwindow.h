@@ -9,6 +9,7 @@ class ImageDisplayPanel;
 class Ros2Bridge;
 class RunDataPanel;
 class RunningStatusPanel;
+class TaskFlowPanel;
 class TeachingDialog;
 class QTimer;
 class TitleBar;
@@ -50,12 +51,14 @@ private:
     ImageDisplayPanel *m_imagePanel{nullptr};
     EventLogPanel *m_eventLogPanel{nullptr};
     RunDataPanel *m_runDataPanel{nullptr};
+    TaskFlowPanel *m_taskFlowPanel{nullptr};
     QTimer *m_waveformTimer{nullptr};
     Ros2Bridge *m_ros2Bridge{nullptr};
     TeachingDialog *m_teachingDialog{nullptr};
     HistoryDialog *m_historyDialog{nullptr};
     double m_currentT{0};
     bool m_simulationRunning{false};
+    bool m_debugFakeActive{false};
 };
 
 #endif // MAINWINDOW_H

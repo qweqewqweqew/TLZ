@@ -1,9 +1,14 @@
 #ifndef ROS2BRIDGE_H
 #define ROS2BRIDGE_H
 
+#include "MillingPathVM.h"
+#include "PlcFeedbackVM.h"
+#include "PlcPathCommandParamsVM.h"
+
 #include <QImage>
 #include <QObject>
 #include <QString>
+#include <QVector>
 
 #include <cstdint>
 #include <memory>
@@ -55,17 +60,28 @@ signals:
                         quint32 width,
                         quint32 height,
                         quint32 pixelFormat);
-    void algorithmResultReceived(bool success,
-                                 quint64 frameId,
-                                 quint64 taskId,
-                                 const QString &message);
     void backendStateReceived(const QString &state);
 
+    // 打磨路径全量下发（后端 → 前端），calibrationApplied=false 时前端显示未标定角标。
+    void millingPathsReceived(int taskId,
+                              int pathTotal,
+                              int maxParticleHeight,
+                              bool calibrationApplied,
+                              const QVector<MillingPathVM> &paths);
+
+    // 打磨进度（后端 → 前端）。progress 按 0~100 显示。
+    void millingProgressReceived(int taskId,
+                                 float progress,
+                                 bool finished,
+                                 bool success,
+                                 const QString &message);
+
+    // PLC 反馈（后端 → 前端）：状态字、路径计数、故障码、当前位置/速度/主轴参数。
+    void plcFeedbackReceived(const PlcFeedbackVM &feedback);
+
+    void plcPathCommandReceived(const PlcPathCommandParamsVM &command);
+
 private:
-    void handleAlgorithmResult(bool success,
-                               std::uint64_t frameId,
-                               std::uint64_t taskId,
-                               const std::string &message);
     void handleBackendState(const std::string &state);
 
 private:

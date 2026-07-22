@@ -18,10 +18,14 @@ set(Python3_EXECUTABLE "C:/opt/ros/foxy/x64/python.exe" CACHE FILEPATH "" FORCE)
 
 list(APPEND CMAKE_PREFIX_PATH
     "C:/opt/ros/foxy/x64"
-    "D:/QtProj/tongliiz/install/mz_interfaces"
+    "D:/QtProj/tongliiz/ros/install/mz_interfaces"
 )
 set(CMAKE_MAP_IMPORTED_CONFIG_DEBUG Release RelWithDebInfo "")
-set(ENV{AMENT_PREFIX_PATH} "C:/opt/ros/foxy/x64;D:/QtProj/tongliiz/install/mz_interfaces")
+set(ENV{AMENT_PREFIX_PATH} "C:/opt/ros/foxy/x64;D:/QtProj/tongliiz/ros/install/mz_interfaces")
+set(mz_interfaces_DIR
+    "D:/QtProj/tongliiz/ros/install/mz_interfaces/share/mz_interfaces/cmake"
+    CACHE PATH "mz_interfaces package directory" FORCE
+)
 
 if(MSVC)
     add_compile_options(/utf-8 /Zm500 /bigobj)
@@ -33,6 +37,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(mz_interfaces REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(Boost REQUIRED)
 
 set(ELAWIDGETTOOLS_BUILD_STATIC_LIB OFF CACHE BOOL "Build ElaWidgetTools as a shared library." FORCE)
 add_subdirectory(
@@ -60,6 +65,9 @@ add_executable(MzTLZ
     Logger.h
     mainwindow.cpp
     mainwindow.h
+    MillingPathVM.h
+    PlcFeedbackVM.h
+    PlcPathCommandParamsVM.h
     Ros2Bridge.cpp
     Ros2Bridge.h
     ShmImageReader.cpp
@@ -70,6 +78,8 @@ add_executable(MzTLZ
     RunDataPanel.h
     RunningStatusPanel.cpp
     RunningStatusPanel.h
+    TaskFlowPanel.cpp
+    TaskFlowPanel.h
     TelemetryPlotWidget.cpp
     TelemetryPlotWidget.h
     TitleBar.cpp
@@ -100,6 +110,7 @@ target_include_directories(MzTLZ PRIVATE
     ${rclcpp_INCLUDE_DIRS}
     ${mz_interfaces_INCLUDE_DIRS}
     ${std_msgs_INCLUDE_DIRS}
+    ${Boost_INCLUDE_DIRS}
 )
 
 add_custom_command(TARGET MzTLZ POST_BUILD

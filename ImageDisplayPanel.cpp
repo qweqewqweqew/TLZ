@@ -60,6 +60,20 @@ ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
     });
 }
 
+void ImageDisplayPanel::setMillingPaths(const QVector<MillingPathVM> &paths, bool calibrationApplied)
+{
+    if (m_imageArea) {
+        m_imageArea->setMillingPaths(paths, calibrationApplied);
+    }
+}
+
+void ImageDisplayPanel::clearMillingPaths()
+{
+    if (m_imageArea) {
+        m_imageArea->clearMillingPaths();
+    }
+}
+
 void ImageDisplayPanel::updateScanFrame(const QImage &range,
                                         const QImage &intensity,
                                         quint64 frameId,

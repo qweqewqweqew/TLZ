@@ -8,9 +8,13 @@
 #include "HistoryDialog.h"
 #include "ImageDisplayPanel.h"
 #include "Logger.h"
+#include "MillingPathVM.h"
+#include "PlcFeedbackVM.h"
+#include "PlcPathCommandParamsVM.h"
 #include "Ros2Bridge.h"
 #include "RunDataPanel.h"
 #include "RunningStatusPanel.h"
+#include "TaskFlowPanel.h"
 #include "TeachingDialog.h"
 #include "TitleBar.h"
 #include "UiHelpers.h"
@@ -20,10 +24,13 @@
 #include <QIcon>
 #include <QImage>
 #include <QEvent>
+#include <QKeySequence>
 #include <QMenuBar>
+#include <QShortcut>
 #include <QTimer>
 #include <QtMath>
 #include <QVBoxLayout>
+#include <QVector>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -107,10 +114,8 @@ void MainWindow::buildMainView()
     m_runDataPanel = new RunDataPanel(rightColumn);
     rightColumnLayout->addWidget(m_runDataPanel, 1);
 
-    auto *taskFlowPanel = createPanel("任务流程", nullptr, rightColumn);
-    auto *taskFlowLayout = qobject_cast<QVBoxLayout *>(taskFlowPanel->layout());
-    taskFlowLayout->addStretch();
-    rightColumnLayout->addWidget(taskFlowPanel, 2);
+    m_taskFlowPanel = new TaskFlowPanel(rightColumn);
+    rightColumnLayout->addWidget(m_taskFlowPanel, 2);
 
     mainLayout->addWidget(rightColumn, 1);
 
@@ -202,20 +207,143 @@ void MainWindow::startRos2Bridge()
                     m_imagePanel->updateScanFrame(range, intensity, frameId, timestampNs);
                 }
             });
-    connect(m_ros2Bridge, &Ros2Bridge::algorithmResultReceived, this,
-            [this](bool success, quint64 frameId, quint64 taskId, const QString &message) {
-                appendEventLog(success ? "INFO" : "ERROR",
-                               QString("后端结果 frame=%1 task=%2 message=%3")
-                                   .arg(frameId)
-                                   .arg(taskId)
-                                   .arg(message));
-            });
     connect(m_ros2Bridge, &Ros2Bridge::backendStateReceived, this,
             [this](const QString &state) {
                 appendEventLog("INFO", QString("后端状态: %1").arg(state));
             });
 
+    connect(m_ros2Bridge, &Ros2Bridge::millingPathsReceived, this,
+            [this](int taskId,
+                   int pathTotal,
+                   int maxParticleHeight,
+                   bool calibrationApplied,
+                   const QVector<MillingPathVM> &paths) {
+                if (m_imagePanel) {
+                    m_imagePanel->setMillingPaths(paths, calibrationApplied);
+                }
+                if (m_runDataPanel) {
+                    m_runDataPanel->setMillingTask(taskId, pathTotal,
+                                                   calibrationApplied);
+                    m_runDataPanel->setMaxParticleHeight(maxParticleHeight);
+                }
+                appendEventLog("INFO",
+                               QString("任务 #%1 开始，共 %2 条路径（%3）")
+                                   .arg(taskId)
+                                   .arg(pathTotal)
+                                   .arg(calibrationApplied ? "已标定" : "未标定"));
+            });
+
+    connect(m_ros2Bridge, &Ros2Bridge::millingProgressReceived, this,
+            [this](int taskId,
+                   float progress,
+                   bool finished,
+                   bool success,
+                   const QString &message) {
+                if (m_runDataPanel) {
+                    m_runDataPanel->setMillingStatus(finished, success);
+                    m_runDataPanel->setMillingProgress(progress);
+                }
+                if (finished) {
+                    const QString level = success ? QStringLiteral("INFO")
+                                                  : QStringLiteral("ERROR");
+                    const QString head = success ? QStringLiteral("任务 #%1 已完成")
+                                                 : QStringLiteral("任务 #%1 失败");
+                    QString text = head.arg(taskId);
+                    if (!message.isEmpty()) {
+                        text += QStringLiteral("：") + message;
+                    }
+                    appendEventLog(level, text);
+                }
+            });
+
+    connect(m_ros2Bridge, &Ros2Bridge::plcFeedbackReceived, this,
+            [this](const PlcFeedbackVM &feedback) {
+                if (m_statusPanel) {
+                    m_statusPanel->setPlcFeedback(feedback);
+                }
+                if (m_runDataPanel) {
+                    m_runDataPanel->setPlcPathCounts(int(feedback.completedPath),
+                                                     int(feedback.currentPath));
+                }
+            });
+
+    connect(m_ros2Bridge, &Ros2Bridge::plcPathCommandReceived, this,
+            [this](const PlcPathCommandParamsVM &command) {
+                if (m_taskFlowPanel) {
+                    m_taskFlowPanel->addPlcCommand(command);
+                }
+            });
+
     m_ros2Bridge->start();
+
+    // 调试快捷键 Ctrl+T：切换演示模式。
+    // 第一次按：注入一张灰底假图 + 5 条示例路径 + 任务进行中，用于纯前端预览效果。
+    // 再按一次：清掉假图和路径，任务条复位为"待命"。
+    auto *fakeShortcut = new QShortcut(QKeySequence("Ctrl+T"), this);
+    connect(fakeShortcut, &QShortcut::activated, this, [this]() {
+        if (!m_debugFakeActive) {
+            // 灰底假图，尺寸覆盖示例路径坐标范围（最大 260）。
+            QImage fake(400, 320, QImage::Format_Grayscale8);
+            fake.fill(64);  // 深灰
+            if (m_imagePanel) {
+                m_imagePanel->updateScanFrame(fake, QImage(), 9001, 0);
+            }
+
+            QVector<MillingPathVM> paths;
+            paths.push_back({ 80,  60, 260,  60, 3000.0f, 12.0f,  0.0f, true  });
+            paths.push_back({260,  60, 260, 160, 3000.0f,  0.0f, 10.0f, false });
+            paths.push_back({260, 160,  80, 160, 2800.0f, -12.0f, 0.0f, true  });
+            paths.push_back({ 80, 160,  80, 260, 2800.0f,  0.0f, 10.0f, false });
+            paths.push_back({ 80, 260, 260, 260, 3200.0f, 15.0f,  0.0f, true  });
+
+            emit m_ros2Bridge->millingPathsReceived(
+                /*taskId*/ 9001,
+                /*pathTotal*/ paths.size(),
+                /*maxParticleHeight*/ 5,
+                /*calibrationApplied*/ true,
+                paths);
+            emit m_ros2Bridge->millingProgressReceived(
+                9001, 0.0f, /*finished*/ false, /*success*/ false, QString());
+
+            PlcPathCommandParamsVM command;
+            command.x = 120.50f;
+            command.y = 45.00f;
+            command.z = -2.50f;
+            command.feedSpeed = 80.0f;
+            command.feedAmount = 0.30f;
+            command.spindleSpeed = 3000.0f;
+            command.plungeCount = 2;
+            command.plungeAmount = 1;
+            command.feedDirection = 10;
+            emit m_ros2Bridge->plcPathCommandReceived(command);
+
+            m_debugFakeActive = true;
+            appendEventLog("INFO", "进入调试演示模式（Ctrl+T 再按一次取消）");
+        } else {
+            // 退出演示模式：清路径、清假图、任务条复位。
+            if (m_imagePanel) {
+                m_imagePanel->clearMillingPaths();
+                m_imagePanel->updateScanFrame(QImage(), QImage(), 0, 0);
+            }
+            if (m_runDataPanel) {
+                m_runDataPanel->clearMetrics();
+                m_runDataPanel->clearMillingTask();
+            }
+            if (m_taskFlowPanel) {
+                m_taskFlowPanel->clearCommands();
+            }
+            m_debugFakeActive = false;
+            appendEventLog("INFO", "已退出调试演示模式");
+        }
+    });
+
+    // 调试快捷键 Ctrl+Shift+T：结束假任务（success）。
+    auto *fakeFinishShortcut = new QShortcut(QKeySequence("Ctrl+Shift+T"), this);
+    connect(fakeFinishShortcut, &QShortcut::activated, this, [this]() {
+        emit m_ros2Bridge->millingProgressReceived(
+            9001, 100.0f, /*finished*/ true, /*success*/ true,
+            QStringLiteral("调试模式：模拟完成"));
+    });
 }
 
 void MainWindow::appendEventLog(const QString &level, const QString &message)

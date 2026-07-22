@@ -1,15 +1,15 @@
 #include "ShmImageReader.h"
 
-#ifdef _WIN32
-#  ifndef WIN32_LEAN_AND_MEAN
-#    define WIN32_LEAN_AND_MEAN
-#  endif
-#  include <windows.h>
-#endif
+#include <boost/interprocess/exceptions.hpp>
+#include <boost/interprocess/mapped_region.hpp>
+#include <boost/interprocess/shared_memory_object.hpp>
 
-#include <cstring>
+#include <algorithm>
+#include <exception>
 
 namespace {
+
+namespace bip = boost::interprocess;
 
 // 轻量字符串拼接，避免引入 <sstream>/<format>。
 std::string concat(std::initializer_list<std::string> parts)
@@ -24,26 +24,33 @@ std::string concat(std::initializer_list<std::string> parts)
 
 std::string toStr(std::uint64_t v) { return std::to_string(v); }
 
-#ifdef _WIN32
-std::wstring toWide(const std::string &s)
+std::string normalizeBoostShmName(const std::string &name)
 {
-    if (s.empty()) return {};
-    const int n = ::MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()),
-                                        nullptr, 0);
-    std::wstring w(n, L'\0');
-    ::MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), w.data(), n);
-    return w;
-}
-#endif
+    std::string result = name;
 
-constexpr char kLocalPrefix[] = "Local\\";
+    const std::string localPrefix = "Local\\";
+    const std::string globalPrefix = "Global\\";
+    if (result.compare(0, localPrefix.size(), localPrefix) == 0) {
+        result.erase(0, localPrefix.size());
+    } else if (result.compare(0, globalPrefix.size(), globalPrefix) == 0) {
+        result.erase(0, globalPrefix.size());
+    }
 
-bool hasLocalPrefix(const std::string &name)
-{
-    return name.size() >= 6 && std::memcmp(name.data(), kLocalPrefix, 6) == 0;
+    while (!result.empty() && (result.front() == '/' || result.front() == '\\')) {
+        result.erase(result.begin());
+    }
+    std::replace(result.begin(), result.end(), '/', '_');
+    std::replace(result.begin(), result.end(), '\\', '_');
+    return result;
 }
 
 } // namespace
+
+struct ShmImageReader::Impl
+{
+    std::unique_ptr<bip::shared_memory_object> shmObject;
+    std::unique_ptr<bip::mapped_region> mappedRegion;
+};
 
 ShmImageReader::ShmImageReader() = default;
 
@@ -54,79 +61,57 @@ ShmImageReader::~ShmImageReader()
 
 void ShmImageReader::close()
 {
-#ifdef _WIN32
-    if (m_view) {
-        ::UnmapViewOfFile(m_view);
-        m_view = nullptr;
+    if (m_impl) {
+        m_impl->mappedRegion.reset();
+        m_impl->shmObject.reset();
     }
-    if (m_handle) {
-        ::CloseHandle(reinterpret_cast<HANDLE>(m_handle));
-        m_handle = nullptr;
-    }
-#endif
+    m_view = nullptr;
     m_viewSize = 0;
     m_currentName.clear();
 }
 
 bool ShmImageReader::open(const std::string &shmName, std::string *error)
 {
-#ifdef _WIN32
-    if (shmName.empty()) {
+    const std::string normalizedName = normalizeBoostShmName(shmName);
+    if (normalizedName.empty()) {
         if (error) *error = "shm_name is empty";
         return false;
     }
 
-    const std::string fullName = hasLocalPrefix(shmName)
-                                     ? shmName
-                                     : std::string(kLocalPrefix) + shmName;
-    if (m_handle && m_currentName == fullName) {
+    if (m_impl && m_impl->mappedRegion && m_currentName == normalizedName) {
         return true;   // 复用已打开的句柄
     }
     close();
 
-    const std::wstring wideName = toWide(fullName);
-    HANDLE h = ::OpenFileMappingW(FILE_MAP_READ, FALSE, wideName.c_str());
-    if (!h) {
+    try {
+        if (!m_impl) {
+            m_impl = std::make_unique<Impl>();
+        }
+        m_impl->shmObject = std::make_unique<bip::shared_memory_object>(
+            bip::open_only,
+            normalizedName.c_str(),
+            bip::read_only);
+        m_impl->mappedRegion = std::make_unique<bip::mapped_region>(
+            *m_impl->shmObject,
+            bip::read_only);
+    } catch (const bip::interprocess_exception &ex) {
+        close();
         if (error) {
-            *error = concat({"OpenFileMappingW('", fullName,
-                             "') failed, GetLastError=", toStr(::GetLastError())});
+            *error = concat({"open Boost shared memory '", normalizedName,
+                             "' failed: ", ex.what()});
         }
         return false;
     }
 
-    LPVOID v = ::MapViewOfFile(h, FILE_MAP_READ, 0, 0, 0);
-    if (!v) {
-        const DWORD err = ::GetLastError();
-        ::CloseHandle(h);
-        if (error) {
-            *error = concat({"MapViewOfFile('", fullName,
-                             "') failed, GetLastError=", toStr(err)});
-        }
+    m_view = static_cast<const std::uint8_t *>(m_impl->mappedRegion->get_address());
+    m_viewSize = m_impl->mappedRegion->get_size();
+    m_currentName = normalizedName;
+    if (!m_view || m_viewSize == 0) {
+        close();
+        if (error) *error = concat({"Boost shared memory '", normalizedName, "' mapped empty"});
         return false;
     }
-
-    MEMORY_BASIC_INFORMATION mbi{};
-    const SIZE_T queried = ::VirtualQuery(v, &mbi, sizeof(mbi));
-    if (queried == 0) {
-        const DWORD err = ::GetLastError();
-        ::UnmapViewOfFile(v);
-        ::CloseHandle(h);
-        if (error) {
-            *error = concat({"VirtualQuery failed, GetLastError=", toStr(err)});
-        }
-        return false;
-    }
-
-    m_handle   = h;
-    m_view     = static_cast<std::uint8_t *>(v);
-    m_viewSize = static_cast<std::size_t>(mbi.RegionSize);
-    m_currentName = fullName;
     return true;
-#else
-    (void)shmName;
-    if (error) *error = "ShmImageReader currently only supports Windows";
-    return false;
-#endif
 }
 
 RawSlice ShmImageReader::slice(std::uint64_t offset,

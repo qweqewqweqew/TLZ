@@ -7,13 +7,14 @@
 //   且 view 未被 close 之前有效。使用方要么立刻处理完，要么先自己 memcpy
 //   出去。close() / 换 shmName / 析构 都会让 slice 失效。
 //
-// 依赖: C++17 + <string> <cstdint> + Windows SDK。无 Qt / 无 OpenCV / 无 ROS。
+// 依赖: C++17 + Boost.Interprocess + <string> <cstdint>。无 Qt / 无 OpenCV / 无 ROS。
 //
 // 线程安全: 不是线程安全的。多线程共用同一实例请外部加锁。
 // ---------------------------------------------------------------------------
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 
 // 指向共享内存视图内部一段只读字节的引用。不拥有数据、不管释放。
@@ -34,9 +35,8 @@ public:
     ShmImageReader(const ShmImageReader &) = delete;
     ShmImageReader &operator=(const ShmImageReader &) = delete;
 
-    // 打开 (或复用已打开的) 命名共享内存。shmName 与 ROS 消息里的 shm_name
-    // 一致，例如 "ivf_scan_192_168_88_150"；不需要调用方拼 "Local\\" 前缀，
-    // 本类会自动补齐。
+    // 打开 (或复用已打开的) Boost.Interprocess 命名共享内存。
+    // shmName 与 ROS 消息里的 shm_name 一致，例如 "ivf_scan_192_168_88_150"。
     bool open(const std::string &shmName, std::string *error = nullptr);
 
     // 关闭当前 view / mapping 句柄。析构会自动调。
@@ -65,10 +65,12 @@ public:
     bool isOpen() const { return m_view != nullptr; }
 
 private:
-    std::string   m_currentName;
-    void         *m_handle{nullptr};  // HANDLE on Windows
-    std::uint8_t *m_view{nullptr};
-    std::size_t   m_viewSize{0};
+    struct Impl;
+
+    std::string           m_currentName;
+    std::unique_ptr<Impl> m_impl;
+    const std::uint8_t   *m_view{nullptr};
+    std::size_t           m_viewSize{0};
 };
 
 #endif // SHMIMAGEREADER_H

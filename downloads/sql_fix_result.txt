@@ -1,0 +1,73 @@
+﻿== sc config ==
+[SC] ChangeServiceConfig 成功
+== start service ==
+Start-Service : 无法启动服务“SQL Server (SQLEXPRESS) (MSSQL$SQLEXPRESS)”。
+所在位置 行:5 字符: 1
++ Start-Service -Name $svc -ErrorAction Continue 2>&1 | Out-File -FileP ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OpenError: (System.ServiceProcess.ServiceController:ServiceController) [Start-Service],  
+   ServiceCommandException
+    + FullyQualifiedErrorId : StartServiceFailed,Microsoft.PowerShell.Commands.StartServiceCommand
+ 
+== service state ==
+
+
+Name        : MSSQL$SQLEXPRESS
+Status      : Stopped
+StartType   : Automatic
+DisplayName : SQL Server (SQLEXPRESS)
+ServiceName : MSSQL$SQLEXPRESS
+
+
+
+
+== recent events ==
+
+
+TimeCreated      : 2026/7/7 8:53:26
+Id               : 19032
+LevelDisplayName : 信息
+Message          : SQL 跟踪已因服务器关闭而停止。跟踪 ID = '1'。这只是一条信息性消息，不需要用户执行任何操作。
+
+TimeCreated      : 2026/7/7 8:53:26
+Id               : 17207
+LevelDisplayName : 错误
+Message          : FileMgr::StartLogFiles: 创建或打开文件 'D:\dbs\sh\5uj5\1008_054209\cmd\11\obj\x64retail\sql\mkmastr\databas
+                   es\mkmastr.nativeproj\modellog.ldf' 时出现操作系统错误 2(系统找不到指定的文件。)。请诊断并更正该操作系统错误，然后重试操作。
+
+TimeCreated      : 2026/7/7 8:53:26
+Id               : 17204
+LevelDisplayName : 错误
+Message          : FCB::Open failed: 无法打开文件号 1 的文件 D:\dbs\sh\5uj5\1008_054209\cmd\11\obj\x64retail\sql\mkmastr\database
+                   s\mkmastr.nativeproj\model.mdf。操作系统错误: 3(系统找不到指定的路径。)。
+
+TimeCreated      : 2026/7/7 8:53:26
+Id               : 17137
+LevelDisplayName : 信息
+Message          : 正在启动数据库 'model'。
+
+TimeCreated      : 2026/7/7 8:53:26
+Id               : 958
+LevelDisplayName : 信息
+Message          : 资源数据库的内部版本为 16.00.4255。这只是一条信息性消息，不需要用户执行任何操作。
+
+TimeCreated      : 2026/7/7 8:53:26
+Id               : 17207
+LevelDisplayName : 错误
+Message          : FileMgr::StartLogFiles: 创建或打开文件 'D:\dbs\sh\5uj5\1008_054209\cmd\11\obj\x64retail\sql\mkmastr\databas
+                   es\mkmastr.nativeproj\MSDBLog.ldf' 时出现操作系统错误 2(系统找不到指定的文件。)。请诊断并更正该操作系统错误，然后重试操作。
+
+TimeCreated      : 2026/7/7 8:53:26
+Id               : 17204
+LevelDisplayName : 错误
+Message          : FCB::Open failed: 无法打开文件号 1 的文件 D:\dbs\sh\5uj5\1008_054209\cmd\11\obj\x64retail\sql\mkmastr\database
+                   s\mkmastr.nativeproj\MSDBData.mdf。操作系统错误: 3(系统找不到指定的路径。)。
+
+TimeCreated      : 2026/7/7 8:53:26
+Id               : 17137
+LevelDisplayName : 信息
+Message          : 正在启动数据库 'mssqlsystemresource'。
+
+
+
+

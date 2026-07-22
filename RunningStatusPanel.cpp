@@ -1,5 +1,6 @@
 #include "RunningStatusPanel.h"
 
+#include "PlcFeedbackVM.h"
 #include "TelemetryPlotWidget.h"
 #include "UiHelpers.h"
 
@@ -16,8 +17,6 @@ namespace {
 const QColor kAccent("#00E5FF");
 const QColor kAccentSpeed   = kAccent;
 const QColor kAccentTorque  = kAccent;
-const QColor kAccentCutting = kAccent;
-const QColor kAccentFeed    = kAccent;
 const QColor kAccentAxisX   = kAccent;
 const QColor kAccentAxisY   = kAccent;
 const QColor kAccentAxisZ   = kAccent;
@@ -95,9 +94,8 @@ RunningStatusPanel::RunningStatusPanel(QWidget *parent)
     waveRow->addWidget(m_torquePlot);
     panelLayout->addLayout(waveRow);
 
-    panelLayout->addWidget(createStatusGrid(panel));
     panelLayout->addWidget(createPositionGrid("当前位置", "position", panel));
-    panelLayout->addWidget(createPositionGrid("目标位置", "target", panel));
+    panelLayout->addWidget(createPositionGrid("当前速度", "velocity", panel));
     panelLayout->addStretch();
 }
 
@@ -121,6 +119,26 @@ void RunningStatusPanel::appendSample(double time, double speed, double torque)
                    stateForRatio(torque / 25.0));
 }
 
+void RunningStatusPanel::setPlcFeedback(const PlcFeedbackVM &feedback)
+{
+    const auto &p = feedback.pathParams;
+
+    if (!m_plcElapsedTimer.isValid()) {
+        m_plcElapsedTimer.start();
+    }
+    appendSample(m_plcElapsedTimer.elapsed() / 1000.0,
+                 p.spindleSpeed,
+                 p.spindleTorque);
+
+    setMetricValue("positionX", QString::number(p.xPos, 'f', 2));
+    setMetricValue("positionY", QString::number(p.yPos, 'f', 2));
+    setMetricValue("positionZ", QString::number(p.zPos, 'f', 2));
+
+    setMetricValue("velocityX", QString::number(p.xSpeed, 'f', 2));
+    setMetricValue("velocityY", QString::number(p.ySpeed, 'f', 2));
+    setMetricValue("velocityZ", QString::number(p.zSpeed, 'f', 2));
+}
+
 QWidget *RunningStatusPanel::createSpindleGrid(QWidget *parent)
 {
     auto *gridWidget = new QWidget(parent);
@@ -131,25 +149,6 @@ QWidget *RunningStatusPanel::createSpindleGrid(QWidget *parent)
 
     grid->addWidget(createMetricCard("speed",  "主轴速度", "--", "RPM",  kAccentSpeed,  gridWidget), 0, 0);
     grid->addWidget(createMetricCard("torque", "主轴扭矩", "--", "N·m",  kAccentTorque, gridWidget), 0, 1);
-
-    grid->setColumnStretch(0, 1);
-    grid->setColumnStretch(1, 1);
-
-    return gridWidget;
-}
-
-QWidget *RunningStatusPanel::createStatusGrid(QWidget *parent)
-{
-    auto *gridWidget = new QWidget(parent);
-    auto *grid = new QGridLayout(gridWidget);
-    grid->setContentsMargins(2, 2, 2, 0);
-    grid->setHorizontalSpacing(12);
-    grid->setVerticalSpacing(8);
-
-    grid->addWidget(createMetricCard("plungeSpeed", "进刀速度", "--", "m/min", kAccentCutting, gridWidget), 0, 0);
-    grid->addWidget(createMetricCard("plungeCount", "下刀次数", "--", "次",    kAccentFeed,    gridWidget), 0, 1);
-    grid->addWidget(createMetricCard("plungeDepth", "进刀量",   "--", "mm",    kAccentCutting, gridWidget), 1, 0);
-    grid->addWidget(createMetricCard("singleDepth", "单次下刀量","--", "mm",   kAccentFeed,    gridWidget), 1, 1);
 
     grid->setColumnStretch(0, 1);
     grid->setColumnStretch(1, 1);
@@ -285,5 +284,5 @@ void RunningStatusPanel::setMetricValue(const QString &key,
     label->setText(value);
     label->setStyleSheet(QString("color:%1;font-size:%2px;font-weight:600;border:none;background:transparent;")
                              .arg(color)
-                             .arg((key.startsWith("position") || key.startsWith("target")) ? 20 : 24));
+                             .arg((key.startsWith("position") || key.startsWith("velocity")) ? 20 : 24));
 }

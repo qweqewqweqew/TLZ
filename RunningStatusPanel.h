@@ -3,9 +3,11 @@
 
 #include <QFrame>
 #include <QHash>
+#include <QElapsedTimer>
 
 class QColor;
 class QLabel;
+struct PlcFeedbackVM;
 class TelemetryPlotWidget;
 
 class RunningStatusPanel : public QFrame
@@ -16,12 +18,12 @@ public:
     explicit RunningStatusPanel(QWidget *parent = nullptr);
 
     void appendSample(double time, double speed, double torque);
+    void setPlcFeedback(const PlcFeedbackVM &feedback);
 
 private:
     enum class MetricState { NoData, Normal, Warning, Critical };
 
     QWidget *createSpindleGrid(QWidget *parent);
-    QWidget *createStatusGrid(QWidget *parent);
     QWidget *createPositionGrid(const QString &title,
                                 const QString &keyPrefix,
                                 QWidget *parent);
@@ -43,6 +45,7 @@ private:
     QHash<QString, QLabel *> m_metricLabels;
     TelemetryPlotWidget *m_speedPlot{nullptr};
     TelemetryPlotWidget *m_torquePlot{nullptr};
+    QElapsedTimer m_plcElapsedTimer;
 };
 
 #endif // RUNNINGSTATUSPANEL_H
