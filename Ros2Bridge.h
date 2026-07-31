@@ -51,7 +51,7 @@ signals:
                             quint32 width,
                             quint32 height,
                             quint32 pixelFormat);
-    // 从共享内存读出的一帧：range 为 Mono16 拉伸后的 Grayscale8，
+    // 从共享内存读出的一帧：range 为 Float32/Mono16 拉伸后的 Grayscale8，
     // intensity 为 Mono8 原始像素；任一未提供时对应 QImage 可能为空。
     void scanFrameReady(const QImage &range,
                         const QImage &intensity,

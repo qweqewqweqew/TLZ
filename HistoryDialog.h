@@ -2,22 +2,20 @@
 #define HISTORYDIALOG_H
 
 #include <QDialog>
+#include <QPoint>
 
 class ElaComboBox;
+class ElaIconButton;
 class ElaPushButton;
 class QDateEdit;
 class QLabel;
-class QPropertyAnimation;
+class QScrollArea;
 class QSplitter;
 class QStackedWidget;
 class QTabWidget;
 class QTableWidget;
-class QTimer;
-class QVariantAnimation;
 class QVBoxLayout;
-
-#include <QMetaObject>
-#include <functional>
+class QEvent;
 
 class HistoryDialog : public QDialog
 {
@@ -27,7 +25,8 @@ public:
     explicit HistoryDialog(QWidget *parent = nullptr);
 
 protected:
-    bool eventFilter(QObject *obj, QEvent *ev) override;
+    void changeEvent(QEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
     void reloadRecords();
@@ -37,6 +36,7 @@ private:
     QWidget *buildFilterBar();
     QWidget *buildSummaryRow();
     QWidget *buildTableCard();
+    QWidget *buildTitleBar();
 
     QLabel *makeTileValue(QWidget *tile);
     QWidget *makeTile(const QString &title, const QString &suffix, QLabel *&valueLabelOut);
@@ -44,21 +44,15 @@ private:
     void populateRecipeCombo();
     void updateSummary(const struct HistorySummary &s);
     void populateTable(const class QList<struct InspectionRecordRow> &rows);
+    void updateMainTableColumnWidths();
 
     void updateCustomRangeEnabled();
-    void toggleDetailRow(int row);
-    void expandDetailRow(int row, int recordId);
-    void collapseDetail(std::function<void()> after = {});
+    void showDetailPlaceholder(const QString &message);
+    void showDetailForRecord(int recordId);
     QWidget *createDetailWidget(int recordId);
     int findRowByRecordId(int recordId) const;
-    void scrollRowIntoView(int row);
-
-    // 触发一次去抖 reload（180ms 内合并连续过滤器变更）
-    void scheduleReload();
-
-    // 把 wheel 事件过滤器递归装到 widget 及其所有子控件上，
-    // 用来阻止 QTabBar / 内嵌 QTableWidget 抢走滚轮
-    void installWheelForwarderRecursive(QWidget *widget);
+    void toggleMaximized();
+    void updateMaximizeButtonIcon();
 
     // Filters
     ElaComboBox   *m_rangeCombo{nullptr};
@@ -77,12 +71,17 @@ private:
 
     // Body
     QLabel         *m_statusLabel{nullptr};
-    QSplitter      *m_splitter{nullptr};       // 未使用，保留以兼容旧引用
+    QWidget        *m_titleBar{nullptr};
+    ElaIconButton  *m_maximizeButton{nullptr};
+    QSplitter      *m_splitter{nullptr};
     QStackedWidget *m_tableStack{nullptr};     // 0 = table, 1 = empty state
     QTableWidget   *m_table{nullptr};
 
-    // Legacy detail members (未使用，保留成员名以兼容旧代码；点击展开使用 m_expanded* )
+    // Right-side detail panel
     QStackedWidget *m_detailStack{nullptr};
+    QScrollArea    *m_detailScroll{nullptr};
+    QWidget        *m_detailContent{nullptr};
+    QLabel         *m_detailPlaceholderLabel{nullptr};
     QLabel         *m_detailTitle{nullptr};
     QLabel         *m_detailMeta{nullptr};
     QLabel         *m_detailOverview{nullptr};
@@ -90,23 +89,11 @@ private:
     QTabWidget     *m_detailTabs{nullptr};
     QTableWidget   *m_particleTable{nullptr};
     QTableWidget   *m_processTable{nullptr};
-
-    // Expand-in-row detail state
-    int      m_expandedRow{-1};      // 被展开的记录行（未展开为 -1）
-    int      m_expandedRecordId{-1}; // 展开的记录 Id
-    QWidget *m_expandedWidget{nullptr};
-    QVariantAnimation *m_expandAnim{nullptr};
-    // 展开动画一次性 finished 连接；每次启动动画前重连，避免误伤其他连接
-    QMetaObject::Connection m_expandAnimFinishedConn;
-
-    // 平滑滚轮
-    QVariantAnimation *m_scrollAnim{nullptr};
-
-    // 过滤器变化去抖
-    QTimer *m_reloadTimer{nullptr};
+    int             m_selectedRecordId{-1};
 
     bool m_reloading{false};
-    bool m_animating{false};
+    bool m_dragging{false};
+    QPoint m_dragPosition;
 };
 
 #endif // HISTORYDIALOG_H

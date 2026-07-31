@@ -2,33 +2,37 @@
 
 #include "AppStyle.h"
 #include "ElaComboBox.h"
+#include "ElaIcon.h"
+#include "ElaIconButton.h"
 #include "ElaPushButton.h"
 #include "InspectionRepository.h"
 #include "UiHelpers.h"
 
 #include <QAbstractItemView>
-#include <QAbstractScrollArea>
 #include <QComboBox>
+#include <QColor>
 #include <QDate>
 #include <QDateEdit>
 #include <QDateTime>
-#include <QEasingCurve>
 #include <QEvent>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QMouseEvent>
+#include <QPixmap>
+#include <QPushButton>
 #include <QScreen>
+#include <QScrollArea>
 #include <QScrollBar>
 #include <QSignalBlocker>
+#include <QSizePolicy>
+#include <QSplitter>
 #include <QStackedWidget>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTableWidgetItem>
-#include <QTimer>
-#include <QVariantAnimation>
 #include <QVBoxLayout>
-#include <QWheelEvent>
 
 #include <utility>
 
@@ -51,21 +55,41 @@ enum RangeIndex {
     RangeCustom  = 4,
 };
 
-// 展开行的目标高度、动画时长
-constexpr int kExpandedRowMinHeight = 220;
-constexpr int kAnimDurationMs    = 220;
-
-// 主表列宽（编号 / 配方 / 加工开始 / 加工结束 / 检测开始 / 检测结束 / 颗粒 / 已清 / 峰高）
-// 最后一列 stretch 填满剩余空间，故只固定前 8 列。
-constexpr int kColWidths[8] = { 72, 150, 160, 160, 160, 160, 72, 72 };
+// 主表列宽权重（编号 / 配方 / 创建时间 / 检测结束 / 颗粒 / 已清 / 峰高）。
+// 所有列按权重共享可用宽度，不再让最后一列独占剩余空间。
+constexpr int kMainTableColumnWeights[7] = { 8, 14, 18, 18, 8, 8, 12 };
+constexpr int kMainTableColumnWeightTotal = 86;
 
 QString formatDateTime(const QDateTime &dt)
 {
     return dt.isValid() ? dt.toString("yyyy-MM-dd HH:mm:ss") : QStringLiteral("--");
 }
 
+ElaIconButton *createTitleButton(ElaIconType::IconName icon, const QString &tooltip, QWidget *parent)
+{
+    auto *button = new ElaIconButton(icon, 16, 40, 40, parent);
+    button->setFixedSize(40, 40);
+    button->setToolTip(tooltip);
+    button->setCursor(Qt::ArrowCursor);
+    button->setBorderRadius(4);
+    button->setLightIconColor(QColor("#E6EEF5"));
+    button->setDarkIconColor(QColor("#E6EEF5"));
+    button->setLightHoverIconColor(QColor("#FFFFFF"));
+    button->setDarkHoverIconColor(QColor("#FFFFFF"));
+    button->setLightHoverColor(QColor("#22303D"));
+    button->setDarkHoverColor(QColor("#22303D"));
+    return button;
+}
+
 const char *kDialogExtraStyle = R"(
     QDialog {
+        background: #16202B;
+    }
+    #historyTitleBar {
+        background: #0E151D;
+        border-bottom: 1px solid #2E3E4E;
+    }
+    #historyContent {
         background: #16202B;
     }
     QTableWidget {
@@ -80,6 +104,23 @@ const char *kDialogExtraStyle = R"(
     }
     QTableWidget::item {
         padding: 6px 8px;
+    }
+    QTableWidget::item:hover {
+        background: #223246;
+    }
+    QTableWidget::item:selected {
+        background: #2D6F9F;
+        color: #F7FBFF;
+    }
+    QSplitter::handle {
+        background: #22303D;
+    }
+    QSplitter::handle:hover {
+        background: #2D6F9F;
+    }
+    QScrollArea {
+        background: #131E28;
+        border: none;
     }
     QHeaderView::section {
         background: #0E151D;
@@ -217,14 +258,11 @@ void setupCompactTable(QTableWidget *table)
     }
 }
 
-// 内嵌详情里用的表：完全关掉自身滚动条，由外层大表统一滚动。
-// 通过撑高表格自身来避免出现自己的滚动条。
-void setupNoScrollTable(QTableWidget *table)
+// 详情表占满 Tab 页面，记录超出可视区时使用表格自身滚动。
+void setupDetailTable(QTableWidget *table)
 {
     setupCompactTable(table);
-    table->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    table->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    table->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    table->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 }
 
 // 把表格里所有单元格文本居中对齐（连同表头）
@@ -244,19 +282,6 @@ void centerTableCells(QTableWidget *table)
     }
 }
 
-// 按当前行数把表格自身高度撑到不出滚动条
-int tableContentHeight(QTableWidget *table)
-{
-    int h = 2; // 边框
-    if (table->horizontalHeader()->isVisible()) {
-        h += table->horizontalHeader()->height();
-    }
-    for (int i = 0; i < table->rowCount(); ++i) {
-        h += table->rowHeight(i);
-    }
-    return h;
-}
-
 } // namespace
 
 // -----------------------------------------------------------------
@@ -269,145 +294,185 @@ HistoryDialog::HistoryDialog(QWidget *parent)
     setWindowTitle("历史检测记录");
     setModal(false);
 
-    // 根据屏幕可用尺寸按比例自适应，然后 setFixedSize 锁死禁止拖拉
-    QSize target(1280, 760);
+    setWindowFlags((windowFlags() | Qt::Window) | Qt::FramelessWindowHint);
+    setMinimumSize(1100, 680);
+    setSizeGripEnabled(true);
+
+    QSize target(1500, 900);
     if (QScreen *scr = (parent && parent->screen()) ? parent->screen() : this->screen()) {
         const QRect avail = scr->availableGeometry();
-        // 基准 1920x1080，按屏幕尺寸等比缩放；限制在合理区间
-        const double scale = qMin(avail.width()  / 1920.0,
-                                  avail.height() / 1080.0);
-        const double clamped = qBound(0.75, scale, 1.5);
-        target = QSize(int(1280 * clamped), int(760 * clamped));
-        // 再保底：不超过 90% 可用区域
-        target.setWidth (qMin(target.width(),  int(avail.width()  * 0.9)));
+        target.setWidth(qMin(target.width(), int(avail.width() * 0.92)));
         target.setHeight(qMin(target.height(), int(avail.height() * 0.9)));
     }
-    setFixedSize(target);
-
-    // 去掉窗口最大化按钮和大小手柄
-    setWindowFlags(windowFlags() & ~Qt::WindowMaximizeButtonHint);
-    setSizeGripEnabled(false);
+    resize(target);
 
     setStyleSheet(mainWindowStyleSheet() + QString::fromUtf8(kDialogExtraStyle));
 
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(16, 16, 16, 16);
-    root->setSpacing(10);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
 
-    root->addWidget(buildFilterBar());
-    root->addWidget(buildSummaryRow());
+    root->addWidget(buildTitleBar());
+
+    auto *content = new QWidget(this);
+    content->setObjectName("historyContent");
+    auto *contentLayout = new QVBoxLayout(content);
+    contentLayout->setContentsMargins(16, 14, 16, 16);
+    contentLayout->setSpacing(10);
+
+    contentLayout->addWidget(buildFilterBar());
+    contentLayout->addWidget(buildSummaryRow());
 
     m_statusLabel = new QLabel(this);
     m_statusLabel->setObjectName("sectionHint");
-    root->addWidget(m_statusLabel);
+    contentLayout->addWidget(m_statusLabel);
 
-    root->addWidget(buildTableCard(), 1);
-
-    // 过滤器 debounce：连续变更合并成一次查询
-    m_reloadTimer = new QTimer(this);
-    m_reloadTimer->setSingleShot(true);
-    m_reloadTimer->setInterval(180);
-    connect(m_reloadTimer, &QTimer::timeout, this, &HistoryDialog::reloadRecords);
+    contentLayout->addWidget(buildTableCard(), 1);
+    root->addWidget(content, 1);
 
     if (m_refreshButton) {
         connect(m_refreshButton, &ElaPushButton::clicked, this, [this]() {
-            // 手动刷新是显式意图，立即执行、不走 debounce
-            if (m_reloadTimer) m_reloadTimer->stop();
             populateRecipeCombo();
             reloadRecords();
         });
     }
 
-    // 展开/收起共用一个动画对象：每次调用前设定起止值即可
-    m_expandAnim = new QVariantAnimation(this);
-    m_expandAnim->setDuration(kAnimDurationMs);
-    m_expandAnim->setEasingCurve(QEasingCurve::OutCubic);
-    connect(m_expandAnim, &QVariantAnimation::valueChanged, this,
-            [this](const QVariant &value) {
-                if (!m_table || m_expandedRow < 0
-                    || m_expandedRow >= m_table->rowCount()) {
-                    return;
-                }
-                m_table->setRowHeight(m_expandedRow, value.toInt());
-            });
-
-    // 平滑滚轮动画：把 verticalScrollBar 的当前值线性/缓动过渡到目标值
-    m_scrollAnim = new QVariantAnimation(this);
-    m_scrollAnim->setDuration(240);
-    m_scrollAnim->setEasingCurve(QEasingCurve::OutCubic);
-    connect(m_scrollAnim, &QVariantAnimation::valueChanged, this,
-            [this](const QVariant &value) {
-                if (!m_table) return;
-                m_table->verticalScrollBar()->setValue(value.toInt());
-            });
-
-    // 主表 viewport 装事件过滤器，接管滚轮
-    if (m_table && m_table->viewport()) {
-        m_table->viewport()->installEventFilter(this);
-    }
-
     populateRecipeCombo();
     updateCustomRangeEnabled();
     reloadRecords();
+    setWindowState(windowState() | Qt::WindowMaximized);
+    updateMaximizeButtonIcon();
 }
 
-// -----------------------------------------------------------------
-// 事件过滤器：把滚轮转化成带缓动的平滑滚动
-// -----------------------------------------------------------------
-
-bool HistoryDialog::eventFilter(QObject *obj, QEvent *ev)
+void HistoryDialog::changeEvent(QEvent *event)
 {
-    if (ev->type() == QEvent::Wheel && m_table && m_scrollAnim) {
-        // 只处理来自主表 viewport 或详情区域（含其后代）的滚轮；
-        // 详情区里的 QTabBar / 内嵌表 viewport 都会偷吃 wheel，
-        // 全部转给主表统一走平滑滚动。
-        auto *w = qobject_cast<QWidget *>(obj);
-        const bool fromMainViewport = (w == m_table->viewport());
-        const bool fromDetail =
-            (m_expandedWidget && w
-             && (w == m_expandedWidget || m_expandedWidget->isAncestorOf(w)));
-        if (!fromMainViewport && !fromDetail) {
-            return QDialog::eventFilter(obj, ev);
-        }
+    QDialog::changeEvent(event);
+    if (event->type() == QEvent::WindowStateChange) {
+        updateMaximizeButtonIcon();
+    }
+}
 
-        auto *we = static_cast<QWheelEvent *>(ev);
-        auto *bar = m_table->verticalScrollBar();
-        if (!bar) {
-            return false;
-        }
-        // 每次以当前动画目标为起点，避免连续滚动被打断后跳回原点
-        const int cur = (m_scrollAnim->state() == QAbstractAnimation::Running)
-                            ? m_scrollAnim->endValue().toInt()
-                            : bar->value();
+bool HistoryDialog::eventFilter(QObject *watched, QEvent *event)
+{
+    if (m_table && watched == m_table->viewport() && event->type() == QEvent::Resize) {
+        updateMainTableColumnWidths();
+    }
 
-        // 一格滚轮 = 120 度；步长按行高来算，避免"一次跳一整屏"的顿挫感。
-        // 用 pixelDelta 优先（触控板 / 高精度滚轮），退回 angleDelta。
-        const int rowH = qMax(m_table->verticalHeader()->defaultSectionSize(), 24);
-        int deltaPixels = we->pixelDelta().y();
-        if (deltaPixels == 0) {
-            const int deltaAngle = we->angleDelta().y();
-            // 一格滚轮 ~ 1.5 行；这个值调低就更细腻，调高就更快
-            deltaPixels = (deltaAngle * rowH * 10 / 1) / 120;
-        }
-        const int target = qBound(bar->minimum(), cur - deltaPixels, bar->maximum());
+    if (watched != m_titleBar) {
+        return QDialog::eventFilter(watched, event);
+    }
 
-        // 目标没变就不重启动画，避免高频事件把动画一直"重设"导致视觉停滞
-        if (target == cur) {
+    if (event->type() == QEvent::MouseButtonDblClick) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() == Qt::LeftButton) {
+            toggleMaximized();
             return true;
         }
-
-        m_scrollAnim->stop();
-        m_scrollAnim->setStartValue(bar->value());
-        m_scrollAnim->setEndValue(target);
-        m_scrollAnim->start();
-        return true; // 拦截默认滚动，同时也阻止了 QTabBar 用滚轮切页
     }
-    return QDialog::eventFilter(obj, ev);
+
+    if (event->type() == QEvent::MouseButtonPress) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() == Qt::LeftButton && !isMaximized()) {
+            m_dragging = true;
+            m_dragPosition = mouseEvent->pos();
+            return true;
+        }
+    }
+
+    if (event->type() == QEvent::MouseMove && m_dragging) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        move(mouseEvent->globalPos() - m_dragPosition);
+        return true;
+    }
+
+    if (event->type() == QEvent::MouseButtonRelease) {
+        m_dragging = false;
+    }
+
+    return QDialog::eventFilter(watched, event);
+}
+
+void HistoryDialog::updateMainTableColumnWidths()
+{
+    if (!m_table || !m_table->viewport()) {
+        return;
+    }
+
+    const int availableWidth = m_table->viewport()->width();
+    if (availableWidth <= 0) {
+        return;
+    }
+
+    int widths[7] = {};
+    int remainders[7] = {};
+    int assignedWidth = 0;
+    for (int i = 0; i < 7; ++i) {
+        const int weightedWidth = availableWidth * kMainTableColumnWeights[i];
+        widths[i] = weightedWidth / kMainTableColumnWeightTotal;
+        remainders[i] = weightedWidth % kMainTableColumnWeightTotal;
+        assignedWidth += widths[i];
+    }
+
+    // Distribute rounding pixels to the largest fractional columns.
+    for (int extra = availableWidth - assignedWidth; extra > 0; --extra) {
+        int bestIndex = 0;
+        for (int i = 1; i < 7; ++i) {
+            if (remainders[i] > remainders[bestIndex]) {
+                bestIndex = i;
+            }
+        }
+        ++widths[bestIndex];
+        remainders[bestIndex] = -1;
+    }
+
+    for (int i = 0; i < 7; ++i) {
+        m_table->setColumnWidth(i, widths[i]);
+    }
 }
 
 // -----------------------------------------------------------------
 // 子控件构建
 // -----------------------------------------------------------------
+
+QWidget *HistoryDialog::buildTitleBar()
+{
+    auto *bar = new QFrame(this);
+    bar->setObjectName("historyTitleBar");
+    bar->setFixedHeight(52);
+    bar->installEventFilter(this);
+    m_titleBar = bar;
+
+    auto *layout = new QHBoxLayout(bar);
+    layout->setContentsMargins(14, 0, 8, 0);
+    layout->setSpacing(10);
+
+    auto *logoLabel = new QLabel(bar);
+    logoLabel->setFixedSize(34, 34);
+    logoLabel->setPixmap(QPixmap(":/img/logo.png").scaled(34, 34, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    logoLabel->setStyleSheet("background:transparent;border:none;");
+    layout->addWidget(logoLabel);
+
+    auto *titleLabel = makeLabel(QStringLiteral("历史检测记录"), "panelTitle");
+    titleLabel->setStyleSheet("color:#F1F5F9;background:transparent;");
+    layout->addWidget(titleLabel);
+    layout->addStretch();
+
+    auto *minimizeButton = createTitleButton(ElaIconType::Dash, QStringLiteral("最小化"), bar);
+    m_maximizeButton = createTitleButton(ElaIconType::WindowRestore, QStringLiteral("还原"), bar);
+    auto *closeButton = createTitleButton(ElaIconType::Xmark, QStringLiteral("关闭"), bar);
+    closeButton->setLightHoverColor(QColor("#8B2B35"));
+    closeButton->setDarkHoverColor(QColor("#8B2B35"));
+
+    layout->addWidget(minimizeButton);
+    layout->addWidget(m_maximizeButton);
+    layout->addWidget(closeButton);
+
+    connect(minimizeButton, &QPushButton::clicked, this, &QWidget::showMinimized);
+    connect(m_maximizeButton, &QPushButton::clicked, this, &HistoryDialog::toggleMaximized);
+    connect(closeButton, &QPushButton::clicked, this, &QWidget::close);
+
+    return bar;
+}
 
 QWidget *HistoryDialog::buildFilterBar()
 {
@@ -445,7 +510,7 @@ QWidget *HistoryDialog::buildFilterBar()
     m_recipeCombo = new ElaComboBox(bar);
     m_recipeCombo->setMinimumWidth(200);
 
-    m_refreshButton = new ElaPushButton("刷新", bar);
+    m_refreshButton = new ElaPushButton(QStringLiteral("查询"), bar);
     m_refreshButton->setFixedSize(96, 32);
     applyPrimaryButtonStyle(m_refreshButton);
 
@@ -463,20 +528,28 @@ QWidget *HistoryDialog::buildFilterBar()
     connect(m_rangeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) {
                 updateCustomRangeEnabled();
-                if (!m_reloading) scheduleReload();
+                if (!m_reloading && m_statusLabel) {
+                    m_statusLabel->setText(QStringLiteral("筛选条件已变化，点击查询更新结果"));
+                }
             });
     connect(m_recipeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) {
-                if (!m_reloading) scheduleReload();
+                if (!m_reloading && m_statusLabel) {
+                    m_statusLabel->setText(QStringLiteral("筛选条件已变化，点击查询更新结果"));
+                }
             });
     connect(m_customFrom, &QDateEdit::dateChanged, this, [this](const QDate &) {
         if (m_rangeCombo && m_rangeCombo->currentIndex() == RangeCustom && !m_reloading) {
-            scheduleReload();
+            if (m_statusLabel) {
+                m_statusLabel->setText(QStringLiteral("筛选条件已变化，点击查询更新结果"));
+            }
         }
     });
     connect(m_customTo, &QDateEdit::dateChanged, this, [this](const QDate &) {
         if (m_rangeCombo && m_rangeCombo->currentIndex() == RangeCustom && !m_reloading) {
-            scheduleReload();
+            if (m_statusLabel) {
+                m_statusLabel->setText(QStringLiteral("筛选条件已变化，点击查询更新结果"));
+            }
         }
     });
 
@@ -500,26 +573,38 @@ QWidget *HistoryDialog::buildSummaryRow()
 
 QWidget *HistoryDialog::buildTableCard()
 {
-    auto *panel = createPanel("检测任务列表", nullptr, this);
-    auto *layout = qobject_cast<QVBoxLayout *>(panel->layout());
+    auto *host = new QWidget(this);
+    auto *hostLayout = new QHBoxLayout(host);
+    hostLayout->setContentsMargins(0, 0, 0, 0);
+    hostLayout->setSpacing(0);
 
-    m_tableStack = new QStackedWidget(panel);
+    m_splitter = new QSplitter(Qt::Horizontal, host);
+    m_splitter->setChildrenCollapsible(false);
+    m_splitter->setHandleWidth(8);
+
+    auto *listPanel = createPanel(QStringLiteral("检测任务列表"), nullptr, m_splitter);
+    auto *listLayout = qobject_cast<QVBoxLayout *>(listPanel->layout());
+
+    m_tableStack = new QStackedWidget(listPanel);
 
     m_table = new QTableWidget(m_tableStack);
-    m_table->setColumnCount(9);
+    m_table->setColumnCount(7);
     m_table->setHorizontalHeaderLabels({
-        "编号", "配方", "加工开始", "加工结束",
-        "检测开始", "检测结束", "颗粒", "已清", "峰高(mm)"
+        QStringLiteral("编号"),
+        QStringLiteral("配方"),
+        QStringLiteral("创建时间"),
+        QStringLiteral("检测结束"),
+        QStringLiteral("颗粒"),
+        QStringLiteral("已清"),
+        QStringLiteral("峰高(mm)")
     });
     setupCompactTable(m_table);
+    m_table->setMouseTracking(true);
+    m_table->viewport()->installEventFilter(this);
 
-    // 固定列宽 —— 前 8 列固定，最后一列 stretch 兜住剩余空间
     auto *header = m_table->horizontalHeader();
     header->setSectionResizeMode(QHeaderView::Fixed);
-    header->setStretchLastSection(true);
-    for (int i = 0; i < 8; ++i) {
-        m_table->setColumnWidth(i, kColWidths[i]);
-    }
+    header->setStretchLastSection(false);
     header->setSectionsClickable(false);
 
     // 默认行高
@@ -537,14 +622,56 @@ QWidget *HistoryDialog::buildTableCard()
     m_tableStack->addWidget(empty);     // index 1
     m_tableStack->setCurrentIndex(0);
 
-    if (layout) {
-        layout->addWidget(m_tableStack, 1);
+    if (listLayout) {
+        listLayout->addWidget(m_tableStack, 1);
     }
+
+    auto *detailPanel = createPanel(QStringLiteral("记录详情"), nullptr, m_splitter);
+    auto *detailLayout = qobject_cast<QVBoxLayout *>(detailPanel->layout());
+
+    m_detailStack = new QStackedWidget(detailPanel);
+
+    auto *placeholder = new QWidget(m_detailStack);
+    auto *placeholderLayout = new QVBoxLayout(placeholder);
+    placeholderLayout->setContentsMargins(12, 12, 12, 12);
+    placeholderLayout->setAlignment(Qt::AlignCenter);
+    m_detailPlaceholderLabel = makeLabel(QStringLiteral("请选择左侧记录查看详情"), "imageMainText");
+    m_detailPlaceholderLabel->setAlignment(Qt::AlignCenter);
+    m_detailPlaceholderLabel->setWordWrap(true);
+    placeholderLayout->addWidget(m_detailPlaceholderLabel);
+
+    m_detailScroll = new QScrollArea(m_detailStack);
+    m_detailScroll->setWidgetResizable(true);
+    m_detailScroll->setFrameShape(QFrame::NoFrame);
+    m_detailScroll->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    m_detailScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    m_detailStack->addWidget(placeholder);
+    m_detailStack->addWidget(m_detailScroll);
+    m_detailStack->setCurrentIndex(0);
+
+    if (detailLayout) {
+        detailLayout->addWidget(m_detailStack, 1);
+    }
+
+    m_splitter->addWidget(listPanel);
+    m_splitter->addWidget(detailPanel);
+    m_splitter->setStretchFactor(0, 1);
+    m_splitter->setStretchFactor(1, 1);
+    m_splitter->setSizes({1, 1});
+    connect(m_splitter, &QSplitter::splitterMoved, this,
+            [this](int, int) { updateMainTableColumnWidths(); });
+    hostLayout->addWidget(m_splitter, 1);
+    updateMainTableColumnWidths();
 
     connect(m_table, &QTableWidget::cellClicked,
             this, &HistoryDialog::onRowClicked);
+    connect(m_table, &QTableWidget::currentCellChanged, this,
+            [this](int row, int column, int, int) {
+                onRowClicked(row, column);
+            });
 
-    return panel;
+    return host;
 }
 
 QLabel *HistoryDialog::makeTileValue(QWidget *tile)
@@ -595,6 +722,50 @@ void HistoryDialog::updateCustomRangeEnabled()
     if (m_customDash) m_customDash->setVisible(custom);
 }
 
+void HistoryDialog::showDetailPlaceholder(const QString &message)
+{
+    m_selectedRecordId = -1;
+    if (m_detailScroll) {
+        if (auto *old = m_detailScroll->takeWidget()) {
+            old->deleteLater();
+        }
+        m_detailContent = nullptr;
+    }
+    if (m_detailPlaceholderLabel) {
+        m_detailPlaceholderLabel->setText(message);
+    }
+    if (m_detailStack) {
+        m_detailStack->setCurrentIndex(0);
+    }
+}
+
+void HistoryDialog::showDetailForRecord(int recordId)
+{
+    if (recordId <= 0 || !m_detailStack || !m_detailScroll) {
+        return;
+    }
+    if (recordId == m_selectedRecordId && m_detailContent
+        && m_detailStack->currentIndex() == 1) {
+        return;
+    }
+
+    QWidget *detail = createDetailWidget(recordId);
+    if (!detail) {
+        showDetailPlaceholder(QStringLiteral("详情加载失败"));
+        return;
+    }
+
+    if (auto *old = m_detailScroll->takeWidget()) {
+        old->deleteLater();
+    }
+    detail->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    detail->setMinimumWidth(360);
+    m_detailScroll->setWidget(detail);
+    m_detailContent = detail;
+    m_selectedRecordId = recordId;
+    m_detailStack->setCurrentIndex(1);
+}
+
 void HistoryDialog::populateRecipeCombo()
 {
     if (!m_recipeCombo) {
@@ -624,15 +795,6 @@ void HistoryDialog::populateRecipeCombo()
     }
 }
 
-void HistoryDialog::scheduleReload()
-{
-    if (m_reloadTimer) {
-        m_reloadTimer->start();
-    } else {
-        reloadRecords();
-    }
-}
-
 void HistoryDialog::reloadRecords()
 {
     if (m_reloading) {
@@ -655,27 +817,11 @@ void HistoryDialog::reloadRecords()
             ? m_table->verticalScrollBar()->value()
             : 0;
 
-    // 加载新数据前，先立即收起展开行 + 停掉正在跑的滚动/展开动画，
-    // 避免动画回调作用在错误的行上。
-    if (m_expandAnim && m_expandAnim->state() == QAbstractAnimation::Running) {
-        m_expandAnim->stop();
-    }
-    if (m_expandAnimFinishedConn) {
-        QObject::disconnect(m_expandAnimFinishedConn);
-        m_expandAnimFinishedConn = {};
-    }
-    if (m_scrollAnim && m_scrollAnim->state() == QAbstractAnimation::Running) {
-        m_scrollAnim->stop();
-    }
-    if (m_expandedRow >= 0 && m_table && m_expandedRow < m_table->rowCount()) {
-        m_table->removeCellWidget(m_expandedRow, 0);
-        m_table->removeRow(m_expandedRow);
-    }
     if (m_table) m_table->clearSpans();
-    m_expandedRow      = -1;
-    m_expandedRecordId = -1;
-    m_expandedWidget   = nullptr;
-    m_animating        = false;
+    showDetailPlaceholder(QStringLiteral("正在查询历史记录..."));
+    if (m_statusLabel) {
+        m_statusLabel->setText(QStringLiteral("正在查询历史记录..."));
+    }
 
     InspectionQuery q;
     q.limit = 200;
@@ -727,6 +873,7 @@ void HistoryDialog::reloadRecords()
         if (m_tableStack) {
             m_tableStack->setCurrentIndex(1);
         }
+        showDetailPlaceholder(QStringLiteral("历史记录加载失败"));
         HistorySummary empty;
         updateSummary(empty);
         if (m_statusLabel) {
@@ -755,14 +902,22 @@ void HistoryDialog::reloadRecords()
     if (m_statusLabel) {
         m_statusLabel->setText(rows.isEmpty()
                                    ? QStringLiteral("暂无符合条件的历史记录")
-                                   : QStringLiteral("共 %1 条记录，点击行可展开详情").arg(rows.size()));
+                                   : QStringLiteral("共 %1 条记录，选择左侧行查看详情").arg(rows.size()));
     }
 
     // 恢复选中和滚动条位置（按 recordId 找回；找不到就退回滚动位置）
     if (m_table) {
         int restoreRow = (savedSelectedId > 0) ? findRowByRecordId(savedSelectedId) : -1;
+        if (restoreRow < 0 && m_table->rowCount() > 0) {
+            restoreRow = 0;
+        }
         if (restoreRow >= 0) {
             m_table->selectRow(restoreRow);
+            if (auto *it = m_table->item(restoreRow, 0)) {
+                showDetailForRecord(it->data(Qt::UserRole).toInt());
+            }
+        } else {
+            showDetailPlaceholder(QStringLiteral("请选择左侧记录查看详情"));
         }
         if (auto *bar = m_table->verticalScrollBar()) {
             bar->setValue(qBound(bar->minimum(), savedScroll, bar->maximum()));
@@ -783,9 +938,7 @@ void HistoryDialog::populateTable(const QList<InspectionRecordRow> &rows)
         idItem->setData(Qt::UserRole, r.id);
         m_table->setItem(i, col++, idItem);
         m_table->setItem(i, col++, new QTableWidgetItem(r.recipeName));
-        m_table->setItem(i, col++, new QTableWidgetItem(formatDateTime(r.processStartAt)));
-        m_table->setItem(i, col++, new QTableWidgetItem(formatDateTime(r.processEndAt)));
-        m_table->setItem(i, col++, new QTableWidgetItem(formatDateTime(r.inspectStartAt)));
+        m_table->setItem(i, col++, new QTableWidgetItem(formatDateTime(r.createdAt)));
         m_table->setItem(i, col++, new QTableWidgetItem(formatDateTime(r.inspectEndAt)));
         m_table->setItem(i, col++, new QTableWidgetItem(QString::number(r.particleCount)));
         m_table->setItem(i, col++, new QTableWidgetItem(QString::number(r.clearedCount)));
@@ -818,7 +971,7 @@ void HistoryDialog::updateSummary(const HistorySummary &s)
 }
 
 // -----------------------------------------------------------------
-// 行内展开详情（带动画）
+// Master-detail selection
 // -----------------------------------------------------------------
 
 void HistoryDialog::onRowClicked(int row, int /*column*/)
@@ -826,10 +979,6 @@ void HistoryDialog::onRowClicked(int row, int /*column*/)
     if (!m_table || row < 0 || row >= m_table->rowCount()) {
         return;
     }
-    if (m_animating) {
-        return; // 动画进行中不响应
-    }
-    // 忽略点击到内嵌 detail 行（那行没有 id item）
     auto *item = m_table->item(row, 0);
     if (!item) {
         return;
@@ -838,7 +987,8 @@ void HistoryDialog::onRowClicked(int row, int /*column*/)
     if (recordId <= 0) {
         return;
     }
-    toggleDetailRow(row);
+    m_table->selectRow(row);
+    showDetailForRecord(recordId);
 }
 
 int HistoryDialog::findRowByRecordId(int recordId) const
@@ -855,198 +1005,23 @@ int HistoryDialog::findRowByRecordId(int recordId) const
     return -1;
 }
 
-void HistoryDialog::scrollRowIntoView(int row)
+void HistoryDialog::toggleMaximized()
 {
-    if (!m_table || row < 0 || row >= m_table->rowCount()) {
-        return;
+    if (isMaximized()) {
+        showNormal();
+    } else {
+        showMaximized();
     }
-    // 让展开行自身也进入视口：把 detailRow 也一并 scrollTo
-    m_table->scrollTo(m_table->model()->index(row, 0),
-                      QAbstractItemView::EnsureVisible);
-    if (m_expandedRow >= 0 && m_expandedRow < m_table->rowCount()
-        && m_expandedRow != row) {
-        m_table->scrollTo(m_table->model()->index(m_expandedRow, 0),
-                          QAbstractItemView::EnsureVisible);
-    }
+    updateMaximizeButtonIcon();
 }
 
-// 递归把事件过滤器装到 root 及其所有子控件上（含子控件的 viewport 等），
-// 目的是"抢走"所有 Wheel 事件，转发给主表统一做平滑滚动，
-// 同时顺便屏蔽 QTabBar 因滚轮切换 tab 的默认行为。
-void HistoryDialog::installWheelForwarderRecursive(QWidget *root)
+void HistoryDialog::updateMaximizeButtonIcon()
 {
-    if (!root) return;
-    root->installEventFilter(this);
-    // 有 viewport 的 QAbstractScrollArea（QTableWidget/QScrollArea 等）
-    if (auto *sa = qobject_cast<QAbstractScrollArea *>(root)) {
-        if (auto *vp = sa->viewport()) {
-            vp->installEventFilter(this);
-        }
-    }
-    const auto children = root->findChildren<QWidget *>();
-    for (QWidget *w : children) {
-        w->installEventFilter(this);
-        if (auto *sa = qobject_cast<QAbstractScrollArea *>(w)) {
-            if (auto *vp = sa->viewport()) {
-                vp->installEventFilter(this);
-            }
-        }
-    }
-}
-
-void HistoryDialog::toggleDetailRow(int row)
-{
-    if (!m_table || !m_expandAnim) {
+    if (!m_maximizeButton) {
         return;
     }
-
-    auto *item = m_table->item(row, 0);
-    if (!item) {
-        return;
-    }
-    const int recordId = item->data(Qt::UserRole).toInt();
-
-    // 点击的正是当前展开的记录 → 收起（带动画）
-    if (m_expandedRow >= 0 && recordId == m_expandedRecordId) {
-        collapseDetail();
-        return;
-    }
-
-    // 已有展开行且是别的记录 → 先带动画收起，收完再展开新行。
-    // 用 recordId 定位新行，避免 row 因为旧展开行被移除而错位。
-    if (m_expandedRow >= 0) {
-        collapseDetail([this, recordId]() {
-            const int newRow = findRowByRecordId(recordId);
-            if (newRow >= 0) {
-                expandDetailRow(newRow, recordId);
-            }
-        });
-        return;
-    }
-
-    expandDetailRow(row, recordId);
-}
-
-void HistoryDialog::expandDetailRow(int row, int recordId)
-{
-    if (!m_table || !m_expandAnim || row < 0 || row >= m_table->rowCount()) {
-        return;
-    }
-
-    // 展开新行：插入一个 span 单元格，起始高度 0，动画到"内容自然高度"
-    QWidget *detail = createDetailWidget(recordId);
-    if (!detail) {
-        return;
-    }
-
-    // 让详情按内容自然撑开：设置合理宽度后再取 sizeHint().height()
-    const int detailWidth = m_table->viewport()->width();
-    detail->setFixedWidth(detailWidth);
-    detail->adjustSize();
-    const int naturalHeight = qMax(kExpandedRowMinHeight,
-                                   detail->sizeHint().height());
-
-    const int detailRow = row + 1;
-    m_table->insertRow(detailRow);
-    m_table->setRowHeight(detailRow, 0);                     // 起始高度 0
-    m_table->setSpan(detailRow, 0, 1, m_table->columnCount());
-    m_table->setCellWidget(detailRow, 0, detail);
-
-    // 详情区里所有子控件（QTabBar / 内嵌表 / 其 viewport 等）都要把 wheel
-    // 转发给主表，否则鼠标停在详情上滚动会：(1) 主表不滚，(2) QTabBar 会切页。
-    installWheelForwarderRecursive(detail);
-
-    m_expandedRow      = detailRow;
-    m_expandedRecordId = recordId;
-    m_expandedWidget   = detail;
-
-    // 让用户明确知道展开的是哪一行
-    m_table->selectRow(row);
-
-    m_animating = true;
-    if (m_expandAnimFinishedConn) {
-        QObject::disconnect(m_expandAnimFinishedConn);
-        m_expandAnimFinishedConn = {};
-    }
-    const int expectedRecordId = recordId;
-    m_expandAnimFinishedConn = connect(m_expandAnim, &QVariantAnimation::finished, this,
-        [this, expectedRecordId]() {
-            // 动画结束后再断掉自己
-            if (m_expandAnimFinishedConn) {
-                QObject::disconnect(m_expandAnimFinishedConn);
-                m_expandAnimFinishedConn = {};
-            }
-            // 若中途数据被刷新或换行，就不要再改状态了
-            if (m_expandedRecordId != expectedRecordId) {
-                m_animating = false;
-                return;
-            }
-            m_animating = false;
-            scrollRowIntoView(m_expandedRow);
-        }, Qt::QueuedConnection);
-    m_expandAnim->stop();
-    m_expandAnim->setStartValue(0);
-    m_expandAnim->setEndValue(naturalHeight);
-    m_expandAnim->start();
-}
-
-void HistoryDialog::collapseDetail(std::function<void()> after)
-{
-    if (!m_table || m_expandedRow < 0) {
-        m_expandedRow      = -1;
-        m_expandedRecordId = -1;
-        m_expandedWidget   = nullptr;
-        if (after) after();
-        return;
-    }
-    if (!m_expandAnim) {
-        // 无动画对象兜底
-        if (m_expandedRow < m_table->rowCount()) {
-            m_table->removeCellWidget(m_expandedRow, 0);
-            m_table->removeRow(m_expandedRow);
-        }
-        m_table->clearSpans();
-        m_expandedRow      = -1;
-        m_expandedRecordId = -1;
-        m_expandedWidget   = nullptr;
-        if (after) after();
-        return;
-    }
-
-    m_animating = true;
-    if (m_expandAnimFinishedConn) {
-        QObject::disconnect(m_expandAnimFinishedConn);
-        m_expandAnimFinishedConn = {};
-    }
-    const int collapsingRecordId = m_expandedRecordId;
-    m_expandAnimFinishedConn = connect(m_expandAnim, &QVariantAnimation::finished, this,
-        [this, collapsingRecordId, after = std::move(after)]() {
-            if (m_expandAnimFinishedConn) {
-                QObject::disconnect(m_expandAnimFinishedConn);
-                m_expandAnimFinishedConn = {};
-            }
-            // 中途状态已被别人重置（例如 reload），就只清动画标志即可
-            if (m_expandedRecordId != collapsingRecordId) {
-                m_animating = false;
-                if (after) after();
-                return;
-            }
-            if (m_expandedRow >= 0 && m_expandedRow < m_table->rowCount()) {
-                m_table->removeCellWidget(m_expandedRow, 0);
-                m_table->removeRow(m_expandedRow);
-            }
-            m_table->clearSpans();
-            m_expandedRow      = -1;
-            m_expandedRecordId = -1;
-            m_expandedWidget   = nullptr;
-            m_animating        = false;
-            if (after) after();
-        }, Qt::QueuedConnection);
-
-    m_expandAnim->stop();
-    m_expandAnim->setStartValue(m_table->rowHeight(m_expandedRow));
-    m_expandAnim->setEndValue(0);
-    m_expandAnim->start();
+    m_maximizeButton->setAwesome(isMaximized() ? ElaIconType::WindowRestore : ElaIconType::Square);
+    m_maximizeButton->setToolTip(isMaximized() ? QStringLiteral("还原") : QStringLiteral("最大化"));
 }
 
 QWidget *HistoryDialog::createDetailWidget(int recordId)
@@ -1059,8 +1034,8 @@ QWidget *HistoryDialog::createDetailWidget(int recordId)
     host->setStyleSheet("background:#131E28;");
 
     auto *hostLayout = new QVBoxLayout(host);
-    hostLayout->setContentsMargins(12, 10, 12, 12);
-    hostLayout->setSpacing(6);
+    hostLayout->setContentsMargins(10, 6, 10, 10);
+    hostLayout->setSpacing(3);
 
     if (!detail.loaded) {
         auto *msg = makeLabel(err.isEmpty() ? QStringLiteral("详情加载失败")
@@ -1072,13 +1047,22 @@ QWidget *HistoryDialog::createDetailWidget(int recordId)
     }
 
     const auto &h = detail.head;
+    auto compactDetailText = [](QLabel *label) {
+        if (!label) {
+            return;
+        }
+        label->setWordWrap(false);
+        label->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        label->setFixedHeight(label->sizeHint().height());
+    };
 
     auto *title = makeLabel(QStringLiteral("任务 #%1 · %2")
                                 .arg(h.id)
                                 .arg(h.recipeName.isEmpty() ? QStringLiteral("未命名配方")
                                                             : h.recipeName),
                             "panelTitle");
-    hostLayout->addWidget(title);
+    hostLayout->addWidget(title, 0, Qt::AlignTop);
+    compactDetailText(title);
 
     auto *meta = makeLabel(QStringLiteral("创建时间：%1  |  加工：%2 — %3  |  检测：%4 — %5")
                                .arg(formatDateTime(h.createdAt))
@@ -1087,8 +1071,8 @@ QWidget *HistoryDialog::createDetailWidget(int recordId)
                                .arg(formatDateTime(h.inspectStartAt))
                                .arg(formatDateTime(h.inspectEndAt)),
                            "sectionHint");
-    meta->setWordWrap(true);
-    hostLayout->addWidget(meta);
+    hostLayout->addWidget(meta, 0, Qt::AlignTop);
+    compactDetailText(meta);
 
     const double rate = (h.particleCount > 0)
                             ? 100.0 * double(h.clearedCount) / double(h.particleCount)
@@ -1099,7 +1083,8 @@ QWidget *HistoryDialog::createDetailWidget(int recordId)
                               .arg(QString::number(rate, 'f', 1))
                               .arg(QString::number(h.maxParticleHeight, 'f', 3)),
                           "metricValue");
-    hostLayout->addWidget(kpi);
+    hostLayout->addWidget(kpi, 0, Qt::AlignTop);
+    compactDetailText(kpi);
 
     QStringList overviewParts;
     if (!h.remark.isEmpty()) {
@@ -1109,8 +1094,8 @@ QWidget *HistoryDialog::createDetailWidget(int recordId)
                          .arg(h.overviewImagePath.isEmpty() ? QStringLiteral("无")
                                                             : h.overviewImagePath);
     auto *overview = makeLabel(overviewParts.join(QStringLiteral("    ")), "sectionHint");
-    overview->setWordWrap(true);
-    hostLayout->addWidget(overview);
+    hostLayout->addWidget(overview, 0, Qt::AlignTop);
+    compactDetailText(overview);
 
     auto *tabs = new QTabWidget(host);
     tabs->setDocumentMode(true);
@@ -1121,7 +1106,7 @@ QWidget *HistoryDialog::createDetailWidget(int recordId)
     particleTable->setHorizontalHeaderLabels({
         "序号", "X", "Y", "Z", "高度(mm)", "已清除", "检测时间", "清除时间"
     });
-    setupNoScrollTable(particleTable);
+    setupDetailTable(particleTable);
     particleTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     particleTable->setRowCount(detail.particles.size());
     for (int i = 0; i < detail.particles.size(); ++i) {
@@ -1139,7 +1124,6 @@ QWidget *HistoryDialog::createDetailWidget(int recordId)
     }
     centerTableCells(particleTable);
     particleTable->resizeRowsToContents();
-    particleTable->setFixedHeight(tableContentHeight(particleTable));
 
     // 工艺快照
     auto *processTable = new QTableWidget(tabs);
@@ -1148,7 +1132,7 @@ QWidget *HistoryDialog::createDetailWidget(int recordId)
         "路径", "峰高(mm)", "TargetX", "TargetY", "TargetZ",
         "进给速度", "进给量", "主轴转速", "切次", "单切量", "快照时间"
     });
-    setupNoScrollTable(processTable);
+    setupDetailTable(processTable);
     processTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     processTable->setRowCount(detail.processHistory.size());
     for (int i = 0; i < detail.processHistory.size(); ++i) {
@@ -1168,10 +1152,8 @@ QWidget *HistoryDialog::createDetailWidget(int recordId)
     }
     centerTableCells(processTable);
     processTable->resizeRowsToContents();
-    processTable->setFixedHeight(tableContentHeight(processTable));
 
-    // Tab 栏本身也不允许滚动：按内容自然撑开
-    tabs->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    tabs->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
     tabs->addTab(particleTable, QStringLiteral("颗粒明细 (%1)").arg(detail.particles.size()));
     tabs->addTab(processTable,  QStringLiteral("工艺快照 (%1)").arg(detail.processHistory.size()));

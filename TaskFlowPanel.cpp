@@ -38,11 +38,11 @@ QString formatFloat(float value, int precision = 2)
 QString feedDirectionText(qint16 direction)
 {
     switch (direction) {
-    case 10: return QStringLiteral("X+");
-    case 20: return QStringLiteral("X-");
-    case 30: return QStringLiteral("Y+");
-    case 40: return QStringLiteral("Y-");
-    default: return QString("未知(%1)").arg(direction);
+    case 10: return QStringLiteral("X 轴正向");
+    case 20: return QStringLiteral("X 轴负向");
+    case 30: return QStringLiteral("Y 轴正向");
+    case 40: return QStringLiteral("Y 轴负向");
+    default: return QStringLiteral("未定义 (%1)").arg(direction);
     }
 }
 
@@ -135,41 +135,62 @@ QWidget *TaskFlowPanel::createCommandCard(const PlcPathCommandParamsVM &command,
 
     auto *layout = new QVBoxLayout(card);
     layout->setContentsMargins(10, 8, 10, 8);
-    layout->setSpacing(6);
+    layout->setSpacing(4);
 
     auto *header = new QHBoxLayout();
     header->setContentsMargins(0, 0, 0, 0);
     header->setSpacing(8);
 
-    auto *title = makeLabel(QString("PLC 命令 #%1").arg(sequence), "commandTitle");
+    auto *sequenceBadge = makeLabel(QString::number(sequence), "commandSequence");
+    sequenceBadge->setFixedSize(32, 32);
+    sequenceBadge->setAlignment(Qt::AlignCenter);
+    sequenceBadge->setToolTip(QStringLiteral("第 %1 条 PLC 指令").arg(sequence));
+    sequenceBadge->setStyleSheet(
+        "color:#E6EEF5;font-size:16px;font-weight:700;border:none;border-radius:16px;"
+        "background:#2D6CDF;");
+    header->addWidget(sequenceBadge);
+
+    auto *titleGroup = new QVBoxLayout();
+    titleGroup->setContentsMargins(0, 0, 0, 0);
+    titleGroup->setSpacing(0);
+
+    auto *title = makeLabel(QStringLiteral("PLC 工艺指令"), "commandTitle");
     title->setStyleSheet(
         "color:#E6EEF5;font-size:14px;font-weight:600;border:none;background:transparent;");
-    header->addWidget(title);
+    titleGroup->addWidget(title);
+
+    auto *subtitle = makeLabel(QStringLiteral("坐标定位 · 进给参数"), "commandSubtitle");
+    subtitle->setStyleSheet(
+        "color:#718395;font-size:11px;border:none;background:transparent;");
+    titleGroup->addWidget(subtitle);
+    header->addLayout(titleGroup);
     header->addStretch();
 
-    auto *direction = makeLabel(feedDirectionText(command.feedDirection), "commandDirection");
+    auto *direction = makeLabel(
+        QStringLiteral("进给方向：%1").arg(feedDirectionText(command.feedDirection)),
+        "commandDirection");
     direction->setStyleSheet(
-        "color:#00E5FF;font-size:12px;font-weight:600;padding:2px 8px;"
-        "border:1px solid #00E5FF;border-radius:3px;background:transparent;");
+        "color:#00E5FF;font-size:12px;font-weight:600;border:none;background:transparent;");
     header->addWidget(direction);
     layout->addLayout(header);
 
     auto *grid = new QGridLayout();
     grid->setContentsMargins(0, 0, 0, 0);
-    grid->setHorizontalSpacing(10);
-    grid->setVerticalSpacing(2);
+    grid->setHorizontalSpacing(8);
+    grid->setVerticalSpacing(0);
 
     grid->addWidget(createFieldLabel(fieldText("X", formatFloat(command.x)), card), 0, 0);
     grid->addWidget(createFieldLabel(fieldText("Y", formatFloat(command.y)), card), 0, 1);
-    grid->addWidget(createFieldLabel(fieldText("Z", formatFloat(command.z)), card), 1, 0);
-    grid->addWidget(createFieldLabel(fieldText("进给速度", formatFloat(command.feedSpeed)), card), 1, 1);
-    grid->addWidget(createFieldLabel(fieldText("进给量", formatFloat(command.feedAmount)), card), 2, 0);
-    grid->addWidget(createFieldLabel(fieldText("主轴速度", formatFloat(command.spindleSpeed, 0)), card), 2, 1);
-    grid->addWidget(createFieldLabel(fieldText("下刀次数", QString::number(command.plungeCount)), card), 3, 0);
-    grid->addWidget(createFieldLabel(fieldText("下刀量", QString::number(command.plungeAmount)), card), 3, 1);
+    grid->addWidget(createFieldLabel(fieldText("Z", formatFloat(command.z)), card), 0, 2);
+    grid->addWidget(createFieldLabel(fieldText("进给速度", formatFloat(command.feedSpeed)), card), 0, 3);
+    grid->addWidget(createFieldLabel(fieldText("进给量", formatFloat(command.feedAmount)), card), 1, 0);
+    grid->addWidget(createFieldLabel(fieldText("主轴速度", formatFloat(command.spindleSpeed, 0)), card), 1, 1);
+    grid->addWidget(createFieldLabel(fieldText("下刀次数", QString::number(command.plungeCount)), card), 1, 2);
+    grid->addWidget(createFieldLabel(fieldText("下刀量", QString::number(command.plungeAmount)), card), 1, 3);
 
-    grid->setColumnStretch(0, 1);
-    grid->setColumnStretch(1, 1);
+    for (int column = 0; column < 4; ++column) {
+        grid->setColumnStretch(column, 1);
+    }
     layout->addLayout(grid);
 
     return card;

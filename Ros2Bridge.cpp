@@ -15,6 +15,7 @@
 #include <QMetaType>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <exception>
@@ -32,6 +33,9 @@ constexpr char kMillingProgressTopic[] = "milling/progress";
 constexpr char kPlcFeedbackTopic[] = "plc/feedback";
 constexpr char kPlcPathCommandParamsTopic[] = "plc_path_command_params";
 constexpr std::uint64_t kInvalidFrame = ~std::uint64_t(0);
+constexpr std::uint32_t kCv8Uc1 = 0;
+constexpr std::uint32_t kCv16Uc1 = 2;
+constexpr std::uint32_t kCv32Fc1 = 5;
 
 void emitScanSegment(Ros2Bridge *bridge,
                      const mz_interfaces::msg::ScanResult &message,
@@ -64,21 +68,37 @@ void emitScanSegment(Ros2Bridge *bridge,
 // 算法端/存储端拿到的是同一份 RawSlice，怎么解读是他们各自的事。
 
 // Mono16 距离图 → Grayscale8：按有效像素 (v != 0) 的 min/max 线性拉伸。
-QImage stretchMono16ToGrayscale8(const RawSlice &s, int width, int height)
+bool hasValidImageLayout(const RawSlice &slice,
+                         int width,
+                         int height,
+                         std::uint32_t stride,
+                         std::size_t minimumRowBytes)
 {
-    if (s.empty() || width <= 0 || height <= 0) return QImage();
-    const std::size_t pixels = std::size_t(width) * std::size_t(height);
-    if (s.size < pixels * 2) return QImage();
+    if (slice.empty() || width <= 0 || height <= 0 || stride < minimumRowBytes) {
+        return false;
+    }
+    return static_cast<std::size_t>(height) <= slice.size / stride;
+}
 
-    const auto *src = reinterpret_cast<const std::uint16_t *>(s.data);
+QImage stretchMono16ToGrayscale8(const RawSlice &slice,
+                                 int width,
+                                 int height,
+                                 std::uint32_t stride)
+{
+    const std::size_t rowBytes = static_cast<std::size_t>(width) * sizeof(std::uint16_t);
+    if (!hasValidImageLayout(slice, width, height, stride, rowBytes)) return QImage();
 
     std::uint16_t lo = std::numeric_limits<std::uint16_t>::max();
     std::uint16_t hi = 0;
-    for (std::size_t i = 0; i < pixels; ++i) {
-        const std::uint16_t v = src[i];
-        if (v == 0) continue;
-        if (v < lo) lo = v;
-        if (v > hi) hi = v;
+    for (int y = 0; y < height; ++y) {
+        const auto *row = reinterpret_cast<const std::uint16_t *>(
+            slice.data + static_cast<std::size_t>(y) * stride);
+        for (int x = 0; x < width; ++x) {
+            const std::uint16_t value = row[x];
+            if (value == 0) continue;
+            if (value < lo) lo = value;
+            if (value > hi) hi = value;
+        }
     }
 
     QImage img(width, height, QImage::Format_Grayscale8);
@@ -89,26 +109,75 @@ QImage stretchMono16ToGrayscale8(const RawSlice &s, int width, int height)
     const std::uint32_t span = std::uint32_t(hi) - std::uint32_t(lo);
     for (int y = 0; y < height; ++y) {
         uchar *dst = img.scanLine(y);
-        const std::uint16_t *row = src + std::size_t(y) * width;
+        const auto *row = reinterpret_cast<const std::uint16_t *>(
+            slice.data + static_cast<std::size_t>(y) * stride);
         for (int x = 0; x < width; ++x) {
-            const std::uint16_t v = row[x];
-            dst[x] = (v == 0) ? 0
-                : static_cast<uchar>((std::uint32_t(v) - lo) * 255U / span);
+            const std::uint16_t value = row[x];
+            dst[x] = (value == 0) ? 0
+                : static_cast<uchar>((std::uint32_t(value) - lo) * 255U / span);
         }
     }
     return img;
 }
 
-// Mono8 强度图 → Grayscale8：按行 memcpy，一比一。
-QImage wrapMono8ToGrayscale8(const RawSlice &s, int width, int height)
+QImage stretchFloat32ToGrayscale8(const RawSlice &slice,
+                                  int width,
+                                  int height,
+                                  std::uint32_t stride)
 {
-    if (s.empty() || width <= 0 || height <= 0) return QImage();
-    const std::size_t pixels = std::size_t(width) * std::size_t(height);
-    if (s.size < pixels) return QImage();
+    const std::size_t rowBytes = static_cast<std::size_t>(width) * sizeof(float);
+    if (!hasValidImageLayout(slice, width, height, stride, rowBytes)) return QImage();
+
+    float lo = std::numeric_limits<float>::infinity();
+    float hi = -std::numeric_limits<float>::infinity();
+    for (int y = 0; y < height; ++y) {
+        const auto *row = reinterpret_cast<const float *>(
+            slice.data + static_cast<std::size_t>(y) * stride);
+        for (int x = 0; x < width; ++x) {
+            const float value = row[x];
+            if (!std::isfinite(value) || value <= 0.0f) continue;
+            lo = std::min(lo, value);
+            hi = std::max(hi, value);
+        }
+    }
+
+    QImage img(width, height, QImage::Format_Grayscale8);
+    if (!(lo < hi)) {
+        img.fill(0);
+        return img;
+    }
+
+    const float scale = 255.0f / (hi - lo);
+    for (int y = 0; y < height; ++y) {
+        uchar *dst = img.scanLine(y);
+        const auto *row = reinterpret_cast<const float *>(
+            slice.data + static_cast<std::size_t>(y) * stride);
+        for (int x = 0; x < width; ++x) {
+            const float value = row[x];
+            if (!std::isfinite(value) || value <= 0.0f) {
+                dst[x] = 0;
+                continue;
+            }
+            dst[x] = static_cast<uchar>(std::clamp((value - lo) * scale, 0.0f, 255.0f));
+        }
+    }
+    return img;
+}
+
+QImage wrapMono8ToGrayscale8(const RawSlice &slice,
+                              int width,
+                              int height,
+                              std::uint32_t stride)
+{
+    if (!hasValidImageLayout(slice, width, height, stride, static_cast<std::size_t>(width))) {
+        return QImage();
+    }
 
     QImage img(width, height, QImage::Format_Grayscale8);
     for (int y = 0; y < height; ++y) {
-        std::memcpy(img.scanLine(y), s.data + std::size_t(y) * width, width);
+        std::memcpy(img.scanLine(y),
+                    slice.data + static_cast<std::size_t>(y) * stride,
+                    static_cast<std::size_t>(width));
     }
     return img;
 }
@@ -244,10 +313,36 @@ bool Ros2Bridge::start()
                     return;
                 }
 
-                const QImage image = (imageType == 0)
-                    ? stretchMono16ToGrayscale8(slice, int(msg->width), int(msg->height))
-                    : wrapMono8ToGrayscale8(slice, int(msg->width), int(msg->height));
+                QImage image;
+                if (imageType == 0) {
+                    if (msg->pixel_format == kCv32Fc1) {
+                        image = stretchFloat32ToGrayscale8(
+                            slice, int(msg->width), int(msg->height), msg->stride);
+                    } else if (msg->pixel_format == kCv16Uc1) {
+                        image = stretchMono16ToGrayscale8(
+                            slice, int(msg->width), int(msg->height), msg->stride);
+                    } else {
+                        emit errorMessage(QString("Unsupported Range image format: %1")
+                                              .arg(msg->pixel_format));
+                        return;
+                    }
+                } else {
+                    if (msg->pixel_format != kCv8Uc1) {
+                        emit errorMessage(QString("Unsupported Intensity image format: %1")
+                                              .arg(msg->pixel_format));
+                        return;
+                    }
+                    image = wrapMono8ToGrayscale8(
+                        slice, int(msg->width), int(msg->height), msg->stride);
+                }
                 if (image.isNull()) {
+                    emit errorMessage(QString("Invalid image layout: frame=%1 %2x%3 stride=%4 size=%5 fmt=%6")
+                                          .arg(msg->frame_id)
+                                          .arg(msg->width)
+                                          .arg(msg->height)
+                                          .arg(msg->stride)
+                                          .arg(msg->data_size)
+                                          .arg(msg->pixel_format));
                     return;
                 }
 

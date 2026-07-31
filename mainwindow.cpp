@@ -148,7 +148,7 @@ void MainWindow::connectTitleBar()
         if (!m_historyDialog) {
             m_historyDialog = new HistoryDialog(this);
         }
-        m_historyDialog->show();
+        m_historyDialog->showMaximized();
         m_historyDialog->raise();
         m_historyDialog->activateWindow();
         appendEventLog("INFO", "用户打开了历史记录");
