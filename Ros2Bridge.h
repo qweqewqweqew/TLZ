@@ -45,6 +45,7 @@ signals:
     void errorMessage(const QString &message);
     void scanResultReceived(quint8 imageType,
                             quint64 frameId,
+                            quint64 taskId,
                             const QString &shmName,
                             quint64 offset,
                             quint64 dataSize,
@@ -53,9 +54,11 @@ signals:
                             quint32 pixelFormat);
     // 从共享内存读出的一帧：range 为 Float32/Mono16 拉伸后的 Grayscale8，
     // intensity 为 Mono8 原始像素；任一未提供时对应 QImage 可能为空。
+    // taskId 为后端任务号（一次任务多次扫描，帧按 taskId 归拢）。
     void scanFrameReady(const QImage &range,
                         const QImage &intensity,
                         quint64 frameId,
+                        quint64 taskId,
                         quint64 timestampNs,
                         quint32 width,
                         quint32 height,
@@ -63,14 +66,14 @@ signals:
     void backendStateReceived(const QString &state);
 
     // 打磨路径全量下发（后端 → 前端），calibrationApplied=false 时前端显示未标定角标。
-    void millingPathsReceived(int taskId,
+    void millingPathsReceived(quint64 taskId,
                               int pathTotal,
                               int maxParticleHeight,
                               bool calibrationApplied,
                               const QVector<MillingPathVM> &paths);
 
     // 打磨进度（后端 → 前端）。progress 按 0~100 显示。
-    void millingProgressReceived(int taskId,
+    void millingProgressReceived(quint64 taskId,
                                  float progress,
                                  bool finished,
                                  bool success,

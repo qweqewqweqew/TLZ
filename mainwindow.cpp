@@ -7,6 +7,7 @@
 #include "EventLogPanel.h"
 #include "HistoryDialog.h"
 #include "ImageDisplayPanel.h"
+#include "InspectionRepository.h"
 #include "Logger.h"
 #include "MillingPathVM.h"
 #include "PlcFeedbackVM.h"
@@ -175,6 +176,7 @@ void MainWindow::startRos2Bridge()
     connect(m_ros2Bridge, &Ros2Bridge::scanResultReceived, this,
             [this](quint8 imageType,
                    quint64 frameId,
+                   quint64 taskId,
                    const QString &shmName,
                    quint64 offset,
                    quint64 dataSize,
@@ -182,9 +184,10 @@ void MainWindow::startRos2Bridge()
                    quint32 height,
                    quint32 pixelFormat) {
                 appendEventLog("INFO",
-                               QString("相机图像通知 type=%1 frame=%2 shm=%3 offset=%4 size=%5 %6x%7 fmt=%8")
+                               QString("相机图像通知 type=%1 frame=%2 task=%3 shm=%4 offset=%5 size=%6 %7x%8 fmt=%9")
                                    .arg(imageType)
                                    .arg(frameId)
+                                   .arg(taskId)
                                    .arg(shmName)
                                    .arg(offset)
                                    .arg(dataSize)
@@ -196,15 +199,31 @@ void MainWindow::startRos2Bridge()
             [this](const QImage &range,
                    const QImage &intensity,
                    quint64 frameId,
+                   quint64 taskId,
                    quint64 timestampNs,
                    quint32 width,
                    quint32 height,
                    quint32 pixelFormat) {
-                Q_UNUSED(width);
-                Q_UNUSED(height);
-                Q_UNUSED(pixelFormat);
                 if (m_imagePanel) {
                     m_imagePanel->updateScanFrame(range, intensity, frameId, timestampNs);
+                }
+
+                // 帧落库：消息没带 task_id 时回退到当前任务（MillingPaths 记录的任务号）
+                const quint64 effectiveTaskId = taskId != 0 ? taskId : m_currentBackendTaskId;
+                if (effectiveTaskId == 0 || frameId == 0) {
+                    return;
+                }
+                QString err;
+                if (!InspectionRepository::saveFrameForTask(effectiveTaskId,
+                                                            frameId,
+                                                            timestampNs,
+                                                            int(width),
+                                                            int(height),
+                                                            int(pixelFormat),
+                                                            !range.isNull(),
+                                                            !intensity.isNull(),
+                                                            &err)) {
+                    appendEventLog("ERROR", QString("保存扫描帧失败: %1").arg(err));
                 }
             });
     connect(m_ros2Bridge, &Ros2Bridge::backendStateReceived, this,
@@ -213,11 +232,18 @@ void MainWindow::startRos2Bridge()
             });
 
     connect(m_ros2Bridge, &Ros2Bridge::millingPathsReceived, this,
-            [this](int taskId,
+            [this](quint64 taskId,
                    int pathTotal,
                    int maxParticleHeight,
                    bool calibrationApplied,
                    const QVector<MillingPathVM> &paths) {
+                m_currentBackendTaskId = taskId;
+                if (taskId != 0) {
+                    QString err;
+                    if (!InspectionRepository::ensureRecordForTask(taskId, &err)) {
+                        appendEventLog("ERROR", QString("创建检测任务记录失败: %1").arg(err));
+                    }
+                }
                 if (m_imagePanel) {
                     m_imagePanel->setMillingPaths(paths, calibrationApplied);
                 }
@@ -234,7 +260,7 @@ void MainWindow::startRos2Bridge()
             });
 
     connect(m_ros2Bridge, &Ros2Bridge::millingProgressReceived, this,
-            [this](int taskId,
+            [this](quint64 taskId,
                    float progress,
                    bool finished,
                    bool success,

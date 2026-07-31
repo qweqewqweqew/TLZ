@@ -28,7 +28,7 @@ public:
     // 复位所有指标为 "--"。
     void clearMetrics();
 
-    void setMillingTask(int taskId, int pathTotal, bool calibrationApplied);
+    void setMillingTask(quint64 taskId, int pathTotal, bool calibrationApplied);
     void setMillingStatus(bool finished, bool success);
     void clearMillingTask();
 

@@ -127,7 +127,7 @@ bool insertMockParticles(int inspectionRecordId,
 QString buildRecentSql(const InspectionQuery &q, bool &hasRecipe, bool &hasFrom, bool &hasTo)
 {
     QString sql =
-        "SELECT TOP (?) Id, RecipeName, ProcessStartAt, ProcessEndAt, "
+        "SELECT TOP (?) Id, BackendTaskId, RecipeName, ProcessStartAt, ProcessEndAt, "
         "       InspectStartAt, InspectEndAt, ParticleCount, ClearedCount, "
         "       MaxParticleHeight, OverviewImagePath, Remark, CreatedAt "
         "FROM dbo.InspectionRecord ";
@@ -170,6 +170,11 @@ QList<InspectionRecordRow> InspectionRepository::loadFiltered(const InspectionQu
         return rows;
     }
 
+    // 老库首次查询前自动补齐 BackendTaskId 列等新结构
+    if (!ensureSchema(errorMessage)) {
+        return rows;
+    }
+
     bool hasRecipe = false, hasFrom = false, hasTo = false;
     const QString sql = buildRecentSql(q, hasRecipe, hasFrom, hasTo);
 
@@ -189,6 +194,7 @@ QList<InspectionRecordRow> InspectionRepository::loadFiltered(const InspectionQu
     while (query.next()) {
         InspectionRecordRow row;
         row.id                = query.value("Id").toInt();
+        row.backendTaskId     = static_cast<quint64>(query.value("BackendTaskId").toLongLong());
         row.recipeName        = query.value("RecipeName").toString();
         row.processStartAt    = query.value("ProcessStartAt").toDateTime();
         row.processEndAt      = query.value("ProcessEndAt").toDateTime();
@@ -241,10 +247,14 @@ InspectionDetail InspectionRepository::loadDetail(int inspectionRecordId,
         return detail;
     }
 
+    if (!ensureSchema(errorMessage)) {
+        return detail;
+    }
+
     // 主记录
     {
         QSqlQuery q(db);
-        q.prepare("SELECT Id, RecipeName, ProcessStartAt, ProcessEndAt, "
+        q.prepare("SELECT Id, BackendTaskId, RecipeName, ProcessStartAt, ProcessEndAt, "
                   "       InspectStartAt, InspectEndAt, ParticleCount, ClearedCount, "
                   "       MaxParticleHeight, OverviewImagePath, Remark, CreatedAt "
                   "FROM dbo.InspectionRecord WHERE Id = ?");
@@ -260,6 +270,7 @@ InspectionDetail InspectionRepository::loadDetail(int inspectionRecordId,
         }
         auto &row = detail.head;
         row.id                = q.value("Id").toInt();
+        row.backendTaskId     = static_cast<quint64>(q.value("BackendTaskId").toLongLong());
         row.recipeName        = q.value("RecipeName").toString();
         row.processStartAt    = q.value("ProcessStartAt").toDateTime();
         row.processEndAt      = q.value("ProcessEndAt").toDateTime();
@@ -329,6 +340,36 @@ InspectionDetail InspectionRepository::loadDetail(int inspectionRecordId,
             }
         }
         // 工艺快照查询失败不视为致命错误（模拟数据没有这份表）
+    }
+
+    // 扫描帧列表（按第几次扫描排序；旧库可能没有该表，失败不视为致命）
+    {
+        QSqlQuery q(db);
+        q.prepare("SELECT Id, InspectionRecordId, BackendTaskId, FrameId, ScanOrdinal, "
+                  "       TimestampNs, Width, Height, PixelFormat, HasRange, HasIntensity, "
+                  "       CreatedAt "
+                  "FROM dbo.InspectionFrame "
+                  "WHERE InspectionRecordId = ? "
+                  "ORDER BY ScanOrdinal, FrameId");
+        q.addBindValue(inspectionRecordId);
+        if (q.exec()) {
+            while (q.next()) {
+                InspectionFrameRow f;
+                f.id                  = q.value("Id").toLongLong();
+                f.inspectionRecordId  = q.value("InspectionRecordId").toInt();
+                f.backendTaskId       = static_cast<quint64>(q.value("BackendTaskId").toLongLong());
+                f.frameId             = static_cast<quint64>(q.value("FrameId").toLongLong());
+                f.scanOrdinal         = q.value("ScanOrdinal").toInt();
+                f.timestampNs         = static_cast<quint64>(q.value("TimestampNs").toLongLong());
+                f.width               = q.value("Width").toInt();
+                f.height              = q.value("Height").toInt();
+                f.pixelFormat         = q.value("PixelFormat").toInt();
+                f.hasRange            = q.value("HasRange").toBool();
+                f.hasIntensity        = q.value("HasIntensity").toBool();
+                f.createdAt           = q.value("CreatedAt").toDateTime();
+                detail.frames.append(f);
+            }
+        }
     }
 
     detail.loaded = true;
@@ -424,4 +465,202 @@ int InspectionRepository::insertMockRecords(int count, QString *errorMessage)
     }
 
     return inserted;
+}
+
+bool InspectionRepository::ensureSchema(QString *errorMessage)
+{
+    QSqlDatabase db = Database::instance().handle();
+    if (!db.isOpen()) {
+        reportError(errorMessage, QStringLiteral("数据库未连接"));
+        return false;
+    }
+
+    // 每条语句都带 IF 保护，可重复执行（幂等增量迁移）
+    static const char *kStatements[] = {
+        // 1) InspectionRecord 增加后端任务号列
+        "IF COL_LENGTH('dbo.InspectionRecord', 'BackendTaskId') IS NULL "
+        "ALTER TABLE dbo.InspectionRecord ADD BackendTaskId BIGINT NULL",
+
+        // 2) 过滤唯一索引：一个后端任务只对应一条记录（NULL 不参与唯一约束）
+        "IF NOT EXISTS (SELECT 1 FROM sys.indexes "
+        "WHERE name = 'UX_InspectionRecord_BackendTaskId' "
+        "AND object_id = OBJECT_ID('dbo.InspectionRecord')) "
+        "CREATE UNIQUE INDEX UX_InspectionRecord_BackendTaskId "
+        "ON dbo.InspectionRecord(BackendTaskId) WHERE BackendTaskId IS NOT NULL",
+
+        // 3) 扫描帧映射表：一个 task_id 下挂多个 frame_id
+        "IF OBJECT_ID('dbo.InspectionFrame', 'U') IS NULL "
+        "CREATE TABLE dbo.InspectionFrame ("
+        "    Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,"
+        "    InspectionRecordId INT NOT NULL,"
+        "    BackendTaskId BIGINT NOT NULL,"
+        "    FrameId BIGINT NOT NULL,"
+        "    ScanOrdinal INT NOT NULL DEFAULT 0,"
+        "    TimestampNs BIGINT NOT NULL DEFAULT 0,"
+        "    Width INT NOT NULL DEFAULT 0,"
+        "    Height INT NOT NULL DEFAULT 0,"
+        "    PixelFormat INT NOT NULL DEFAULT 0,"
+        "    HasRange BIT NOT NULL DEFAULT 0,"
+        "    HasIntensity BIT NOT NULL DEFAULT 0,"
+        "    CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),"
+        "    CONSTRAINT FK_InspectionFrame_InspectionRecord "
+        "      FOREIGN KEY (InspectionRecordId) REFERENCES dbo.InspectionRecord(Id) ON DELETE CASCADE,"
+        "    CONSTRAINT UQ_InspectionFrame_Task_Frame UNIQUE (BackendTaskId, FrameId)"
+        ")",
+
+        // 4) 按检测记录查帧的索引
+        "IF NOT EXISTS (SELECT 1 FROM sys.indexes "
+        "WHERE name = 'IX_InspectionFrame_RecordId' "
+        "AND object_id = OBJECT_ID('dbo.InspectionFrame')) "
+        "CREATE INDEX IX_InspectionFrame_RecordId ON dbo.InspectionFrame(InspectionRecordId)",
+    };
+
+    for (const char *sql : kStatements) {
+        QSqlQuery q(db);
+        if (!q.exec(QString::fromLatin1(sql))) {
+            reportError(errorMessage,
+                        QStringLiteral("结构迁移失败: %1").arg(takeError(q)));
+            return false;
+        }
+    }
+    return true;
+}
+
+int InspectionRepository::ensureRecordForTask(quint64 backendTaskId,
+                                              QString *errorMessage)
+{
+    if (backendTaskId == 0) {
+        reportError(errorMessage, QStringLiteral("task_id 无效（0）"));
+        return 0;
+    }
+
+    QSqlDatabase db = Database::instance().handle();
+    if (!db.isOpen()) {
+        reportError(errorMessage, QStringLiteral("数据库未连接"));
+        return 0;
+    }
+    if (!ensureSchema(errorMessage)) {
+        return 0;
+    }
+
+    const QVariant taskVar =
+        QVariant::fromValue<qlonglong>(static_cast<qlonglong>(backendTaskId));
+
+    // 已存在则直接返回
+    {
+        QSqlQuery q(db);
+        q.prepare("SELECT Id FROM dbo.InspectionRecord WHERE BackendTaskId = ?");
+        q.addBindValue(taskVar);
+        if (!q.exec()) {
+            reportError(errorMessage,
+                        QStringLiteral("按 BackendTaskId 查询失败: %1").arg(takeError(q)));
+            return 0;
+        }
+        if (q.next()) {
+            return q.value("Id").toInt();
+        }
+    }
+
+    // 不存在则创建；RecipeName 先写空串，避免污染配方筛选列表
+    {
+        QSqlQuery q(db);
+        q.prepare("INSERT INTO dbo.InspectionRecord "
+                  "(BackendTaskId, RecipeName, CreatedAt, UpdatedAt) "
+                  "OUTPUT INSERTED.Id "
+                  "VALUES (?, '', SYSUTCDATETIME(), SYSUTCDATETIME())");
+        q.addBindValue(taskVar);
+        if (q.exec() && q.next()) {
+            return q.value(0).toInt();
+        }
+        // 并发/重复提交兜底：唯一索引冲突时重新查一次
+        QSqlQuery again(db);
+        again.prepare("SELECT Id FROM dbo.InspectionRecord WHERE BackendTaskId = ?");
+        again.addBindValue(taskVar);
+        if (again.exec() && again.next()) {
+            return again.value("Id").toInt();
+        }
+        reportError(errorMessage,
+                    QStringLiteral("创建检测任务记录失败: %1").arg(takeError(q)));
+        return 0;
+    }
+}
+
+bool InspectionRepository::saveFrameForTask(quint64 backendTaskId,
+                                            quint64 frameId,
+                                            quint64 timestampNs,
+                                            int width,
+                                            int height,
+                                            int pixelFormat,
+                                            bool hasRange,
+                                            bool hasIntensity,
+                                            QString *errorMessage)
+{
+    if (backendTaskId == 0 || frameId == 0) {
+        reportError(errorMessage, QStringLiteral("task_id / frame_id 无效（0）"));
+        return false;
+    }
+
+    QSqlDatabase db = Database::instance().handle();
+    if (!db.isOpen()) {
+        reportError(errorMessage, QStringLiteral("数据库未连接"));
+        return false;
+    }
+
+    const int recordId = ensureRecordForTask(backendTaskId, errorMessage);
+    if (recordId <= 0) {
+        return false;
+    }
+
+    const auto i64 = [](quint64 v) {
+        return QVariant::fromValue<qlonglong>(static_cast<qlonglong>(v));
+    };
+
+    // (task_id, frame_id) 已存在时只补全标记/元数据，不重复建行——
+    // 对应 range / intensity 两路消息先后到达的场景
+    QSqlQuery q(db);
+    q.prepare(
+        "MERGE dbo.InspectionFrame WITH (HOLDLOCK) AS t "
+        "USING (SELECT ? AS BackendTaskId, ? AS FrameId) AS s "
+        "ON t.BackendTaskId = s.BackendTaskId AND t.FrameId = s.FrameId "
+        "WHEN MATCHED THEN UPDATE SET "
+        "    HasRange = CASE WHEN ? = 1 THEN 1 ELSE t.HasRange END, "
+        "    HasIntensity = CASE WHEN ? = 1 THEN 1 ELSE t.HasIntensity END, "
+        "    TimestampNs = CASE WHEN t.TimestampNs = 0 THEN ? ELSE t.TimestampNs END, "
+        "    Width = CASE WHEN t.Width = 0 THEN ? ELSE t.Width END, "
+        "    Height = CASE WHEN t.Height = 0 THEN ? ELSE t.Height END, "
+        "    PixelFormat = CASE WHEN t.PixelFormat = 0 THEN ? ELSE t.PixelFormat END "
+        "WHEN NOT MATCHED THEN INSERT "
+        "    (InspectionRecordId, BackendTaskId, FrameId, ScanOrdinal, "
+        "     TimestampNs, Width, Height, PixelFormat, HasRange, HasIntensity) "
+        "    VALUES (?, ?, ?, "
+        "            (SELECT COUNT(1) + 1 FROM dbo.InspectionFrame WHERE BackendTaskId = ?), "
+        "            ?, ?, ?, ?, ?, ?);");
+    // USING
+    q.addBindValue(i64(backendTaskId));
+    q.addBindValue(i64(frameId));
+    // MATCHED
+    q.addBindValue(hasRange ? 1 : 0);
+    q.addBindValue(hasIntensity ? 1 : 0);
+    q.addBindValue(i64(timestampNs));
+    q.addBindValue(width);
+    q.addBindValue(height);
+    q.addBindValue(pixelFormat);
+    // NOT MATCHED
+    q.addBindValue(recordId);
+    q.addBindValue(i64(backendTaskId));
+    q.addBindValue(i64(frameId));
+    q.addBindValue(i64(backendTaskId));
+    q.addBindValue(i64(timestampNs));
+    q.addBindValue(width);
+    q.addBindValue(height);
+    q.addBindValue(pixelFormat);
+    q.addBindValue(hasRange ? 1 : 0);
+    q.addBindValue(hasIntensity ? 1 : 0);
+
+    if (!q.exec()) {
+        reportError(errorMessage,
+                    QStringLiteral("写入 InspectionFrame 失败: %1").arg(takeError(q)));
+        return false;
+    }
+    return true;
 }

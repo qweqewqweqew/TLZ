@@ -41,6 +41,13 @@ int main(int argc, char *argv[])
         QString dbError;
         if (Database::instance().open(&dbError)) {
             LOG("数据库连接已建立 (MzTLZ)");
+            // 启动时显式执行一次幂等结构迁移（BackendTaskId / InspectionFrame）
+            {
+                QString schemaErr;
+                if (!InspectionRepository::ensureSchema(&schemaErr)) {
+                    LOG("[DB] 结构迁移失败: %s", schemaErr.toUtf8().constData());
+                }
+            }
             // 首次启动时如果历史记录为空，插入几条模拟检测记录用于演示
             QTimer::singleShot(0, &w, []() {
                 QString err;

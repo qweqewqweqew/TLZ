@@ -138,7 +138,7 @@ void RunDataPanel::clearMetrics()
     }
 }
 
-void RunDataPanel::setMillingTask(int taskId, int pathTotal, bool calibrationApplied)
+void RunDataPanel::setMillingTask(quint64 taskId, int pathTotal, bool calibrationApplied)
 {
     if (m_taskIdLabel) {
         m_taskIdLabel->setText(QString("任务 #%1 · 共 %2 条")

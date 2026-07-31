@@ -45,6 +45,7 @@ void emitScanSegment(Ros2Bridge *bridge,
 {
     emit bridge->scanResultReceived(imageType,
                                     message.frame_id,
+                                    message.task_id,
                                     QString::fromStdString(message.shm_name),
                                     offset,
                                     size,
@@ -198,6 +199,7 @@ struct Ros2BridgeEntities final
     bool pendingHasRange{false};
     bool pendingHasIntensity{false};
     std::uint64_t pendingFrameId{0};
+    std::uint64_t pendingTaskId{0};
     std::uint64_t pendingTimestampNs{0};
     std::uint32_t pendingWidth{0};
     std::uint32_t pendingHeight{0};
@@ -242,6 +244,7 @@ bool Ros2Bridge::start()
             m_entities->pendingHasRange = false;
             m_entities->pendingHasIntensity = false;
             m_entities->pendingFrameId = 0;
+            m_entities->pendingTaskId = 0;
             m_entities->pendingTimestampNs = 0;
             m_entities->pendingWidth = 0;
             m_entities->pendingHeight = 0;
@@ -257,6 +260,7 @@ bool Ros2Bridge::start()
             emit scanFrameReady(m_entities->pendingRange,
                                 m_entities->pendingIntensity,
                                 m_entities->pendingFrameId,
+                                m_entities->pendingTaskId,
                                 m_entities->pendingTimestampNs,
                                 m_entities->pendingWidth,
                                 m_entities->pendingHeight,
@@ -355,6 +359,7 @@ bool Ros2Bridge::start()
                 if (imageType == 0) {
                     m_entities->pendingHasRange = true;
                     m_entities->pendingRange = image;
+                    m_entities->pendingTaskId = msg->task_id;
                     m_entities->pendingTimestampNs = msg->timestamp_ns;
                     m_entities->pendingWidth = msg->width;
                     m_entities->pendingHeight = msg->height;
@@ -363,6 +368,7 @@ bool Ros2Bridge::start()
                     m_entities->pendingHasIntensity = true;
                     m_entities->pendingIntensity = image;
                     if (!m_entities->pendingHasRange) {
+                        m_entities->pendingTaskId = msg->task_id;
                         m_entities->pendingTimestampNs = msg->timestamp_ns;
                         m_entities->pendingWidth = msg->width;
                         m_entities->pendingHeight = msg->height;
@@ -420,7 +426,7 @@ bool Ros2Bridge::start()
                 }
 
                 emit millingPathsReceived(
-                    int(msg->task_id),
+                    msg->task_id,
                     int(msg->path_total),
                     int(msg->max_particle_height),
                     msg->calibration_applied,
@@ -442,7 +448,7 @@ bool Ros2Bridge::start()
 
                 const QString message = QString::fromStdString(msg->message);
                 emit millingProgressReceived(
-                    int(msg->task_id),
+                    msg->task_id,
                     msg->progress,
                     msg->finished,
                     msg->success,

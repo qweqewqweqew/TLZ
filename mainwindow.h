@@ -56,6 +56,8 @@ private:
     Ros2Bridge *m_ros2Bridge{nullptr};
     TeachingDialog *m_teachingDialog{nullptr};
     HistoryDialog *m_historyDialog{nullptr};
+    // 最近一次 MillingPaths 给的后端任务号，作为扫描帧落库时 task_id 的回退值
+    quint64 m_currentBackendTaskId{0};
     double m_currentT{0};
     bool m_simulationRunning{false};
     bool m_debugFakeActive{false};
