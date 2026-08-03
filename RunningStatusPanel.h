@@ -33,6 +33,10 @@ private:
                                 const QString &keyPrefix,
                                 QWidget *parent);
     QWidget *createDeviceStatusSection(QWidget *parent);
+    QWidget *createStatusItem(const QString &name,
+                              QLabel *&dotLabel,
+                              QLabel *&statusLabel,
+                              QWidget *parent);
     QWidget *createMetricCard(const QString &key,
                               const QString &title,
                               const QString &value,
@@ -47,6 +51,11 @@ private:
                         const QString &value,
                         MetricState state = MetricState::Normal);
     void applyCameraStatus(ConnectionState state, const QString &detail);
+    void applyStatusItem(QLabel *dotLabel,
+                         QLabel *statusLabel,
+                         const QString &text,
+                         const QString &color,
+                         const QString &tooltip);
 
 private:
     QHash<QString, QLabel *> m_metricLabels;
@@ -54,7 +63,10 @@ private:
     TelemetryPlotWidget *m_torquePlot{nullptr};
     QLabel *m_cameraStatusDot{nullptr};
     QLabel *m_cameraStatusText{nullptr};
-    QLabel *m_cameraStatusDetail{nullptr};
+    QLabel *m_backendStatusDot{nullptr};
+    QLabel *m_backendStatusText{nullptr};
+    QLabel *m_plcStatusDot{nullptr};
+    QLabel *m_plcStatusText{nullptr};
     QTimer *m_cameraStatusTimer{nullptr};
     QElapsedTimer m_plcElapsedTimer;
 };

@@ -106,6 +106,16 @@ RunningStatusPanel::RunningStatusPanel(QWidget *parent)
         applyCameraStatus(ConnectionState::Unknown, QStringLiteral("状态消息超时"));
     });
     applyCameraStatus(ConnectionState::Unknown, QStringLiteral("等待状态"));
+    applyStatusItem(m_backendStatusDot,
+                    m_backendStatusText,
+                    QStringLiteral("未知"),
+                    kValueColorNoData,
+                    QStringLiteral("尚未收到 PLC 反馈"));
+    applyStatusItem(m_plcStatusDot,
+                    m_plcStatusText,
+                    QStringLiteral("未知"),
+                    kValueColorNoData,
+                    QStringLiteral("尚未收到 PLC 反馈"));
 
     panelLayout->addStretch();
 }
@@ -148,6 +158,30 @@ void RunningStatusPanel::setPlcFeedback(const PlcFeedbackVM &feedback)
     setMetricValue("velocityX", QString::number(p.xSpeed, 'f', 2));
     setMetricValue("velocityY", QString::number(p.ySpeed, 'f', 2));
     setMetricValue("velocityZ", QString::number(p.zSpeed, 'f', 2));
+
+    applyStatusItem(m_backendStatusDot,
+                    m_backendStatusText,
+                    QStringLiteral("在线"),
+                    QStringLiteral("#2ECC71"),
+                    QStringLiteral("已收到后端发布的 PLC 反馈"));
+
+    const QString plcTooltip = QStringLiteral("状态字: 0x%1\n故障码: %2")
+                                   .arg(feedback.statusWord, 4, 16, QLatin1Char('0'))
+                                   .arg(feedback.faultCode)
+                                   .toUpper();
+    if (feedback.faultCode != 0) {
+        applyStatusItem(m_plcStatusDot,
+                        m_plcStatusText,
+                        QStringLiteral("故障"),
+                        QStringLiteral("#E74C3C"),
+                        plcTooltip);
+    } else {
+        applyStatusItem(m_plcStatusDot,
+                        m_plcStatusText,
+                        QStringLiteral("状态 %1").arg(feedback.statusWord),
+                        QStringLiteral("#00E5FF"),
+                        plcTooltip);
+    }
 }
 
 void RunningStatusPanel::setCameraStatus(bool connected,
@@ -159,11 +193,15 @@ void RunningStatusPanel::setCameraStatus(bool connected,
         detail = connected ? QStringLiteral("已连接") : QStringLiteral("未连接");
     }
 
-    if (m_cameraStatusDetail) {
-        m_cameraStatusDetail->setToolTip(message);
+    QString tooltip = cameraId;
+    if (!message.isEmpty()) {
+        if (!tooltip.isEmpty()) {
+            tooltip += QLatin1Char('\n');
+        }
+        tooltip += message;
     }
     applyCameraStatus(connected ? ConnectionState::Online : ConnectionState::Offline,
-                      detail);
+                      tooltip.isEmpty() ? detail : tooltip);
     if (m_cameraStatusTimer) {
         m_cameraStatusTimer->start();
     }
@@ -224,33 +262,63 @@ QWidget *RunningStatusPanel::createDeviceStatusSection(QWidget *parent)
 
     auto *card = new QFrame(section);
     card->setObjectName("metricCard");
-    card->setFixedHeight(48);
+    card->setFixedHeight(52);
     card->setStyleSheet(cardStyle());
 
     auto *layout = new QHBoxLayout(card);
-    layout->setContentsMargins(12, 0, 12, 0);
-    layout->setSpacing(10);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
 
-    m_cameraStatusDot = makeLabel(QStringLiteral("●"), "cameraStatusDot");
-    m_cameraStatusDot->setFixedWidth(16);
-    layout->addWidget(m_cameraStatusDot);
+    auto addDivider = [layout, card]() {
+        auto *divider = new QFrame(card);
+        divider->setFixedSize(1, 28);
+        divider->setStyleSheet("background:#2E3D4D;border:none;");
+        layout->addWidget(divider, 0, Qt::AlignVCenter);
+    };
 
-    auto *name = makeLabel(QStringLiteral("相机"), "deviceName");
-    name->setStyleSheet("color:#E6EEF5;font-size:16px;font-weight:600;border:none;background:transparent;");
-    layout->addWidget(name);
-
-    m_cameraStatusDetail = makeLabel(QStringLiteral("等待状态"), "cameraStatusDetail");
-    m_cameraStatusDetail->setFixedWidth(150);
-    m_cameraStatusDetail->setStyleSheet("color:#8A9AA8;font-size:13px;border:none;background:transparent;");
-    layout->addWidget(m_cameraStatusDetail);
-    layout->addStretch();
-
-    m_cameraStatusText = makeLabel(QStringLiteral("状态未知"), "cameraStatusText");
-    m_cameraStatusText->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    layout->addWidget(m_cameraStatusText);
+    layout->addWidget(createStatusItem(QStringLiteral("相机"),
+                                       m_cameraStatusDot,
+                                       m_cameraStatusText,
+                                       card), 1);
+    addDivider();
+    layout->addWidget(createStatusItem(QStringLiteral("后端"),
+                                       m_backendStatusDot,
+                                       m_backendStatusText,
+                                       card), 1);
+    addDivider();
+    layout->addWidget(createStatusItem(QStringLiteral("PLC"),
+                                       m_plcStatusDot,
+                                       m_plcStatusText,
+                                       card), 1);
 
     outer->addWidget(card);
     return section;
+}
+
+QWidget *RunningStatusPanel::createStatusItem(const QString &name,
+                                              QLabel *&dotLabel,
+                                              QLabel *&statusLabel,
+                                              QWidget *parent)
+{
+    auto *item = new QWidget(parent);
+    auto *layout = new QHBoxLayout(item);
+    layout->setContentsMargins(10, 0, 10, 0);
+    layout->setSpacing(6);
+
+    dotLabel = makeLabel(QStringLiteral("●"));
+    dotLabel->setFixedWidth(12);
+    layout->addWidget(dotLabel);
+
+    auto *nameLabel = makeLabel(name);
+    nameLabel->setStyleSheet(
+        "color:#E6EEF5;font-size:14px;font-weight:600;border:none;background:transparent;");
+    layout->addWidget(nameLabel);
+    layout->addStretch();
+
+    statusLabel = makeLabel(QStringLiteral("未知"));
+    statusLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    layout->addWidget(statusLabel);
+    return item;
 }
 
 QWidget *RunningStatusPanel::createMetricCard(const QString &key,
@@ -361,10 +429,6 @@ void RunningStatusPanel::setMetricValue(const QString &key,
 
 void RunningStatusPanel::applyCameraStatus(ConnectionState state, const QString &detail)
 {
-    if (!m_cameraStatusDot || !m_cameraStatusText || !m_cameraStatusDetail) {
-        return;
-    }
-
     QString color;
     QString statusText;
     switch (state) {
@@ -378,18 +442,29 @@ void RunningStatusPanel::applyCameraStatus(ConnectionState state, const QString 
         break;
     case ConnectionState::Unknown:
         color = kValueColorNoData;
-        statusText = QStringLiteral("状态未知");
+        statusText = QStringLiteral("未知");
         break;
     }
 
-    const QString shownDetail = m_cameraStatusDetail->fontMetrics().elidedText(
-        detail, Qt::ElideRight, m_cameraStatusDetail->width());
-    m_cameraStatusDetail->setText(shownDetail);
-    m_cameraStatusDetail->setToolTip(detail);
-    m_cameraStatusDot->setStyleSheet(
-        QString("color:%1;font-size:16px;border:none;background:transparent;").arg(color));
-    m_cameraStatusText->setText(statusText);
-    m_cameraStatusText->setStyleSheet(
+    applyStatusItem(m_cameraStatusDot, m_cameraStatusText, statusText, color, detail);
+}
+
+void RunningStatusPanel::applyStatusItem(QLabel *dotLabel,
+                                         QLabel *statusLabel,
+                                         const QString &text,
+                                         const QString &color,
+                                         const QString &tooltip)
+{
+    if (!dotLabel || !statusLabel) {
+        return;
+    }
+
+    dotLabel->setStyleSheet(
+        QString("color:%1;font-size:14px;border:none;background:transparent;").arg(color));
+    statusLabel->setText(text);
+    statusLabel->setToolTip(tooltip);
+    dotLabel->setToolTip(tooltip);
+    statusLabel->setStyleSheet(
         QString("color:%1;font-size:14px;font-weight:600;border:none;background:transparent;")
             .arg(color));
 }
