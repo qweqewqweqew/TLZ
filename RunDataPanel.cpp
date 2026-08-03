@@ -76,6 +76,7 @@ RunDataPanel::RunDataPanel(QWidget *parent)
     grid->addWidget(createMetricCard("completedPath",  "已完成路径",   "--", "条",  kAccent, panel), 3, 0);
     grid->addWidget(createMetricCard("currentPath",    "当前路径",     "--", "条",  kAccent, panel), 3, 1);
     grid->addWidget(createMetricCard("millingProgress", "任务进度",     "--", "%",   kAccent, panel), 4, 0);
+    grid->addWidget(createMetricCard("taskId",          "任务ID",       "--", "",    kAccent, panel), 4, 1);
 
     grid->setColumnStretch(0, 1);
     grid->setColumnStretch(1, 1);
@@ -131,7 +132,7 @@ void RunDataPanel::clearMetrics()
     const QStringList keys = {
         "particleCount", "particleArea", "particleHeight",
         "remaining", "totalTime", "cuttingVolume",
-        "completedPath", "currentPath", "millingProgress"
+        "completedPath", "currentPath", "millingProgress", "taskId"
     };
     for (const auto &k : keys) {
         setMetricValue(k, QStringLiteral("--"));
@@ -140,10 +141,10 @@ void RunDataPanel::clearMetrics()
 
 void RunDataPanel::setMillingTask(quint64 taskId, int pathTotal, bool calibrationApplied)
 {
-    if (m_taskIdLabel) {
-        m_taskIdLabel->setText(QString("任务 #%1 · 共 %2 条")
-                                   .arg(taskId)
-                                   .arg(pathTotal));
+    setMetricValue(QStringLiteral("taskId"),
+                   taskId == 0 ? QStringLiteral("--") : QString::number(taskId));
+    if (m_pathTotalLabel) {
+        m_pathTotalLabel->setText(QStringLiteral("路径总数 %1 条").arg(pathTotal));
     }
     if (m_calibLabel) {
         if (calibrationApplied) {
@@ -172,8 +173,9 @@ void RunDataPanel::setMillingStatus(bool finished, bool success)
 
 void RunDataPanel::clearMillingTask()
 {
-    if (m_taskIdLabel) {
-        m_taskIdLabel->setText(QStringLiteral("任务 --"));
+    setMetricValue(QStringLiteral("taskId"), QStringLiteral("--"));
+    if (m_pathTotalLabel) {
+        m_pathTotalLabel->setText(QStringLiteral("路径总数 -- 条"));
     }
     if (m_calibLabel) {
         m_calibLabel->setText(QStringLiteral("--"));
@@ -195,10 +197,10 @@ QWidget *RunDataPanel::createTaskHeader(QWidget *parent)
     layout->setContentsMargins(10, 0, 12, 0);
     layout->setSpacing(10);
 
-    m_taskIdLabel = makeLabel(QStringLiteral("任务 --"), "taskId");
-    m_taskIdLabel->setStyleSheet(
+    m_pathTotalLabel = makeLabel(QStringLiteral("路径总数 -- 条"), "pathTotal");
+    m_pathTotalLabel->setStyleSheet(
         "color:#E6EEF5;font-size:15px;font-weight:600;border:none;background:transparent;");
-    layout->addWidget(m_taskIdLabel);
+    layout->addWidget(m_pathTotalLabel);
 
     layout->addStretch();
 

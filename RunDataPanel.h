@@ -6,8 +6,7 @@
 
 class QLabel;
 
-// "运行数据"面板：仅承载 6 个指标卡（粒子数量 / 面积 / 最大高度 / 剩余 / 总耗时 / 切削量）。
-// 任务号、运行状态、标定标签已迁至 TaskFlowPanel。
+// “运行数据”面板：展示检测指标、任务 ID、路径进度和当前任务状态。
 class RunDataPanel : public QFrame
 {
     Q_OBJECT
@@ -45,7 +44,7 @@ private:
     void applyStatus(TaskStatus status);
 
     QHash<QString, QLabel *> m_metricLabels;
-    QLabel *m_taskIdLabel{nullptr};
+    QLabel *m_pathTotalLabel{nullptr};
     QLabel *m_statusDot{nullptr};
     QLabel *m_statusText{nullptr};
     QLabel *m_calibLabel{nullptr};
