@@ -10,6 +10,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QStringList>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace {
@@ -96,6 +97,16 @@ RunningStatusPanel::RunningStatusPanel(QWidget *parent)
 
     panelLayout->addWidget(createPositionGrid("当前位置", "position", panel));
     panelLayout->addWidget(createPositionGrid("当前速度", "velocity", panel));
+    panelLayout->addWidget(createDeviceStatusSection(panel));
+
+    m_cameraStatusTimer = new QTimer(this);
+    m_cameraStatusTimer->setSingleShot(true);
+    m_cameraStatusTimer->setInterval(3000);
+    connect(m_cameraStatusTimer, &QTimer::timeout, this, [this]() {
+        applyCameraStatus(ConnectionState::Unknown, QStringLiteral("状态消息超时"));
+    });
+    applyCameraStatus(ConnectionState::Unknown, QStringLiteral("等待状态"));
+
     panelLayout->addStretch();
 }
 
@@ -139,6 +150,25 @@ void RunningStatusPanel::setPlcFeedback(const PlcFeedbackVM &feedback)
     setMetricValue("velocityZ", QString::number(p.zSpeed, 'f', 2));
 }
 
+void RunningStatusPanel::setCameraStatus(bool connected,
+                                         const QString &cameraId,
+                                         const QString &message)
+{
+    QString detail = connected ? cameraId : message;
+    if (detail.isEmpty()) {
+        detail = connected ? QStringLiteral("已连接") : QStringLiteral("未连接");
+    }
+
+    if (m_cameraStatusDetail) {
+        m_cameraStatusDetail->setToolTip(message);
+    }
+    applyCameraStatus(connected ? ConnectionState::Online : ConnectionState::Offline,
+                      detail);
+    if (m_cameraStatusTimer) {
+        m_cameraStatusTimer->start();
+    }
+}
+
 QWidget *RunningStatusPanel::createSpindleGrid(QWidget *parent)
 {
     auto *gridWidget = new QWidget(parent);
@@ -179,6 +209,48 @@ QWidget *RunningStatusPanel::createPositionGrid(const QString &title,
 
     outer->addLayout(row);
     return gridWidget;
+}
+
+QWidget *RunningStatusPanel::createDeviceStatusSection(QWidget *parent)
+{
+    auto *section = new QWidget(parent);
+    auto *outer = new QVBoxLayout(section);
+    outer->setContentsMargins(2, 0, 2, 0);
+    outer->setSpacing(6);
+
+    auto *header = makeLabel(QStringLiteral("设备状态"), "metricName");
+    header->setStyleSheet("color:#8A9AA8;font-size:16px;border:none;background:transparent;");
+    outer->addWidget(header);
+
+    auto *card = new QFrame(section);
+    card->setObjectName("metricCard");
+    card->setFixedHeight(48);
+    card->setStyleSheet(cardStyle());
+
+    auto *layout = new QHBoxLayout(card);
+    layout->setContentsMargins(12, 0, 12, 0);
+    layout->setSpacing(10);
+
+    m_cameraStatusDot = makeLabel(QStringLiteral("●"), "cameraStatusDot");
+    m_cameraStatusDot->setFixedWidth(16);
+    layout->addWidget(m_cameraStatusDot);
+
+    auto *name = makeLabel(QStringLiteral("相机"), "deviceName");
+    name->setStyleSheet("color:#E6EEF5;font-size:16px;font-weight:600;border:none;background:transparent;");
+    layout->addWidget(name);
+
+    m_cameraStatusDetail = makeLabel(QStringLiteral("等待状态"), "cameraStatusDetail");
+    m_cameraStatusDetail->setFixedWidth(150);
+    m_cameraStatusDetail->setStyleSheet("color:#8A9AA8;font-size:13px;border:none;background:transparent;");
+    layout->addWidget(m_cameraStatusDetail);
+    layout->addStretch();
+
+    m_cameraStatusText = makeLabel(QStringLiteral("状态未知"), "cameraStatusText");
+    m_cameraStatusText->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    layout->addWidget(m_cameraStatusText);
+
+    outer->addWidget(card);
+    return section;
 }
 
 QWidget *RunningStatusPanel::createMetricCard(const QString &key,
@@ -285,4 +357,39 @@ void RunningStatusPanel::setMetricValue(const QString &key,
     label->setStyleSheet(QString("color:%1;font-size:%2px;font-weight:600;border:none;background:transparent;")
                              .arg(color)
                              .arg((key.startsWith("position") || key.startsWith("velocity")) ? 20 : 24));
+}
+
+void RunningStatusPanel::applyCameraStatus(ConnectionState state, const QString &detail)
+{
+    if (!m_cameraStatusDot || !m_cameraStatusText || !m_cameraStatusDetail) {
+        return;
+    }
+
+    QString color;
+    QString statusText;
+    switch (state) {
+    case ConnectionState::Online:
+        color = QStringLiteral("#2ECC71");
+        statusText = QStringLiteral("在线");
+        break;
+    case ConnectionState::Offline:
+        color = QStringLiteral("#E74C3C");
+        statusText = QStringLiteral("离线");
+        break;
+    case ConnectionState::Unknown:
+        color = kValueColorNoData;
+        statusText = QStringLiteral("状态未知");
+        break;
+    }
+
+    const QString shownDetail = m_cameraStatusDetail->fontMetrics().elidedText(
+        detail, Qt::ElideRight, m_cameraStatusDetail->width());
+    m_cameraStatusDetail->setText(shownDetail);
+    m_cameraStatusDetail->setToolTip(detail);
+    m_cameraStatusDot->setStyleSheet(
+        QString("color:%1;font-size:16px;border:none;background:transparent;").arg(color));
+    m_cameraStatusText->setText(statusText);
+    m_cameraStatusText->setStyleSheet(
+        QString("color:%1;font-size:14px;font-weight:600;border:none;background:transparent;")
+            .arg(color));
 }

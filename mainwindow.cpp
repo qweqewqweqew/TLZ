@@ -230,6 +230,12 @@ void MainWindow::startRos2Bridge()
             [this](const QString &state) {
                 appendEventLog("INFO", QString("后端状态: %1").arg(state));
             });
+    connect(m_ros2Bridge, &Ros2Bridge::cameraStatusReceived, this,
+            [this](bool connected, const QString &cameraId, const QString &message) {
+                if (m_statusPanel) {
+                    m_statusPanel->setCameraStatus(connected, cameraId, message);
+                }
+            });
 
     connect(m_ros2Bridge, &Ros2Bridge::millingPathsReceived, this,
             [this](quint64 taskId,

@@ -7,6 +7,7 @@
 
 class QColor;
 class QLabel;
+class QTimer;
 struct PlcFeedbackVM;
 class TelemetryPlotWidget;
 
@@ -19,14 +20,19 @@ public:
 
     void appendSample(double time, double speed, double torque);
     void setPlcFeedback(const PlcFeedbackVM &feedback);
+    void setCameraStatus(bool connected,
+                         const QString &cameraId,
+                         const QString &message);
 
 private:
     enum class MetricState { NoData, Normal, Warning, Critical };
+    enum class ConnectionState { Unknown, Online, Offline };
 
     QWidget *createSpindleGrid(QWidget *parent);
     QWidget *createPositionGrid(const QString &title,
                                 const QString &keyPrefix,
                                 QWidget *parent);
+    QWidget *createDeviceStatusSection(QWidget *parent);
     QWidget *createMetricCard(const QString &key,
                               const QString &title,
                               const QString &value,
@@ -40,11 +46,16 @@ private:
     void setMetricValue(const QString &key,
                         const QString &value,
                         MetricState state = MetricState::Normal);
+    void applyCameraStatus(ConnectionState state, const QString &detail);
 
 private:
     QHash<QString, QLabel *> m_metricLabels;
     TelemetryPlotWidget *m_speedPlot{nullptr};
     TelemetryPlotWidget *m_torquePlot{nullptr};
+    QLabel *m_cameraStatusDot{nullptr};
+    QLabel *m_cameraStatusText{nullptr};
+    QLabel *m_cameraStatusDetail{nullptr};
+    QTimer *m_cameraStatusTimer{nullptr};
     QElapsedTimer m_plcElapsedTimer;
 };
 

@@ -2,6 +2,7 @@
 
 #include "ShmImageReader.h"
 
+#include <mz_interfaces/msg/camera_status.hpp>
 #include <mz_interfaces/msg/milling_path.hpp>
 #include <mz_interfaces/msg/milling_paths.hpp>
 #include <mz_interfaces/msg/milling_progress.hpp>
@@ -24,6 +25,7 @@
 namespace {
 
 constexpr char kNodeName[] = "mz_tlz";
+constexpr char kCameraStatusTopic[] = "camera/status";
 constexpr char kScanRangeTopic[] = "scan_range";
 constexpr char kScanIntensityTopic[] = "scan_intensity";
 constexpr char kBackendStateTopic[] = "backend_state";
@@ -187,6 +189,7 @@ QImage wrapMono8ToGrayscale8(const RawSlice &slice,
 
 struct Ros2BridgeEntities final
 {
+    rclcpp::Subscription<mz_interfaces::msg::CameraStatus>::SharedPtr cameraStatus;
     rclcpp::Subscription<mz_interfaces::msg::ScanResult>::SharedPtr scanRange;
     rclcpp::Subscription<mz_interfaces::msg::ScanResult>::SharedPtr scanIntensity;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr backendState;
@@ -238,6 +241,9 @@ bool Ros2Bridge::start()
         m_node = std::make_shared<rclcpp::Node>(kNodeName);
         m_entities = std::make_shared<Ros2BridgeEntities>();
         const auto qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+        const auto statusQos = rclcpp::QoS(rclcpp::KeepLast(1))
+                                   .reliable()
+                                   .transient_local();
 
         auto clearPendingScanFrame = [this]() {
             if (!m_entities) return;
@@ -404,6 +410,18 @@ bool Ros2Bridge::start()
                 }
             });
 
+        m_entities->cameraStatus =
+            m_node->create_subscription<mz_interfaces::msg::CameraStatus>(
+                kCameraStatusTopic,
+                statusQos,
+                [this](const mz_interfaces::msg::CameraStatus::SharedPtr msg) {
+                    if (!msg) return;
+                    emit cameraStatusReceived(
+                        msg->connected,
+                        QString::fromStdString(msg->camera_id),
+                        QString::fromStdString(msg->message));
+                });
+
         m_entities->millingPaths = m_node->create_subscription<mz_interfaces::msg::MillingPaths>(
             kMillingPathsTopic,
             qos,
@@ -514,7 +532,7 @@ bool Ros2Bridge::start()
             }
         });
 
-        emit infoMessage("ROS2 通信节点已启动，监听 scan_range / scan_intensity / backend_state / milling/paths / milling/progress / plc/feedback / plc_path_command_params");
+        emit infoMessage("ROS2 通信节点已启动，监听 camera/status / scan_range / scan_intensity / backend_state / milling/paths / milling/progress / plc/feedback / plc_path_command_params");
         return true;
     } catch (const std::exception &ex) {
         emit errorMessage(QString("ROS2 通信节点启动失败: %1").arg(QString::fromStdString(ex.what())));

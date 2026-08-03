@@ -64,6 +64,9 @@ signals:
                         quint32 height,
                         quint32 pixelFormat);
     void backendStateReceived(const QString &state);
+    void cameraStatusReceived(bool connected,
+                              const QString &cameraId,
+                              const QString &message);
 
     // 打磨路径全量下发（后端 → 前端），calibrationApplied=false 时前端显示未标定角标。
     void millingPathsReceived(quint64 taskId,
