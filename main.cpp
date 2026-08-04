@@ -10,14 +10,80 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include <QApplication>
+#include <QDir>
+#include <QFileInfo>
+#include <QStringList>
 #include <QTimer>
 
 #include <cstdio>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
+namespace {
+
+QString executableDirectory(const char *argv0)
+{
+#ifdef Q_OS_WIN
+    wchar_t path[32768] = {};
+    constexpr DWORD pathCapacity = DWORD(sizeof(path) / sizeof(path[0]));
+    const DWORD length = GetModuleFileNameW(nullptr, path, pathCapacity);
+    if (length > 0 && length < pathCapacity) {
+        return QFileInfo(QString::fromWCharArray(path, int(length))).absolutePath();
+    }
+#endif
+    return QFileInfo(QString::fromLocal8Bit(argv0 ? argv0 : "")).absolutePath();
+}
+
+void prependUnique(QStringList &entries, const QString &entry)
+{
+    const QString normalized = QDir::toNativeSeparators(QDir::cleanPath(entry));
+    for (const QString &existing : entries) {
+        if (QDir::toNativeSeparators(QDir::cleanPath(existing))
+                .compare(normalized, Qt::CaseInsensitive) == 0) {
+            return;
+        }
+    }
+    entries.prepend(normalized);
+}
+
+void configureRosRuntime(const char *argv0)
+{
+    const QString appDir = executableDirectory(argv0);
+    const QString localPrefix = QDir(appDir).filePath(QStringLiteral("ros_prefix"));
+    const QString defaultRosPrefix = QStringLiteral("C:/opt/ros/foxy/x64");
+
+    QStringList prefixes = QString::fromLocal8Bit(qgetenv("AMENT_PREFIX_PATH"))
+                               .split(QLatin1Char(';'), Qt::SkipEmptyParts);
+    if (QDir(defaultRosPrefix).exists()) {
+        prependUnique(prefixes, defaultRosPrefix);
+    }
+    if (QDir(localPrefix).exists()) {
+        prependUnique(prefixes, localPrefix);
+    }
+    if (!prefixes.isEmpty()) {
+        qputenv("AMENT_PREFIX_PATH", prefixes.join(QLatin1Char(';')).toLocal8Bit());
+    }
+
+    QStringList paths = QString::fromLocal8Bit(qgetenv("PATH"))
+                            .split(QLatin1Char(';'), Qt::SkipEmptyParts);
+    if (QDir(defaultRosPrefix).exists()) {
+        prependUnique(paths, QDir(defaultRosPrefix).filePath(QStringLiteral("bin")));
+    }
+    if (QDir(localPrefix).exists()) {
+        prependUnique(paths, QDir(localPrefix).filePath(QStringLiteral("bin")));
+    }
+    qputenv("PATH", paths.join(QLatin1Char(';')).toLocal8Bit());
+}
+
+} // namespace
 
 int main(int argc, char *argv[])
 {
     FILE *f = fopen("D:/crash_debug.txt", "w");
     if (f) { fprintf(f, "main() entered\n"); fflush(f); }
+    configureRosRuntime(argc > 0 ? argv[0] : nullptr);
     try {
         if (f) { fprintf(f, "before rclcpp::init\n"); fflush(f); }
         rclcpp::init(argc, argv);
