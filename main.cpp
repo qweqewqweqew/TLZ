@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "Database.h"
+#include "DatabaseBootstrap.h"
 #include "InspectionRepository.h"
 #include "Logger.h"
 
@@ -105,7 +106,8 @@ int main(int argc, char *argv[])
     // 打开数据库连接（失败不阻断程序，只记录日志并在界面上给个提示）
     {
         QString dbError;
-        if (Database::instance().open(&dbError)) {
+        const bool databaseReady = DatabaseBootstrap::ensureDatabase(&dbError);
+        if (databaseReady && Database::instance().open(&dbError)) {
             LOG("数据库连接已建立 (MzTLZ)");
             // 启动时显式执行一次幂等结构迁移（BackendTaskId / InspectionFrame）
             {

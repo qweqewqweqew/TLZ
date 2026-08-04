@@ -13,6 +13,12 @@ set(CMAKE_JOB_POOL_COMPILE compile_pool)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/database.ini"
+    "${CMAKE_CURRENT_BINARY_DIR}/database.ini"
+    COPYONLY
+)
+
 set(MZ_ROS_PREFIX "$ENV{MZ_ROS_PREFIX}" CACHE PATH "ROS 2 installation prefix")
 if(NOT MZ_ROS_PREFIX)
     foreach(_ros_env_var ROS2_ROOT ROS_FOXY_ROOT ROS_ROOT)
@@ -103,6 +109,8 @@ add_executable(MzTLZ
     AppStyle.h
     Database.cpp
     Database.h
+    DatabaseBootstrap.cpp
+    DatabaseBootstrap.h
     EventLogPanel.cpp
     EventLogPanel.h
     HistoryDialog.cpp
@@ -139,6 +147,7 @@ add_executable(MzTLZ
     UiHelpers.cpp
     UiHelpers.h
     mainwindow.ui
+    database.ini
     qcustomplot.cpp
     qcustomplot.h
     resources.qrc

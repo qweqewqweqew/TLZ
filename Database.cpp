@@ -26,16 +26,20 @@ const QStringList &odbcDriverCandidates()
 
 QString buildConnectionString(const QString &driver)
 {
-    // 用 Windows 集成认证；本机命名实例 SQLEXPRESS
+    const QString server = qEnvironmentVariable(
+        "MZTLZ_DB_SERVER", QStringLiteral("localhost\\SQLEXPRESS"));
+    const QString databaseName = qEnvironmentVariable(
+        "MZTLZ_DB_NAME", QStringLiteral("MzTLZ"));
+    // 用 Windows 集成认证；实例和数据库由启动引导模块确定
     // Encrypt/TrustServerCertificate 是给 Driver 18 用的，其他驱动会忽略
     return QString(
                "DRIVER={%1};"
-               "SERVER=localhost\\SQLEXPRESS;"
-               "DATABASE=MzTLZ;"
+               "SERVER=%2;"
+               "DATABASE=%3;"
                "Trusted_Connection=Yes;"
                "Encrypt=No;"
                "TrustServerCertificate=Yes;")
-        .arg(driver);
+        .arg(driver, server, databaseName);
 }
 } // namespace
 

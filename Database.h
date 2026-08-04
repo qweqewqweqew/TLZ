@@ -10,7 +10,7 @@ class Database
 public:
     static Database &instance();
 
-    // 打开默认连接（localhost\SQLEXPRESS + MzTLZ，Windows 集成认证）
+    // 打开启动引导模块选定的 SQL Server 连接（Windows 集成认证）
     // 已打开时直接返回 true
     bool open(QString *errorMessage = nullptr);
 
