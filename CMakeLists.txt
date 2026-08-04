@@ -13,17 +13,69 @@ set(CMAKE_JOB_POOL_COMPILE compile_pool)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(PYTHON_EXECUTABLE "C:/opt/ros/foxy/x64/python.exe" CACHE FILEPATH "" FORCE)
-set(Python3_EXECUTABLE "C:/opt/ros/foxy/x64/python.exe" CACHE FILEPATH "" FORCE)
+set(MZ_ROS_PREFIX "$ENV{MZ_ROS_PREFIX}" CACHE PATH "ROS 2 installation prefix")
+if(NOT MZ_ROS_PREFIX)
+    foreach(_ros_env_var ROS2_ROOT ROS_FOXY_ROOT ROS_ROOT)
+        file(TO_CMAKE_PATH "$ENV{${_ros_env_var}}" _ros_prefix_candidate)
+        if(EXISTS "${_ros_prefix_candidate}/share/ament_cmake/cmake/ament_cmakeConfig.cmake")
+            set(MZ_ROS_PREFIX "${_ros_prefix_candidate}" CACHE PATH "ROS 2 installation prefix" FORCE)
+            break()
+        endif()
+    endforeach()
+endif()
+if(NOT MZ_ROS_PREFIX)
+    find_program(_ROS2_EXECUTABLE NAMES ros2.exe ros2)
+    if(_ROS2_EXECUTABLE)
+        get_filename_component(_ros_scripts_dir "${_ROS2_EXECUTABLE}" DIRECTORY)
+        get_filename_component(_ros_prefix_candidate "${_ros_scripts_dir}" DIRECTORY)
+        if(EXISTS "${_ros_prefix_candidate}/share/ament_cmake/cmake/ament_cmakeConfig.cmake")
+            set(MZ_ROS_PREFIX "${_ros_prefix_candidate}" CACHE PATH "ROS 2 installation prefix" FORCE)
+        endif()
+    endif()
+endif()
 
-list(APPEND CMAKE_PREFIX_PATH
-    "C:/opt/ros/foxy/x64"
-    "D:/QtProj/tongliiz/ros/install/mz_interfaces"
-)
+set(MZ_INTERFACES_PREFIX "$ENV{MZ_INTERFACES_PREFIX}" CACHE PATH "mz_interfaces installation prefix")
+if(NOT MZ_INTERFACES_PREFIX)
+    get_filename_component(
+        _interfaces_prefix_candidate
+        "${CMAKE_CURRENT_SOURCE_DIR}/../Camera_Node/install/mz_interfaces"
+        ABSOLUTE
+    )
+    if(EXISTS "${_interfaces_prefix_candidate}/share/mz_interfaces/cmake/mz_interfacesConfig.cmake")
+        set(MZ_INTERFACES_PREFIX "${_interfaces_prefix_candidate}"
+            CACHE PATH "mz_interfaces installation prefix" FORCE)
+    endif()
+endif()
+
+if(MZ_ROS_PREFIX)
+    list(PREPEND CMAKE_PREFIX_PATH "${MZ_ROS_PREFIX}")
+    if(EXISTS "${MZ_ROS_PREFIX}/python.exe")
+        set(PYTHON_EXECUTABLE "${MZ_ROS_PREFIX}/python.exe" CACHE FILEPATH "" FORCE)
+        set(Python3_EXECUTABLE "${MZ_ROS_PREFIX}/python.exe" CACHE FILEPATH "" FORCE)
+    endif()
+endif()
+
+if(NOT EXISTS "${MZ_INTERFACES_PREFIX}/share/mz_interfaces/cmake/mz_interfacesConfig.cmake")
+    message(FATAL_ERROR
+        "未找到 mz_interfaces。请先构建 Camera_Node，或设置 "
+        "MZ_INTERFACES_PREFIX 指向 mz_interfaces 安装前缀。")
+endif()
+
+list(PREPEND CMAKE_PREFIX_PATH "${MZ_INTERFACES_PREFIX}")
+
+set(_ament_prefixes "${MZ_INTERFACES_PREFIX}")
+if(MZ_ROS_PREFIX)
+    list(APPEND _ament_prefixes "${MZ_ROS_PREFIX}")
+endif()
+if(NOT "$ENV{AMENT_PREFIX_PATH}" STREQUAL "")
+    list(APPEND _ament_prefixes "$ENV{AMENT_PREFIX_PATH}")
+endif()
+list(JOIN _ament_prefixes ";" _ament_prefix_path)
+set(ENV{AMENT_PREFIX_PATH} "${_ament_prefix_path}")
+
 set(CMAKE_MAP_IMPORTED_CONFIG_DEBUG Release RelWithDebInfo "")
-set(ENV{AMENT_PREFIX_PATH} "C:/opt/ros/foxy/x64;D:/QtProj/tongliiz/ros/install/mz_interfaces")
 set(mz_interfaces_DIR
-    "D:/QtProj/tongliiz/ros/install/mz_interfaces/share/mz_interfaces/cmake"
+    "${MZ_INTERFACES_PREFIX}/share/mz_interfaces/cmake"
     CACHE PATH "mz_interfaces package directory" FORCE
 )
 
