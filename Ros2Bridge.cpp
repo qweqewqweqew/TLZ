@@ -492,6 +492,10 @@ bool Ros2Bridge::start()
                 vm.pathParams.zSpeed = msg->path_params.z_speed;
                 vm.pathParams.spindleSpeed = msg->path_params.spindle_speed;
                 vm.pathParams.spindleTorque = msg->path_params.spindle_torque;
+                vm.pathParams.intSpare1 = msg->path_params.int_spare1;
+                vm.pathParams.intSpare2 = msg->path_params.int_spare2;
+                vm.pathParams.realSpare1 = msg->path_params.real_spare1;
+                vm.pathParams.realSpare2 = msg->path_params.real_spare2;
 
                 emit plcFeedbackReceived(vm);
             });
@@ -513,6 +517,13 @@ bool Ros2Bridge::start()
                     vm.plungeCount = msg->plunge_count;
                     vm.plungeAmount = msg->plunge_amount;
                     vm.feedDirection = msg->feed_direction;
+                    vm.intSpare2 = msg->int_spare2;
+                    vm.intSpare3 = msg->int_spare3;
+                    vm.intSpare4 = msg->int_spare4;
+                    vm.realSpare1 = msg->real_spare1;
+                    vm.realSpare2 = msg->real_spare2;
+                    vm.realSpare3 = msg->real_spare3;
+                    vm.realSpare4 = msg->real_spare4;
 
                     emit plcPathCommandReceived(vm);
                 });

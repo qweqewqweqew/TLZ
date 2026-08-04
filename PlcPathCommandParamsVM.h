@@ -15,6 +15,13 @@ struct PlcPathCommandParamsVM
     quint16 plungeCount{0};
     quint16 plungeAmount{0};
     qint16 feedDirection{0};
+    qint16 intSpare2{0};
+    qint16 intSpare3{0};
+    qint16 intSpare4{0};
+    float realSpare1{0.0f};
+    float realSpare2{0.0f};
+    float realSpare3{0.0f};
+    float realSpare4{0.0f};
 };
 
 Q_DECLARE_METATYPE(PlcPathCommandParamsVM)

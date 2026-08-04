@@ -15,6 +15,10 @@ struct PlcPathParamsVM
     float zSpeed{0.0f};
     float spindleSpeed{0.0f};
     float spindleTorque{0.0f};
+    qint16 intSpare1{0};
+    qint16 intSpare2{0};
+    float realSpare1{0.0f};
+    float realSpare2{0.0f};
 };
 
 // 顶层 PLC 反馈：字段与 mz_interfaces/msg/PlcFeedback.msg 一一对应。

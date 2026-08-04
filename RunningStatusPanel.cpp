@@ -51,6 +51,44 @@ QString valueColorFor(RunningStatusPanel * /*panel*/, const QString &value)
     return value == "--" ? kValueColorNoData : kValueColorNormal;
 }
 
+struct PlcStatusPresentation
+{
+    QString text;
+    QString color;
+};
+
+PlcStatusPresentation plcStatusPresentation(quint16 statusWord, quint16 faultCode)
+{
+    if (faultCode != 0) {
+        return {QStringLiteral("系统故障"), kValueColorCritical};
+    }
+
+    switch (statusWord) {
+    case 0:
+        return {QStringLiteral("无"), kValueColorNoData};
+    case 1:
+        return {QStringLiteral("系统急停"), kValueColorCritical};
+    case 2:
+        return {QStringLiteral("准备就绪"), QStringLiteral("#2ECC71")};
+    case 3:
+        return {QStringLiteral("系统故障"), kValueColorCritical};
+    case 4:
+        return {QStringLiteral("拍照完成"), QStringLiteral("#2ECC71")};
+    case 12:
+        return {QStringLiteral("任务执行中"), kAccent.name()};
+    case 30:
+        return {QStringLiteral("路径请求"), kValueColorWarning};
+    case 40:
+        return {QStringLiteral("拍照请求"), kValueColorWarning};
+    case 50:
+        return {QStringLiteral("换刀中"), kValueColorWarning};
+    case 60:
+        return {QStringLiteral("换刀完成"), QStringLiteral("#2ECC71")};
+    default:
+        return {QStringLiteral("状态 %1").arg(statusWord), kValueColorNoData};
+    }
+}
+
 } // namespace
 
 RunningStatusPanel::RunningStatusPanel(QWidget *parent)
@@ -169,19 +207,13 @@ void RunningStatusPanel::setPlcFeedback(const PlcFeedbackVM &feedback)
                                    .arg(feedback.statusWord, 4, 16, QLatin1Char('0'))
                                    .arg(feedback.faultCode)
                                    .toUpper();
-    if (feedback.faultCode != 0) {
-        applyStatusItem(m_plcStatusDot,
-                        m_plcStatusText,
-                        QStringLiteral("故障"),
-                        QStringLiteral("#E74C3C"),
-                        plcTooltip);
-    } else {
-        applyStatusItem(m_plcStatusDot,
-                        m_plcStatusText,
-                        QStringLiteral("状态 %1").arg(feedback.statusWord),
-                        QStringLiteral("#00E5FF"),
-                        plcTooltip);
-    }
+    const PlcStatusPresentation plcStatus =
+        plcStatusPresentation(feedback.statusWord, feedback.faultCode);
+    applyStatusItem(m_plcStatusDot,
+                    m_plcStatusText,
+                    plcStatus.text,
+                    plcStatus.color,
+                    plcTooltip);
 }
 
 void RunningStatusPanel::setCameraStatus(bool connected,
