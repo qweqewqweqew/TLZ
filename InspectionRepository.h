@@ -66,6 +66,8 @@ struct InspectionFrameRow
     int      width = 0;
     int      height = 0;
     int      pixelFormat = 0;
+    int      rangePixelFormat = -1;
+    int      intensityPixelFormat = -1;
     bool     hasRange = false;
     bool     hasIntensity = false;
     QDateTime createdAt;
@@ -128,7 +130,8 @@ public:
                                  quint64 timestampNs,
                                  int width,
                                  int height,
-                                 int pixelFormat,
+                                 int rangePixelFormat,
+                                 int intensityPixelFormat,
                                  bool hasRange,
                                  bool hasIntensity,
                                  QString *errorMessage = nullptr);

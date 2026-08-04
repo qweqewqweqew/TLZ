@@ -41,6 +41,30 @@ QString buildConnectionString(const QString &driver)
                "TrustServerCertificate=Yes;")
         .arg(driver, server, databaseName);
 }
+
+bool configureSqlServerSession(QSqlDatabase &db, QString *errorText)
+{
+    static const char *kStatements[] = {
+        "SET QUOTED_IDENTIFIER ON",
+        "SET ANSI_NULLS ON",
+        "SET ANSI_PADDING ON",
+        "SET ANSI_WARNINGS ON",
+        "SET CONCAT_NULL_YIELDS_NULL ON",
+        "SET ARITHABORT ON",
+        "SET NUMERIC_ROUNDABORT OFF",
+    };
+
+    for (const char *sql : kStatements) {
+        QSqlQuery query(db);
+        if (!query.exec(QString::fromLatin1(sql))) {
+            if (errorText) {
+                *errorText = query.lastError().text();
+            }
+            return false;
+        }
+    }
+    return true;
+}
 } // namespace
 
 Database &Database::instance()
@@ -92,6 +116,15 @@ bool Database::open(QString *errorMessage)
         triedDrivers << drv;
         db.setDatabaseName(buildConnectionString(drv));
         if (db.open()) {
+            QString sessionError;
+            if (!configureSqlServerSession(db, &sessionError)) {
+                lastError = QStringLiteral("SQL Server session setup failed: %1").arg(sessionError);
+                LOG("[DB] session setup failed for %s: %s",
+                    drv.toUtf8().constData(),
+                    sessionError.toUtf8().constData());
+                db.close();
+                continue;
+            }
             LOG("[DB] 连接成功: driver=%s", drv.toUtf8().constData());
             return true;
         }

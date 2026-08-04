@@ -8,6 +8,8 @@
 #include <QSqlQuery>
 #include <QVariant>
 
+#include <limits>
+
 namespace {
 
 QString takeError(const QSqlQuery &query)
@@ -20,6 +22,26 @@ void reportError(QString *errorMessage, const QString &text)
     if (errorMessage) {
         *errorMessage = text;
     }
+}
+
+bool toSqlBigIntVariant(quint64 value,
+                        const QString &fieldName,
+                        QVariant *out,
+                        QString *errorMessage)
+{
+    constexpr quint64 kSqlBigIntMax =
+        static_cast<quint64>(std::numeric_limits<qlonglong>::max());
+    if (value > kSqlBigIntMax) {
+        reportError(errorMessage,
+                    QStringLiteral("%1 超出 SQL Server BIGINT 范围: %2")
+                        .arg(fieldName)
+                        .arg(value));
+        return false;
+    }
+    if (out) {
+        *out = QVariant::fromValue<qlonglong>(static_cast<qlonglong>(value));
+    }
+    return true;
 }
 
 // 从 ProcessParameter 表把当前 recipe 的所有路径读出来，
@@ -346,7 +368,8 @@ InspectionDetail InspectionRepository::loadDetail(int inspectionRecordId,
     {
         QSqlQuery q(db);
         q.prepare("SELECT Id, InspectionRecordId, BackendTaskId, FrameId, ScanOrdinal, "
-                  "       TimestampNs, Width, Height, PixelFormat, HasRange, HasIntensity, "
+                  "       TimestampNs, Width, Height, PixelFormat, "
+                  "       RangePixelFormat, IntensityPixelFormat, HasRange, HasIntensity, "
                   "       CreatedAt "
                   "FROM dbo.InspectionFrame "
                   "WHERE InspectionRecordId = ? "
@@ -364,6 +387,8 @@ InspectionDetail InspectionRepository::loadDetail(int inspectionRecordId,
                 f.width               = q.value("Width").toInt();
                 f.height              = q.value("Height").toInt();
                 f.pixelFormat         = q.value("PixelFormat").toInt();
+                f.rangePixelFormat    = q.value("RangePixelFormat").toInt();
+                f.intensityPixelFormat = q.value("IntensityPixelFormat").toInt();
                 f.hasRange            = q.value("HasRange").toBool();
                 f.hasIntensity        = q.value("HasIntensity").toBool();
                 f.createdAt           = q.value("CreatedAt").toDateTime();
@@ -500,6 +525,8 @@ bool InspectionRepository::ensureSchema(QString *errorMessage)
         "    Width INT NOT NULL DEFAULT 0,"
         "    Height INT NOT NULL DEFAULT 0,"
         "    PixelFormat INT NOT NULL DEFAULT 0,"
+        "    RangePixelFormat INT NOT NULL DEFAULT -1,"
+        "    IntensityPixelFormat INT NOT NULL DEFAULT -1,"
         "    HasRange BIT NOT NULL DEFAULT 0,"
         "    HasIntensity BIT NOT NULL DEFAULT 0,"
         "    CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),"
@@ -513,6 +540,12 @@ bool InspectionRepository::ensureSchema(QString *errorMessage)
         "WHERE name = 'IX_InspectionFrame_RecordId' "
         "AND object_id = OBJECT_ID('dbo.InspectionFrame')) "
         "CREATE INDEX IX_InspectionFrame_RecordId ON dbo.InspectionFrame(InspectionRecordId)",
+
+        "IF COL_LENGTH('dbo.InspectionFrame', 'RangePixelFormat') IS NULL "
+        "ALTER TABLE dbo.InspectionFrame ADD RangePixelFormat INT NOT NULL DEFAULT -1",
+
+        "IF COL_LENGTH('dbo.InspectionFrame', 'IntensityPixelFormat') IS NULL "
+        "ALTER TABLE dbo.InspectionFrame ADD IntensityPixelFormat INT NOT NULL DEFAULT -1",
     };
 
     for (const char *sql : kStatements) {
@@ -543,8 +576,10 @@ int InspectionRepository::ensureRecordForTask(quint64 backendTaskId,
         return 0;
     }
 
-    const QVariant taskVar =
-        QVariant::fromValue<qlonglong>(static_cast<qlonglong>(backendTaskId));
+    QVariant taskVar;
+    if (!toSqlBigIntVariant(backendTaskId, QStringLiteral("task_id"), &taskVar, errorMessage)) {
+        return 0;
+    }
 
     // 已存在则直接返回
     {
@@ -590,7 +625,8 @@ bool InspectionRepository::saveFrameForTask(quint64 backendTaskId,
                                             quint64 timestampNs,
                                             int width,
                                             int height,
-                                            int pixelFormat,
+                                            int rangePixelFormat,
+                                            int intensityPixelFormat,
                                             bool hasRange,
                                             bool hasIntensity,
                                             QString *errorMessage)
@@ -611,9 +647,18 @@ bool InspectionRepository::saveFrameForTask(quint64 backendTaskId,
         return false;
     }
 
-    const auto i64 = [](quint64 v) {
-        return QVariant::fromValue<qlonglong>(static_cast<qlonglong>(v));
-    };
+    QVariant taskVar;
+    QVariant frameVar;
+    QVariant timestampVar;
+    if (!toSqlBigIntVariant(backendTaskId, QStringLiteral("task_id"), &taskVar, errorMessage) ||
+        !toSqlBigIntVariant(frameId, QStringLiteral("frame_id"), &frameVar, errorMessage) ||
+        !toSqlBigIntVariant(timestampNs, QStringLiteral("timestamp_ns"), &timestampVar, errorMessage)) {
+        return false;
+    }
+
+    const int legacyPixelFormat = rangePixelFormat >= 0
+        ? rangePixelFormat
+        : intensityPixelFormat;
 
     // (task_id, frame_id) 已存在时只补全标记/元数据，不重复建行——
     // 对应 range / intensity 两路消息先后到达的场景
@@ -628,32 +673,42 @@ bool InspectionRepository::saveFrameForTask(quint64 backendTaskId,
         "    TimestampNs = CASE WHEN t.TimestampNs = 0 THEN ? ELSE t.TimestampNs END, "
         "    Width = CASE WHEN t.Width = 0 THEN ? ELSE t.Width END, "
         "    Height = CASE WHEN t.Height = 0 THEN ? ELSE t.Height END, "
-        "    PixelFormat = CASE WHEN t.PixelFormat = 0 THEN ? ELSE t.PixelFormat END "
+        "    PixelFormat = CASE WHEN t.PixelFormat = 0 AND ? > 0 THEN ? ELSE t.PixelFormat END, "
+        "    RangePixelFormat = CASE WHEN ? >= 0 THEN ? ELSE t.RangePixelFormat END, "
+        "    IntensityPixelFormat = CASE WHEN ? >= 0 THEN ? ELSE t.IntensityPixelFormat END "
         "WHEN NOT MATCHED THEN INSERT "
         "    (InspectionRecordId, BackendTaskId, FrameId, ScanOrdinal, "
-        "     TimestampNs, Width, Height, PixelFormat, HasRange, HasIntensity) "
+        "     TimestampNs, Width, Height, PixelFormat, RangePixelFormat, "
+        "     IntensityPixelFormat, HasRange, HasIntensity) "
         "    VALUES (?, ?, ?, "
         "            (SELECT COUNT(1) + 1 FROM dbo.InspectionFrame WHERE BackendTaskId = ?), "
-        "            ?, ?, ?, ?, ?, ?);");
+        "            ?, ?, ?, ?, ?, ?, ?, ?);");
     // USING
-    q.addBindValue(i64(backendTaskId));
-    q.addBindValue(i64(frameId));
+    q.addBindValue(taskVar);
+    q.addBindValue(frameVar);
     // MATCHED
     q.addBindValue(hasRange ? 1 : 0);
     q.addBindValue(hasIntensity ? 1 : 0);
-    q.addBindValue(i64(timestampNs));
+    q.addBindValue(timestampVar);
     q.addBindValue(width);
     q.addBindValue(height);
-    q.addBindValue(pixelFormat);
+    q.addBindValue(legacyPixelFormat);
+    q.addBindValue(legacyPixelFormat);
+    q.addBindValue(rangePixelFormat);
+    q.addBindValue(rangePixelFormat);
+    q.addBindValue(intensityPixelFormat);
+    q.addBindValue(intensityPixelFormat);
     // NOT MATCHED
     q.addBindValue(recordId);
-    q.addBindValue(i64(backendTaskId));
-    q.addBindValue(i64(frameId));
-    q.addBindValue(i64(backendTaskId));
-    q.addBindValue(i64(timestampNs));
+    q.addBindValue(taskVar);
+    q.addBindValue(frameVar);
+    q.addBindValue(taskVar);
+    q.addBindValue(timestampVar);
     q.addBindValue(width);
     q.addBindValue(height);
-    q.addBindValue(pixelFormat);
+    q.addBindValue(legacyPixelFormat);
+    q.addBindValue(rangePixelFormat);
+    q.addBindValue(intensityPixelFormat);
     q.addBindValue(hasRange ? 1 : 0);
     q.addBindValue(hasIntensity ? 1 : 0);
 

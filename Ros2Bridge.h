@@ -62,7 +62,8 @@ signals:
                         quint64 timestampNs,
                         quint32 width,
                         quint32 height,
-                        quint32 pixelFormat);
+                        int rangePixelFormat,
+                        int intensityPixelFormat);
     void backendStateReceived(const QString &state);
     void cameraStatusReceived(bool connected,
                               const QString &cameraId,

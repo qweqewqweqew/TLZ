@@ -206,7 +206,8 @@ struct Ros2BridgeEntities final
     std::uint64_t pendingTimestampNs{0};
     std::uint32_t pendingWidth{0};
     std::uint32_t pendingHeight{0};
-    std::uint32_t pendingPixelFormat{0};
+    int pendingRangePixelFormat{-1};
+    int pendingIntensityPixelFormat{-1};
     QImage pendingRange;
     QImage pendingIntensity;
 };
@@ -254,7 +255,8 @@ bool Ros2Bridge::start()
             m_entities->pendingTimestampNs = 0;
             m_entities->pendingWidth = 0;
             m_entities->pendingHeight = 0;
-            m_entities->pendingPixelFormat = 0;
+            m_entities->pendingRangePixelFormat = -1;
+            m_entities->pendingIntensityPixelFormat = -1;
             m_entities->pendingRange = QImage();
             m_entities->pendingIntensity = QImage();
         };
@@ -270,7 +272,8 @@ bool Ros2Bridge::start()
                                 m_entities->pendingTimestampNs,
                                 m_entities->pendingWidth,
                                 m_entities->pendingHeight,
-                                m_entities->pendingPixelFormat);
+                                m_entities->pendingRangePixelFormat,
+                                m_entities->pendingIntensityPixelFormat);
             clearPendingScanFrame();
         };
 
@@ -357,7 +360,8 @@ bool Ros2Bridge::start()
                 }
 
                 if ((m_entities->pendingHasRange || m_entities->pendingHasIntensity) &&
-                    m_entities->pendingFrameId != msg->frame_id) {
+                    (m_entities->pendingTaskId != msg->task_id ||
+                     m_entities->pendingFrameId != msg->frame_id)) {
                     emitPendingScanFrame();
                 }
 
@@ -369,16 +373,16 @@ bool Ros2Bridge::start()
                     m_entities->pendingTimestampNs = msg->timestamp_ns;
                     m_entities->pendingWidth = msg->width;
                     m_entities->pendingHeight = msg->height;
-                    m_entities->pendingPixelFormat = msg->pixel_format;
+                    m_entities->pendingRangePixelFormat = int(msg->pixel_format);
                 } else {
                     m_entities->pendingHasIntensity = true;
                     m_entities->pendingIntensity = image;
+                    m_entities->pendingIntensityPixelFormat = int(msg->pixel_format);
                     if (!m_entities->pendingHasRange) {
                         m_entities->pendingTaskId = msg->task_id;
                         m_entities->pendingTimestampNs = msg->timestamp_ns;
                         m_entities->pendingWidth = msg->width;
                         m_entities->pendingHeight = msg->height;
-                        m_entities->pendingPixelFormat = msg->pixel_format;
                     }
                 }
 
@@ -443,8 +447,9 @@ bool Ros2Bridge::start()
                     paths.push_back(vm);
                 }
 
+                const quint64 taskId = msg->task_id > 0 ? quint64(msg->task_id) : 0;
                 emit millingPathsReceived(
-                    msg->task_id,
+                    taskId,
                     int(msg->path_total),
                     int(msg->max_particle_height),
                     msg->calibration_applied,
@@ -465,8 +470,9 @@ bool Ros2Bridge::start()
                 if (!msg) return;
 
                 const QString message = QString::fromStdString(msg->message);
+                const quint64 taskId = msg->task_id > 0 ? quint64(msg->task_id) : 0;
                 emit millingProgressReceived(
-                    msg->task_id,
+                    taskId,
                     msg->progress,
                     msg->finished,
                     msg->success,

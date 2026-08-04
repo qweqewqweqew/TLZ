@@ -203,7 +203,8 @@ void MainWindow::startRos2Bridge()
                    quint64 timestampNs,
                    quint32 width,
                    quint32 height,
-                   quint32 pixelFormat) {
+                   int rangePixelFormat,
+                   int intensityPixelFormat) {
                 if (m_imagePanel) {
                     m_imagePanel->updateScanFrame(range, intensity, frameId, timestampNs);
                 }
@@ -219,7 +220,8 @@ void MainWindow::startRos2Bridge()
                                                             timestampNs,
                                                             int(width),
                                                             int(height),
-                                                            int(pixelFormat),
+                                                            rangePixelFormat,
+                                                            intensityPixelFormat,
                                                             !range.isNull(),
                                                             !intensity.isNull(),
                                                             &err)) {
