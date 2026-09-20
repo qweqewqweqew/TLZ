@@ -10,10 +10,12 @@
 #include <QAction>
 #include <QColor>
 #include <QHBoxLayout>
+#include <QKeySequence>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPixmap>
 #include <QPushButton>
+#include <QShortcut>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -98,6 +100,13 @@ TitleBar::TitleBar(QWidget *parent)
     connect(minimizeButton, &QPushButton::clicked, this, &TitleBar::minimizeRequested);
     connect(m_maximizeButton, &QPushButton::clicked, this, &TitleBar::maximizeRestoreRequested);
     connect(closeButton, &QPushButton::clicked, this, &TitleBar::closeRequested);
+
+    auto *minimizeShortcut = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Escape), this);
+    auto *maximizeShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    minimizeShortcut->setContext(Qt::WindowShortcut);
+    maximizeShortcut->setContext(Qt::WindowShortcut);
+    connect(minimizeShortcut, &QShortcut::activated, this, &TitleBar::minimizeRequested);
+    connect(maximizeShortcut, &QShortcut::activated, this, &TitleBar::maximizeRestoreRequested);
 
     updateMaximizeButtonIcon();
 }
