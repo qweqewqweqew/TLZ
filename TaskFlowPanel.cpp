@@ -184,9 +184,8 @@ QWidget *TaskFlowPanel::createCommandCard(const PlcPathCommandParamsVM &command,
     grid->addWidget(createFieldLabel(fieldText("Z", formatFloat(command.z)), card), 0, 2);
     grid->addWidget(createFieldLabel(fieldText("进给速度", formatFloat(command.feedSpeed)), card), 0, 3);
     grid->addWidget(createFieldLabel(fieldText("进给量", formatFloat(command.feedAmount)), card), 1, 0);
-    grid->addWidget(createFieldLabel(fieldText("主轴速度", formatFloat(command.spindleSpeed, 0)), card), 1, 1);
-    grid->addWidget(createFieldLabel(fieldText("下刀次数", QString::number(command.plungeCount)), card), 1, 2);
-    grid->addWidget(createFieldLabel(fieldText("下刀量", QString::number(command.plungeAmount)), card), 1, 3);
+    grid->addWidget(createFieldLabel(fieldText("下刀次数", QString::number(command.plungeCount)), card), 1, 1);
+    grid->addWidget(createFieldLabel(fieldText("下刀量", QString::number(command.plungeAmount)), card), 1, 2);
 
     for (int column = 0; column < 4; ++column) {
         grid->setColumnStretch(column, 1);
