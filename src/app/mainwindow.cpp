@@ -1439,8 +1439,19 @@ void MainWindow::onDemoPoseUpdate()
         feedback.pathParams.xSpeed = seg.xSpeed;
         feedback.pathParams.ySpeed = seg.ySpeed;
         feedback.pathParams.zSpeed = leaveTrace ? -1.25f : 0.0f;
-        feedback.pathParams.spindleSpeed = leaveTrace ? 2860.0f : 600.0f;
-        feedback.pathParams.spindleTorque = leaveTrace ? 16.8f : 2.0f;
+        // Smooth time-sampled fake curves (not flat steps that paint as bands).
+        const double phase = m_demoPathIndex * 1.7 + m_demoPathT * 6.28318530718;
+        if (leaveTrace) {
+            feedback.pathParams.spindleSpeed =
+                float(2780.0 + 90.0 * std::sin(phase) + 35.0 * std::sin(phase * 2.3));
+            feedback.pathParams.spindleTorque =
+                float(15.6 + 1.8 * std::cos(phase * 0.9) + 0.7 * std::sin(phase * 3.1));
+        } else {
+            feedback.pathParams.spindleSpeed =
+                float(580.0 + 40.0 * std::sin(phase * 0.5));
+            feedback.pathParams.spindleTorque =
+                float(1.8 + 0.35 * std::cos(phase * 0.7));
+        }
         emit m_ros2Bridge->plcFeedbackReceived(feedback);
     }
 

@@ -14,7 +14,7 @@
 
 namespace {
 
-constexpr double kVisibleSeconds = 60.0;
+constexpr double kVisibleSeconds = 30.0;
 constexpr double kHistorySeconds = 600.0;
 constexpr double kWheelStepSeconds = 15.0;
 constexpr double kSpeedMaximum = 3500.0;
@@ -102,11 +102,17 @@ void DataStatisticsPanel::setupPlot()
 
     auto *speedGraph = m_plot->addGraph(m_plot->xAxis, m_plot->yAxis);
     speedGraph->setName(QStringLiteral("主轴转速"));
-    speedGraph->setPen(QPen(speedColor, 2));
+    speedGraph->setLineStyle(QCPGraph::lsLine);
+    speedGraph->setBrush(Qt::NoBrush);
+    speedGraph->setPen(QPen(speedColor, 1.75));
+    speedGraph->setAntialiased(true);
 
     auto *torqueGraph = m_plot->addGraph(m_plot->xAxis, m_plot->yAxis);
     torqueGraph->setName(QStringLiteral("主轴扭矩"));
-    torqueGraph->setPen(QPen(torqueColor, 2));
+    torqueGraph->setLineStyle(QCPGraph::lsLine);
+    torqueGraph->setBrush(Qt::NoBrush);
+    torqueGraph->setPen(QPen(torqueColor, 1.75));
+    torqueGraph->setAntialiased(true);
 
     m_plot->legend->setVisible(true);
     m_plot->legend->setBrush(QColor(Theme::kCanvasBg));
@@ -207,8 +213,21 @@ void DataStatisticsPanel::setSelectedMetric(SelectedMetric metric)
 
     m_plot->yAxis->setTicker(ticker);
     styleAxis(m_plot->yAxis, selectedColor);
-    m_plot->graph(0)->setPen(QPen(QColor(Theme::kRealtime), speedSelected ? 3 : 2));
-    m_plot->graph(1)->setPen(QPen(QColor(Theme::kAccent), speedSelected ? 2 : 3));
+
+    QColor speedPen(Theme::kRealtime);
+    QColor torquePen(Theme::kAccent);
+    if (!speedSelected) {
+        speedPen.setAlpha(102); // ~40% when unselected
+    }
+    if (speedSelected) {
+        torquePen.setAlpha(102);
+    }
+    m_plot->graph(0)->setBrush(Qt::NoBrush);
+    m_plot->graph(1)->setBrush(Qt::NoBrush);
+    m_plot->graph(0)->setLineStyle(QCPGraph::lsLine);
+    m_plot->graph(1)->setLineStyle(QCPGraph::lsLine);
+    m_plot->graph(0)->setPen(QPen(speedPen, speedSelected ? 2.0 : 1.5));
+    m_plot->graph(1)->setPen(QPen(torquePen, speedSelected ? 1.5 : 2.0));
     m_plot->replot(QCustomPlot::rpQueuedReplot);
 }
 

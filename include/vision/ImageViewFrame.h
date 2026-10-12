@@ -7,6 +7,7 @@
 #include <QFrame>
 #include <QImage>
 #include <QPoint>
+#include <QPainterPath>
 #include <QPointF>
 #include <QRectF>
 #include <QSize>
@@ -73,7 +74,9 @@ private:
     void recomputeToolPoseMapping();
     void requestPoseUpdate();
     void ensureGrindLayer();
-    void stampGrindAtImageUv(double u, double v);
+    void strokeGrindToImageUv(double u, double v);
+    void breakGrindStroke();
+    void rebuildGrindLayer();
 
 private:
     QImage m_image;
@@ -111,8 +114,11 @@ private:
     int m_toolTrailCount{0};
     int m_toolTrailNext{0}; // next write index in ring
     QVector<QPointF> m_toolTrail; // widget-space scratch for paint
-    QImage m_grindLayer; // translucent cut stamp layer in image pixels
+    QImage m_grindLayer; // translucent cut stroke layer in image pixels
     bool m_leaveGrindTrace{false};
+    bool m_hasActiveGrindPath{false};
+    QPainterPath m_activeGrindPath; // current doCut segment
+    QVector<QPainterPath> m_grindPaths; // finished doCut segments
 };
 
 #endif // IMAGEVIEWFRAME_H

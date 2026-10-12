@@ -63,8 +63,9 @@ bool TelemetryPlotWidget::eventFilter(QObject *watched, QEvent *event)
 void TelemetryPlotWidget::setupPlot()
 {
     m_plot->addGraph();
-    m_plot->graph(0)->setPen(QPen(m_config.color, 1));
+    m_plot->graph(0)->setPen(QPen(m_config.color, 1.75));
     m_plot->graph(0)->setLineStyle(QCPGraph::lsLine);
+    m_plot->graph(0)->setBrush(Qt::NoBrush);
     m_plot->graph(0)->setAntialiased(true);
     m_plot->yAxis->setRange(m_config.yMin, m_config.yMax);
     m_plot->xAxis->setRange(0, m_visibleSeconds);

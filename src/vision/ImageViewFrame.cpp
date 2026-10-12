@@ -11,6 +11,7 @@
 #include <QFontMetrics>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPen>
 #include <QPointF>
 #include <QLineF>
@@ -71,6 +72,9 @@ void ImageViewFrame::setImage(const QImage &image)
     if (m_image.isNull() || previousSize != m_image.size()) {
         resetView();
         m_grindLayer = QImage();
+        m_hasActiveGrindPath = false;
+        m_activeGrindPath = QPainterPath();
+        m_grindPaths.clear();
     }
     // 同尺寸新帧也强制立即重绘，避免只靠 update() 被合并后看起来“没刷新”。
     repaint();
@@ -138,6 +142,7 @@ void ImageViewFrame::setToolPose(double xMm, double yMm, double zMm, bool valid,
         m_toolTrailCount = 0;
         m_toolTrailNext = 0;
         m_toolTrail.clear();
+        breakGrindStroke();
         requestPoseUpdate();
         return;
     }
@@ -167,8 +172,12 @@ void ImageViewFrame::setToolPose(double xMm, double yMm, double zMm, bool valid,
             }
         }
         if (leaveGrindTrace) {
-            stampGrindAtImageUv(m_toolPoseU, m_toolPoseV);
+            strokeGrindToImageUv(m_toolPoseU, m_toolPoseV);
+        } else {
+            breakGrindStroke();
         }
+    } else {
+        breakGrindStroke();
     }
     m_leaveGrindTrace = leaveGrindTrace && m_toolPoseMapped;
     if (!same || leaveGrindTrace) {
@@ -178,11 +187,22 @@ void ImageViewFrame::setToolPose(double xMm, double yMm, double zMm, bool valid,
 
 void ImageViewFrame::clearGrindLayer()
 {
+    breakGrindStroke();
+    m_grindPaths.clear();
     if (m_grindLayer.isNull()) {
         return;
     }
     m_grindLayer = QImage();
     update();
+}
+
+void ImageViewFrame::breakGrindStroke()
+{
+    if (m_hasActiveGrindPath && !m_activeGrindPath.isEmpty()) {
+        m_grindPaths.push_back(m_activeGrindPath);
+    }
+    m_hasActiveGrindPath = false;
+    m_activeGrindPath = QPainterPath();
 }
 
 void ImageViewFrame::ensureGrindLayer()
@@ -197,27 +217,62 @@ void ImageViewFrame::ensureGrindLayer()
     }
 }
 
-void ImageViewFrame::stampGrindAtImageUv(double u, double v)
+void ImageViewFrame::rebuildGrindLayer()
 {
     if (m_image.isNull()) {
         return;
     }
     ensureGrindLayer();
-    // Target ~20px on screen; convert via last draw scale when available.
+    m_grindLayer.fill(Qt::transparent);
+
+    // Stroke width ~ drill indicator diameter (~20px on screen).
     double sx = 1.0;
     if (!m_lastImageRect.isEmpty() && m_lastImageSize.width() > 0) {
         sx = double(m_lastImageRect.width()) / double(m_lastImageSize.width());
     }
-    double radiusImg = 10.0 / qMax(sx, 0.05); // ~20px screen diameter
-    radiusImg = qBound(8.0, radiusImg, 48.0);
+    double penW = 20.0 / qMax(sx, 0.05);
+    penW = qBound(16.0, penW, 96.0);
 
     QPainter gp(&m_grindLayer);
     gp.setRenderHint(QPainter::Antialiasing, true);
+    gp.setCompositionMode(QPainter::CompositionMode_SourceOver);
     QColor ink(Theme::kAccent);
-    ink.setAlpha(115); // ~45% — translucent so texture shows through
-    gp.setPen(Qt::NoPen);
-    gp.setBrush(ink);
-    gp.drawEllipse(QPointF(u, v), radiusImg, radiusImg);
+    ink.setAlpha(85); // ~33% perceived; texture remains readable
+    QPen pen(ink, penW, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    gp.setPen(pen);
+    gp.setBrush(Qt::NoBrush);
+
+    for (const QPainterPath &path : m_grindPaths) {
+        if (!path.isEmpty()) {
+            gp.drawPath(path);
+        }
+    }
+    if (m_hasActiveGrindPath && !m_activeGrindPath.isEmpty()) {
+        gp.drawPath(m_activeGrindPath);
+    }
+}
+
+void ImageViewFrame::strokeGrindToImageUv(double u, double v)
+{
+    if (m_image.isNull()) {
+        return;
+    }
+    const QPointF cur(u, v);
+    if (!m_hasActiveGrindPath) {
+        m_activeGrindPath = QPainterPath();
+        m_activeGrindPath.moveTo(cur);
+        m_hasActiveGrindPath = true;
+        rebuildGrindLayer();
+        return;
+    }
+
+    // Skip near-zero segments; path still holds last point.
+    if (QLineF(m_activeGrindPath.currentPosition(), cur).length() < 0.5) {
+        return;
+    }
+    m_activeGrindPath.lineTo(cur);
+    // Redraw full cut strokes once so translucent alpha does not stack.
+    rebuildGrindLayer();
 }
 
 void ImageViewFrame::setPathProgress(int completedPath, int currentPath)
