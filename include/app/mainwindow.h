@@ -1,0 +1,151 @@
+#ifndef MAINWINDOW_H
+#define MAINWINDOW_H
+
+#include <QHash>
+#include <QMainWindow>
+#include <QSet>
+#include <QString>
+#include <QVector>
+
+class DeviceStatusPanel;
+class DataStatisticsPanel;
+class EventLogPanel;
+class HistoryDialog;
+class HikCameraClient;
+class ImageDisplayPanel;
+class Ros2Bridge;
+class RunDataPanel;
+class RunningStatusPanel;
+class TaskFlowPanel;
+class BackendParamsDialog;
+class QStackedWidget;
+class QTimer;
+class TitleBar;
+class NodeLifecycleMonitor;
+class QProcess;
+
+QT_BEGIN_NAMESPACE
+namespace Ui {
+class MainWindow;
+}
+QT_END_NAMESPACE
+
+class MainWindow : public QMainWindow
+{
+    Q_OBJECT
+
+public:
+    MainWindow(QWidget *parent = nullptr);
+    ~MainWindow();
+
+    void setDatabaseReady(bool ready);
+
+public slots:
+    void appendTelemetrySample(double speed, double torque);
+
+private:
+    void changeEvent(QEvent *event) override;
+    void closeEvent(QCloseEvent *event) override;
+
+    void buildMainView();
+    void connectTitleBar();
+    void startRos2Bridge();
+    void startNodes();
+    void stopNodes();
+    void runNodeLauncherScript(bool start);
+    void stopNodesOnExit();
+    QString resolveLauncherConfigPath() const;
+    QString resolveLauncherScript(const QString &key) const;
+    QString resolveStartAllScript() const;
+    QString resolveStopAllScript() const;
+    void appendEventLog(const QString &level, const QString &message);
+    void persistTaskRecord(quint64 taskId);
+    void persistScanFrame(quint64 taskId,
+                          quint64 frameId,
+                          quint64 timestampNs,
+                          int width,
+                          int height,
+                          int rangePixelFormat,
+                          int intensityPixelFormat,
+                          bool hasRange,
+                          bool hasIntensity);
+    void flushPendingDatabaseWrites();
+    void toggleMaximized();
+    void setSimulationRunning(bool running);
+    void handleMillingProgress(quint64 taskId,
+                               float progress,
+                               bool finished,
+                               bool success,
+                               const QString &message);
+    void applyMillingProgress(quint64 taskId,
+                              float progress,
+                              bool finished,
+                              bool success,
+                              const QString &message);
+
+    struct PendingMillingProgress
+    {
+        quint64 taskId{0};
+        float progress{0.0f};
+        bool finished{false};
+        bool success{false};
+        QString message;
+        bool valid{false};
+    };
+
+private slots:
+    void onWaveformUpdate();
+    void onSimulationProgressUpdate();
+
+private:
+    struct PendingScanFrame
+    {
+        quint64 taskId{0};
+        quint64 frameId{0};
+        quint64 timestampNs{0};
+        int width{0};
+        int height{0};
+        int rangePixelFormat{0};
+        int intensityPixelFormat{0};
+        bool hasRange{false};
+        bool hasIntensity{false};
+    };
+
+    Ui::MainWindow *ui;
+    TitleBar *m_titleBar{nullptr};
+    QStackedWidget *m_contentStack{nullptr};
+    QWidget *m_monitorPage{nullptr};
+    QWidget *m_settingsPage{nullptr};
+    RunningStatusPanel *m_statusPanel{nullptr};
+    DeviceStatusPanel *m_deviceStatusPanel{nullptr};
+    ImageDisplayPanel *m_imagePanel{nullptr};
+    HikCameraClient *m_hikCameraClient{nullptr};
+    DataStatisticsPanel *m_dataStatisticsPanel{nullptr};
+    EventLogPanel *m_eventLogPanel{nullptr};
+    RunDataPanel *m_runDataPanel{nullptr};
+    TaskFlowPanel *m_taskFlowPanel{nullptr};
+    QTimer *m_waveformTimer{nullptr};
+    QTimer *m_simulationProgressTimer{nullptr};
+    Ros2Bridge *m_ros2Bridge{nullptr};
+    NodeLifecycleMonitor *m_nodeLifecycleMonitor{nullptr};
+    QProcess *m_startAllProcess{nullptr};
+    BackendParamsDialog *m_backendParamsDialog{nullptr};
+    HistoryDialog *m_historyDialog{nullptr};
+    // 最近一次 MillingPaths 给的后端任务号，作为扫描帧落库时 task_id 的回退值
+    quint64 m_currentBackendTaskId{0};
+    quint64 m_activeBackendTaskId{0};
+    quint64 m_lastLoggedIgnoredProgressTaskId{0};
+    float m_lastMillingProgress{-1.0f};
+    bool m_activeTaskFinished{false};
+    QHash<quint64, PendingMillingProgress> m_pendingMillingProgress;
+    QSet<quint64> m_pendingDatabaseTaskIds;
+    QVector<PendingScanFrame> m_pendingDatabaseFrames;
+    double m_currentT{0};
+    float m_simulationProgress{0.0f};
+    bool m_simulationRunning{false};
+    bool m_debugFakeActive{false};
+    bool m_databaseReady{false};
+    bool m_stopScriptLaunched{false};
+};
+
+#endif // MAINWINDOW_H
