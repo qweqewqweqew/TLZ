@@ -16,7 +16,6 @@
 #include <QStringList>
 #include <QThread>
 
-#include <cstdio>
 #include <memory>
 
 #ifdef Q_OS_WIN
@@ -91,13 +90,9 @@ void configureRosRuntime(const char *argv0)
 
 int main(int argc, char *argv[])
 {
-    FILE *f = fopen("D:/crash_debug.txt", "w");
-    if (f) { fprintf(f, "main() entered\n"); fflush(f); }
     configureRosRuntime(argc > 0 ? argv[0] : nullptr);
     try {
-        if (f) { fprintf(f, "before rclcpp::init\n"); fflush(f); }
         rclcpp::init(argc, argv);
-        if (f) { fprintf(f, "after rclcpp::init\n"); fflush(f); }
     } catch (const std::exception &ex) {
         qFatal("rclcpp::init failed: %s", ex.what());
         return 1;

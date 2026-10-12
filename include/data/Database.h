@@ -4,13 +4,13 @@
 #include <QSqlDatabase>
 #include <QString>
 
-// 应用级数据库单例：负责打开/关闭到 MzTLZ 的 QODBC 连接
+// 应用级数据库单例：负责打开/关闭到 MzTLZ 的 SQLite 连接（QSQLITE）
 class Database
 {
 public:
     static Database &instance();
 
-    // 打开启动引导模块选定的 SQL Server 连接（Windows 集成认证）
+    // 打开启动引导模块准备好的 SQLite 数据库（见 config/database.ini）
     // 已打开时直接返回 true
     bool open(QString *errorMessage = nullptr);
 

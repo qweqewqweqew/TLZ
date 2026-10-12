@@ -78,7 +78,7 @@ bool execSql(QSqlDatabase &db, const char *sql, QString *errorMessage)
 
 bool ensureBaseSchema(QSqlDatabase &db, QString *errorMessage)
 {
-    // 语义与原 SQL Server 表一致；类型按 SQLite 习惯落地。
+    // 表语义与早期设计一致；本分支使用 SQLite 类型落地。
     static const char *kStatements[] = {
         "PRAGMA foreign_keys = ON",
 
