@@ -38,7 +38,9 @@ public:
 
     // PLC tool pose in millimetres (same metric space as hover readout).
     // valid=false clears the marker so no ghost point remains.
-    void setToolPose(double xMm, double yMm, double zMm, bool valid);
+    void setToolPose(double xMm, double yMm, double zMm, bool valid,
+                     bool leaveGrindTrace = false);
+    void clearGrindLayer();
     // PLC path indices: currentPath is 1-based (0 = none); completedPath is count.
     void setPathProgress(int completedPath, int currentPath);
     void clearToolPose();
@@ -70,6 +72,8 @@ private:
     bool mapMetricToImage(double xMm, double yMm, double *uOut, double *vOut) const;
     void recomputeToolPoseMapping();
     void requestPoseUpdate();
+    void ensureGrindLayer();
+    void stampGrindAtImageUv(double u, double v);
 
 private:
     QImage m_image;
@@ -107,6 +111,8 @@ private:
     int m_toolTrailCount{0};
     int m_toolTrailNext{0}; // next write index in ring
     QVector<QPointF> m_toolTrail; // widget-space scratch for paint
+    QImage m_grindLayer; // translucent cut stamp layer in image pixels
+    bool m_leaveGrindTrace{false};
 };
 
 #endif // IMAGEVIEWFRAME_H

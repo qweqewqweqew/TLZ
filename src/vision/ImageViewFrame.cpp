@@ -70,6 +70,7 @@ void ImageViewFrame::setImage(const QImage &image)
     m_image = image;
     if (m_image.isNull() || previousSize != m_image.size()) {
         resetView();
+        m_grindLayer = QImage();
     }
     // 同尺寸新帧也强制立即重绘，避免只靠 update() 被合并后看起来“没刷新”。
     repaint();
@@ -77,6 +78,7 @@ void ImageViewFrame::setImage(const QImage &image)
 
 void ImageViewFrame::clearImage()
 {
+    clearGrindLayer();
     setImage(QImage());
 }
 
@@ -124,7 +126,8 @@ void ImageViewFrame::clearToolPose()
     setToolPose(0.0, 0.0, 0.0, false);
 }
 
-void ImageViewFrame::setToolPose(double xMm, double yMm, double zMm, bool valid)
+void ImageViewFrame::setToolPose(double xMm, double yMm, double zMm, bool valid,
+                                 bool leaveGrindTrace)
 {
     if (!valid) {
         if (!m_toolPoseValid && !m_toolPoseMapped) {
@@ -163,10 +166,58 @@ void ImageViewFrame::setToolPose(double xMm, double yMm, double zMm, bool valid)
                 ++m_toolTrailCount;
             }
         }
+        if (leaveGrindTrace) {
+            stampGrindAtImageUv(m_toolPoseU, m_toolPoseV);
+        }
     }
-    if (!same) {
+    m_leaveGrindTrace = leaveGrindTrace && m_toolPoseMapped;
+    if (!same || leaveGrindTrace) {
         requestPoseUpdate();
     }
+}
+
+void ImageViewFrame::clearGrindLayer()
+{
+    if (m_grindLayer.isNull()) {
+        return;
+    }
+    m_grindLayer = QImage();
+    update();
+}
+
+void ImageViewFrame::ensureGrindLayer()
+{
+    if (m_image.isNull()) {
+        return;
+    }
+    if (m_grindLayer.size() != m_image.size()
+        || m_grindLayer.format() != QImage::Format_ARGB32_Premultiplied) {
+        m_grindLayer = QImage(m_image.size(), QImage::Format_ARGB32_Premultiplied);
+        m_grindLayer.fill(Qt::transparent);
+    }
+}
+
+void ImageViewFrame::stampGrindAtImageUv(double u, double v)
+{
+    if (m_image.isNull()) {
+        return;
+    }
+    ensureGrindLayer();
+    // Target ~20px on screen; convert via last draw scale when available.
+    double sx = 1.0;
+    if (!m_lastImageRect.isEmpty() && m_lastImageSize.width() > 0) {
+        sx = double(m_lastImageRect.width()) / double(m_lastImageSize.width());
+    }
+    double radiusImg = 10.0 / qMax(sx, 0.05); // ~20px screen diameter
+    radiusImg = qBound(8.0, radiusImg, 48.0);
+
+    QPainter gp(&m_grindLayer);
+    gp.setRenderHint(QPainter::Antialiasing, true);
+    QColor ink(Theme::kAccent);
+    ink.setAlpha(115); // ~45% — translucent so texture shows through
+    gp.setPen(Qt::NoPen);
+    gp.setBrush(ink);
+    gp.drawEllipse(QPointF(u, v), radiusImg, radiusImg);
 }
 
 void ImageViewFrame::setPathProgress(int completedPath, int currentPath)
@@ -512,6 +563,11 @@ void ImageViewFrame::paintEvent(QPaintEvent *event)
 
     m_lastImageRect = dstRect;
     m_lastImageSize = imgSize;
+
+    if (!m_grindLayer.isNull()) {
+        painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        painter.drawImage(dstRect, m_grindLayer);
+    }
 
     if (!m_paths.isEmpty()) {
         painter.save();

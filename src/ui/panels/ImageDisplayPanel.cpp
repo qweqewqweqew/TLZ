@@ -146,10 +146,18 @@ void ImageDisplayPanel::clearMillingPaths()
     }
 }
 
-void ImageDisplayPanel::setToolPose(double xMm, double yMm, double zMm, bool valid)
+void ImageDisplayPanel::setToolPose(double xMm, double yMm, double zMm, bool valid,
+                                    bool leaveGrindTrace)
 {
     if (m_imageArea) {
-        m_imageArea->setToolPose(xMm, yMm, zMm, valid);
+        m_imageArea->setToolPose(xMm, yMm, zMm, valid, leaveGrindTrace);
+    }
+}
+
+void ImageDisplayPanel::clearGrindLayer()
+{
+    if (m_imageArea) {
+        m_imageArea->clearGrindLayer();
     }
 }
 

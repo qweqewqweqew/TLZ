@@ -1,6 +1,7 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
+#include "bridge/MillingPathVM.h"
 #include <QHash>
 #include <QMainWindow>
 #include <QSet>
@@ -96,6 +97,8 @@ private:
 private slots:
     void onWaveformUpdate();
     void onSimulationProgressUpdate();
+    void onDemoPoseUpdate();
+    void resetDemoPoseAnimation();
 
 private:
     struct PendingScanFrame
@@ -144,6 +147,14 @@ private:
     float m_simulationProgress{0.0f};
     bool m_simulationRunning{false};
     bool m_debugFakeActive{false};
+    QVector<MillingPathVM> m_debugPaths;
+    int m_demoPathIndex{0};
+    double m_demoPathT{0.0}; // 0..1 along current segment
+    QTimer *m_demoPoseTimer{nullptr};
+    double m_debugXScaleMm{0.5};
+    double m_debugYScaleMm{0.5};
+    double m_debugXOffsetMm{0.0};
+    double m_debugYOffsetMm{0.0};
     bool m_databaseReady{false};
     bool m_stopScriptLaunched{false};
 };

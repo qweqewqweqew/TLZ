@@ -36,7 +36,9 @@ public:
     void clearMillingPaths();
 
     // Forward PLC tool pose / path progress onto the 2D ImageViewFrame.
-    void setToolPose(double xMm, double yMm, double zMm, bool valid);
+    void setToolPose(double xMm, double yMm, double zMm, bool valid,
+                     bool leaveGrindTrace = false);
+    void clearGrindLayer();
     void setPathProgress(int completedPath, int currentPath);
     void clearToolPose();
 

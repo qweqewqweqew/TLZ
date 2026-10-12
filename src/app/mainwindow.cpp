@@ -314,6 +314,9 @@ MainWindow::~MainWindow()
     if (m_simulationProgressTimer) {
         m_simulationProgressTimer->stop();
     }
+    if (m_demoPoseTimer) {
+        m_demoPoseTimer->stop();
+    }
     if (m_ros2Bridge) {
         m_ros2Bridge->stop();
     }
@@ -524,6 +527,10 @@ void MainWindow::buildMainView()
     m_simulationProgressTimer->setInterval(1000);
     connect(m_simulationProgressTimer, &QTimer::timeout,
             this, &MainWindow::onSimulationProgressUpdate);
+
+    m_demoPoseTimer = new QTimer(this);
+    m_demoPoseTimer->setInterval(50);
+    connect(m_demoPoseTimer, &QTimer::timeout, this, &MainWindow::onDemoPoseUpdate);
 
     startRos2Bridge();
     if (auto *settingsLayout = qobject_cast<QVBoxLayout *>(m_settingsPage->layout())) {
@@ -969,8 +976,9 @@ void MainWindow::startRos2Bridge()
                 if (m_taskFlowPanel) {
                     m_taskFlowPanel->setActivePath(int(feedback.currentPath));
                 }
-                if (m_imagePanel) {
+                if (m_imagePanel && !m_debugFakeActive) {
                     // Live tool tip on 2D view: same metric space as setMetricFrame hover.
+                    // Demo mode drives pose itself (with cut/rapid stamp control).
                     m_imagePanel->setToolPose(double(feedback.pathParams.xPos),
                                               double(feedback.pathParams.yPos),
                                               double(feedback.pathParams.zPos),
@@ -1023,17 +1031,33 @@ void MainWindow::startRos2Bridge()
             frame.intensity = intensity;
             frame.frameId = 9001;
             frame.intensityPixelFormat = CV_8UC1;
+            m_debugXScaleMm = frame.xScaleMm;
+            m_debugYScaleMm = frame.yScaleMm;
+            m_debugXOffsetMm = frame.xOffsetMm;
+            m_debugYOffsetMm = frame.yOffsetMm;
             if (m_imagePanel) {
+                m_imagePanel->clearGrindLayer();
                 m_imagePanel->updateScanFrame(frame);
-                m_imagePanel->showHeight3D();
+                m_imagePanel->show2D(); // grind demo is 2D-only
             }
 
+            // Build a serpentine cut/rapids pattern across the real TestImage.
+            const int w = int(frame.width);
+            const int h = int(frame.height);
+            const int x0 = qMax(40, w / 8);
+            const int x1 = qMin(w - 40, (w * 7) / 8);
+            const int y0 = qMax(40, h / 8);
+            const int y1 = qMin(h - 40, (h * 5) / 8);
+            const int yMid = (y0 + y1) / 2;
+
             QVector<MillingPathVM> paths;
-            paths.push_back({ 80,  60, 260,  60, 3000.0f, 12.0f,  0.0f, true  });
-            paths.push_back({260,  60, 260, 160, 3000.0f,  0.0f, 10.0f, false });
-            paths.push_back({260, 160,  80, 160, 2800.0f, -12.0f, 0.0f, true  });
-            paths.push_back({ 80, 160,  80, 260, 2800.0f,  0.0f, 10.0f, false });
-            paths.push_back({ 80, 260, 260, 260, 3200.0f, 15.0f,  0.0f, true  });
+            paths.push_back({ x0, y0, x1, y0, 3000.0f, 12.0f, 0.0f, true });   // cut
+            paths.push_back({ x1, y0, x1, yMid, 3000.0f, 0.0f, 10.0f, false }); // rapid
+            paths.push_back({ x1, yMid, x0, yMid, 2800.0f, -12.0f, 0.0f, true }); // cut
+            paths.push_back({ x0, yMid, x0, y1, 2800.0f, 0.0f, 10.0f, false }); // rapid
+            paths.push_back({ x0, y1, x1, y1, 3200.0f, 15.0f, 0.0f, true });   // cut
+            m_debugPaths = paths;
+            resetDemoPoseAnimation();
 
             emit m_ros2Bridge->millingPathsReceived(
                 /*taskId*/ 9001,
@@ -1045,23 +1069,13 @@ void MainWindow::startRos2Bridge()
             emit m_ros2Bridge->millingProgressReceived(
                 9001, 0.0f, /*finished*/ false, /*success*/ false, QString());
 
-            PlcFeedbackVM feedback;
-            feedback.statusWord = 12;
-            feedback.completedPath = 1;
-            feedback.currentPath = 2;
-            feedback.pathParams.xPos = 128.40f;
-            feedback.pathParams.yPos = 64.25f;
-            feedback.pathParams.zPos = -2.50f;
-            feedback.pathParams.xSpeed = 12.00f;
-            feedback.pathParams.ySpeed = 8.50f;
-            feedback.pathParams.zSpeed = -1.25f;
-            feedback.pathParams.spindleSpeed = 2860.0f;
-            feedback.pathParams.spindleTorque = 16.8f;
-            emit m_ros2Bridge->plcFeedbackReceived(feedback);
-
             m_currentT = 0.0;
             m_simulationProgress = 0.0f;
             setSimulationRunning(true);
+            if (m_demoPoseTimer) {
+                m_demoPoseTimer->start();
+            }
+            onDemoPoseUpdate(); // seed first pose immediately
 
             appendEventLog(
                 "INFO",
@@ -1072,7 +1086,13 @@ void MainWindow::startRos2Bridge()
             // 退出演示模式：清假图、任务条复位。
             setSimulationRunning(false);
             m_simulationProgress = 0.0f;
+            if (m_demoPoseTimer) {
+                m_demoPoseTimer->stop();
+            }
+            m_debugPaths.clear();
             if (m_imagePanel) {
+                m_imagePanel->clearToolPose();
+                m_imagePanel->clearGrindLayer();
                 m_imagePanel->show2D();
                 m_imagePanel->clearMillingPaths();
                 m_imagePanel->clearAlgorithmImage();
@@ -1331,6 +1351,9 @@ void MainWindow::setSimulationRunning(bool running)
     } else {
         m_waveformTimer->stop();
         m_simulationProgressTimer->stop();
+        if (m_demoPoseTimer) {
+            m_demoPoseTimer->stop();
+        }
         appendEventLog("INFO", "调试模拟数据已停止");
     }
 }
@@ -1373,3 +1396,62 @@ void MainWindow::onSimulationProgressUpdate()
         setSimulationRunning(false);
     }
 }
+
+void MainWindow::resetDemoPoseAnimation()
+{
+    m_demoPathIndex = 0;
+    m_demoPathT = 0.0;
+}
+
+void MainWindow::onDemoPoseUpdate()
+{
+    if (!m_debugFakeActive || m_debugPaths.isEmpty() || !m_imagePanel) {
+        if (m_demoPoseTimer) {
+            m_demoPoseTimer->stop();
+        }
+        return;
+    }
+
+    if (m_demoPathIndex >= m_debugPaths.size()) {
+        // Hold on last cut tip; progress timer will finish the task.
+        return;
+    }
+
+    const MillingPathVM &seg = m_debugPaths.at(m_demoPathIndex);
+    const double u = seg.uStart + (seg.uEnd - seg.uStart) * m_demoPathT;
+    const double v = seg.vStart + (seg.vEnd - seg.vStart) * m_demoPathT;
+    const double xMm = m_debugXOffsetMm + u * m_debugXScaleMm;
+    const double yMm = m_debugYOffsetMm + v * m_debugYScaleMm;
+    const double zMm = seg.doCut ? -2.5 : 5.0;
+    const bool leaveTrace = seg.doCut;
+
+    m_imagePanel->setToolPose(xMm, yMm, zMm, /*valid=*/true, leaveTrace);
+    m_imagePanel->setPathProgress(m_demoPathIndex, m_demoPathIndex + 1);
+
+    if (m_ros2Bridge) {
+        PlcFeedbackVM feedback;
+        feedback.statusWord = 12;
+        feedback.completedPath = quint16(m_demoPathIndex);
+        feedback.currentPath = quint16(m_demoPathIndex + 1);
+        feedback.pathParams.xPos = float(xMm);
+        feedback.pathParams.yPos = float(yMm);
+        feedback.pathParams.zPos = float(zMm);
+        feedback.pathParams.xSpeed = seg.xSpeed;
+        feedback.pathParams.ySpeed = seg.ySpeed;
+        feedback.pathParams.zSpeed = leaveTrace ? -1.25f : 0.0f;
+        feedback.pathParams.spindleSpeed = leaveTrace ? 2860.0f : 600.0f;
+        feedback.pathParams.spindleTorque = leaveTrace ? 16.8f : 2.0f;
+        emit m_ros2Bridge->plcFeedbackReceived(feedback);
+    }
+
+    // Advance ~14 image pixels per tick along the segment.
+    const double segLen = std::hypot(double(seg.uEnd - seg.uStart),
+                                     double(seg.vEnd - seg.vStart));
+    const double stepT = (segLen > 1.0) ? (14.0 / segLen) : 1.0;
+    m_demoPathT += stepT;
+    if (m_demoPathT >= 1.0) {
+        m_demoPathT = 0.0;
+        ++m_demoPathIndex;
+    }
+}
+
