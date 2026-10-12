@@ -5,6 +5,7 @@
 #include "ElaPushButton.h"
 #include "data/InspectionRepository.h"
 #include "app/UiHelpers.h"
+#include "app/Theme.h"
 
 #include <QAbstractItemView>
 #include <QComboBox>
@@ -58,154 +59,80 @@ QString formatDateTime(const QDateTime &dt)
     return dt.isValid() ? dt.toString("yyyy-MM-dd HH:mm:ss") : QStringLiteral("--");
 }
 
-const char *kDialogExtraStyle = R"(
-    QDialog {
-        background: #16202B;
-    }
-    #historyContent {
-        background: #16202B;
-    }
-    QTableWidget {
-        background: #182431;
-        color: #E4EAF0;
-        gridline-color: #2E3E4E;
-        border: 1px solid #2E3E4E;
-        border-radius: 6px;
-        alternate-background-color: #1B2836;
-        selection-background-color: #2D6F9F;
-        selection-color: #F1F5F9;
-    }
-    QTableWidget::item {
-        padding: 6px 8px;
-    }
-    QTableWidget::item:hover {
-        background: #223246;
-    }
-    QTableWidget::item:selected {
-        background: #2D6F9F;
-        color: #F7FBFF;
-    }
-    QSplitter::handle {
-        background: #22303D;
-    }
-    QSplitter::handle:hover {
-        background: #2D6F9F;
-    }
-    QScrollArea {
-        background: #131E28;
-        border: none;
-    }
-    QHeaderView::section {
-        background: #0E151D;
-        color: #DDE7F0;
-        padding: 6px 10px;
-        border: none;
-        border-right: 1px solid #2E3E4E;
-        border-bottom: 1px solid #2E3E4E;
-        font-weight: 600;
-    }
-    QTableCornerButton::section {
-        background: #0E151D;
-        border: 1px solid #2E3E4E;
-    }
-    QTabWidget::pane {
-        border: 1px solid #2E3E4E;
-        border-radius: 6px;
-        background: #182431;
-        top: -1px;
-    }
-    QTabBar::tab {
-        background: #131E28;
-        color: #B8C8D8;
-        padding: 6px 16px;
-        border: 1px solid #2E3E4E;
-        border-bottom: none;
-        border-top-left-radius: 4px;
-        border-top-right-radius: 4px;
-        margin-right: 2px;
-    }
-    QTabBar::tab:selected {
-        background: #182431;
-        color: #F1F5F9;
-    }
-    QDateEdit {
-        background: #101923;
-        color: #E6EEF5;
-        border: 1px solid #334353;
-        border-radius: 5px;
-        padding: 2px 6px;
-        min-height: 26px;
-    }
-    QDateEdit:disabled {
-        color: #4A5866;
-        background: #131C25;
-        border: 1px solid #263340;
-    }
-    QDateEdit::drop-down {
-        subcontrol-origin: padding;
-        subcontrol-position: right;
-        width: 18px;
-        border-left: 1px solid #2E3E4E;
-    }
-    QCalendarWidget QWidget {
-        alternate-background-color: #1B2836;
-        color: #E4EAF0;
-    }
-    QCalendarWidget QAbstractItemView:enabled {
-        background: #16202B;
-        color: #E4EAF0;
-        selection-background-color: #2D6F9F;
-        selection-color: #F1F5F9;
-    }
-    QScrollBar:vertical {
-        background: #101923;
-        width: 10px;
-        margin: 0;
-        border: none;
-    }
-    QScrollBar::handle:vertical {
-        background: #334353;
-        border-radius: 4px;
-        min-height: 30px;
-    }
-    QScrollBar::handle:vertical:hover {
-        background: #4A5C6E;
-    }
-    QScrollBar::add-line:vertical,
-    QScrollBar::sub-line:vertical {
-        background: none;
-        border: none;
-        height: 0;
-    }
-    QScrollBar::add-page:vertical,
-    QScrollBar::sub-page:vertical {
-        background: none;
-    }
-    QScrollBar:horizontal {
-        background: #101923;
-        height: 10px;
-        margin: 0;
-        border: none;
-    }
-    QScrollBar::handle:horizontal {
-        background: #334353;
-        border-radius: 4px;
-        min-width: 30px;
-    }
-    QScrollBar::handle:horizontal:hover {
-        background: #4A5C6E;
-    }
-    QScrollBar::add-line:horizontal,
-    QScrollBar::sub-line:horizontal {
-        background: none;
-        border: none;
-        width: 0;
-    }
-    QScrollBar::add-page:horizontal,
-    QScrollBar::sub-page:horizontal {
-        background: none;
-    }
-)";
+QString historyDialogExtraStyle()
+{
+    // Map former hard-coded palette onto Theme tokens so history page matches the shell.
+    QString css = QStringLiteral(
+        "QDialog { background: __PANEL__; }"
+        "#historyContent { background: __PANEL__; }"
+        "QTableWidget {"
+        "  background: __CTRL__; color: __TEXT__; gridline-color: __BORDER__;"
+        "  border: 1px solid __BORDER__; border-radius: 6px;"
+        "  alternate-background-color: __HOVER__;"
+        "  selection-background-color: __SEL__; selection-color: __TEXT__;"
+        "}"
+        "QTableWidget::item { padding: 6px 8px; }"
+        "QTableWidget::item:hover { background: __HOVER__; }"
+        "QTableWidget::item:selected { background: __SEL__; color: __TEXT__; }"
+        "QSplitter::handle { background: __HOVER__; }"
+        "QSplitter::handle:hover { background: __ACCENT__; }"
+        "QScrollArea { background: __WIN__; border: none; }"
+        "QHeaderView::section {"
+        "  background: __WIN__; color: __TEXT__; padding: 6px 10px; border: none;"
+        "  border-right: 1px solid __BORDER__; border-bottom: 1px solid __BORDER__; font-weight: 600;"
+        "}"
+        "QTableCornerButton::section { background: __WIN__; border: 1px solid __BORDER__; }"
+        "QTabWidget::pane {"
+        "  border: 1px solid __BORDER__; border-radius: 6px; background: __CTRL__; top: -1px;"
+        "}"
+        "QTabBar::tab {"
+        "  background: __WIN__; color: __TEXT2__; padding: 6px 16px;"
+        "  border: 1px solid __BORDER__; border-bottom: none;"
+        "  border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px;"
+        "}"
+        "QTabBar::tab:selected { background: __CTRL__; color: __TEXT__; }"
+        "QDateEdit {"
+        "  background: __WIN__; color: __TEXT__; border: 1px solid __BORDER__;"
+        "  border-radius: 5px; padding: 2px 6px; min-height: 26px;"
+        "}"
+        "QDateEdit:disabled { color: __MUTED__; background: __HOVER__; border: 1px solid __HOVER__; }"
+        "QDateEdit::drop-down {"
+        "  subcontrol-origin: padding; subcontrol-position: right; width: 18px;"
+        "  border-left: 1px solid __BORDER__;"
+        "}"
+        "QCalendarWidget QWidget { alternate-background-color: __HOVER__; color: __TEXT__; }"
+        "QCalendarWidget QAbstractItemView:enabled {"
+        "  background: __PANEL__; color: __TEXT__;"
+        "  selection-background-color: __SEL__; selection-color: __TEXT__;"
+        "}"
+        "QScrollBar:vertical { background: __WIN__; width: 10px; margin: 0; border: none; }"
+        "QScrollBar::handle:vertical { background: __BORDER__; border-radius: 4px; min-height: 30px; }"
+        "QScrollBar::handle:vertical:hover { background: __HOVER__; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
+        "  background: none; border: none; height: 0;"
+        "}"
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }"
+        "QScrollBar:horizontal { background: __WIN__; height: 10px; margin: 0; border: none; }"
+        "QScrollBar::handle:horizontal { background: __BORDER__; border-radius: 4px; min-width: 30px; }"
+        "QScrollBar::handle:horizontal:hover { background: __HOVER__; }"
+        "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {"
+        "  background: none; border: none; width: 0;"
+        "}"
+        "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; }"
+    );
+    css.replace(QStringLiteral("__PANEL__"), QLatin1String(Theme::kPanelBg));
+    css.replace(QStringLiteral("__CTRL__"), QLatin1String(Theme::kControlBg));
+    css.replace(QStringLiteral("__TEXT__"), QLatin1String(Theme::kTextPrimary));
+    css.replace(QStringLiteral("__BORDER__"), QLatin1String(Theme::kBorder));
+    css.replace(QStringLiteral("__HOVER__"), QLatin1String(Theme::kHoverBg));
+    css.replace(QStringLiteral("__SEL__"), QLatin1String(Theme::kSelectionBg));
+    css.replace(QStringLiteral("__ACCENT__"), QLatin1String(Theme::kAccent));
+    css.replace(QStringLiteral("__WIN__"), QLatin1String(Theme::kWindowBg));
+    css.replace(QStringLiteral("__TEXT2__"), QLatin1String(Theme::kTextSecondary));
+    css.replace(QStringLiteral("__MUTED__"), QLatin1String(Theme::kTextMuted));
+    return css;
+}
+
 
 void setupCompactTable(QTableWidget *table)
 {
@@ -267,7 +194,7 @@ HistoryDialog::HistoryDialog(QWidget *parent)
     setWindowFlags(Qt::Widget);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
-    setStyleSheet(mainWindowStyleSheet() + QString::fromUtf8(kDialogExtraStyle));
+    setStyleSheet(mainWindowStyleSheet() + historyDialogExtraStyle());
 
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);

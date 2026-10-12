@@ -1,6 +1,7 @@
 #include "ui/widgets/TelemetryPlotWidget.h"
 
 #include "app/UiHelpers.h"
+#include "app/Theme.h"
 #include "qcustomplot.h"
 
 #include <QEvent>
@@ -73,19 +74,19 @@ void TelemetryPlotWidget::setupPlot()
     limit->point2->setCoords(1, m_config.alarmValue);
     limit->setPen(QPen(m_config.alarmColor, 1, Qt::DashLine));
 
-    m_plot->setBackground(QColor("#202B37"));
-    m_plot->axisRect()->setBackground(QColor("#202B37"));
-    m_plot->xAxis->setBasePen(QPen(QColor("#334353")));
+    m_plot->setBackground(QColor(Theme::kCanvasBg));
+    m_plot->axisRect()->setBackground(QColor(Theme::kCanvasBg));
+    m_plot->xAxis->setBasePen(QPen(QColor(Theme::kBorder)));
     m_plot->xAxis->setTickPen(Qt::NoPen);
     m_plot->xAxis->setSubTickPen(Qt::NoPen);
     m_plot->xAxis->setTickLabels(false);
     m_plot->yAxis->setBasePen(QPen(m_config.color));
     m_plot->yAxis->setTickPen(QPen(m_config.color));
-    m_plot->yAxis->setSubTickPen(QPen(QColor("#2A3745")));
+    m_plot->yAxis->setSubTickPen(QPen(QColor(Theme::kDivider)));
     m_plot->yAxis->setTickLabelColor(m_config.color);
     m_plot->yAxis->setLabelColor(m_config.color);
-    m_plot->xAxis->grid()->setPen(QPen(QColor("#2A3745"), 1, Qt::DotLine));
-    m_plot->yAxis->grid()->setPen(QPen(QColor("#2A3745"), 1, Qt::DotLine));
+    m_plot->xAxis->grid()->setPen(QPen(QColor(Theme::kDivider), 1, Qt::DotLine));
+    m_plot->yAxis->grid()->setPen(QPen(QColor(Theme::kDivider), 1, Qt::DotLine));
     m_plot->yAxis->setLabel(m_config.unit);
 
     m_cursorLine = new QCPItemStraightLine(m_plot);
@@ -98,11 +99,15 @@ void TelemetryPlotWidget::setupPlot()
     m_timeLabel->setPositionAlignment(Qt::AlignTop | Qt::AlignHCenter);
     m_timeLabel->position->setType(QCPItemPosition::ptPlotCoords);
     m_timeLabel->position->setCoords(0, m_config.yMax);
-    m_timeLabel->setColor(QColor("#E4EAF0"));
+    m_timeLabel->setColor(QColor(Theme::kTextPrimary));
     m_timeLabel->setFont(QFont("Microsoft YaHei", 10));
     m_timeLabel->setPadding(QMargins(6, 3, 6, 3));
-    m_timeLabel->setBrush(QColor(32, 43, 55, 220));
-    m_timeLabel->setPen(QPen(QColor("#334353")));
+    {
+        QColor brush(Theme::kControlBg);
+        brush.setAlpha(220);
+        m_timeLabel->setBrush(brush);
+    }
+    m_timeLabel->setPen(QPen(QColor(Theme::kBorder)));
     m_timeLabel->setVisible(false);
 
     m_plot->setMouseTracking(true);

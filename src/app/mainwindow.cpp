@@ -339,68 +339,48 @@ void MainWindow::closeEvent(QCloseEvent *event)
         confirmDialog.setEscapeButton(confirmDialog.button(QMessageBox::No));
         confirmDialog.setButtonText(QMessageBox::Yes, QStringLiteral("退出"));
         confirmDialog.setButtonText(QMessageBox::No, QStringLiteral("取消"));
-        confirmDialog.setStyleSheet(R"(
-            QMessageBox {
-                background-color: #202B37;
-            }
-            QMessageBox QLabel {
-                color: #E6EEF5;
-                min-width: 360px;
-                font-size: 14px;
-            }
-        )");
+        confirmDialog.setStyleSheet(
+            QStringLiteral(
+                "QMessageBox { background-color: %1; }"
+                "QMessageBox QLabel { color: %2; min-width: 360px; font-size: 14px; }")
+                .arg(QLatin1String(Theme::kPanelBg), QLatin1String(Theme::kTextPrimary)));
         if (auto *exitButton = qobject_cast<QPushButton *>(
                 confirmDialog.button(QMessageBox::Yes))) {
             exitButton->setObjectName(QStringLiteral("exitConfirmButton"));
-            exitButton->setStyleSheet(R"(
-                QPushButton#exitConfirmButton {
-                    min-width: 90px;
-                    min-height: 34px;
-                    padding: 2px 14px;
-                    color: #FFFFFF;
-                    background-color: #8F2D2D;
-                    border: 1px solid #D05A5A;
-                    border-radius: 5px;
-                    font-size: 14px;
-                    font-weight: 600;
-                }
-                QPushButton#exitConfirmButton:hover {
-                    background-color: #A53A3A;
-                }
-                QPushButton#exitConfirmButton:pressed {
-                    background-color: #742323;
-                }
-                QPushButton#exitConfirmButton:focus {
-                    border: 2px solid #F09A9A;
-                }
-            )");
+            exitButton->setStyleSheet(
+                QStringLiteral(
+                    "QPushButton#exitConfirmButton {"
+                    "  min-width: 90px; min-height: 34px; padding: 2px 14px;"
+                    "  color: %1; background-color: %2; border: 1px solid %3;"
+                    "  border-radius: 5px; font-size: 14px; font-weight: 600;"
+                    "}"
+                    "QPushButton#exitConfirmButton:hover { background-color: %3; }"
+                    "QPushButton#exitConfirmButton:pressed { background-color: %4; }"
+                    "QPushButton#exitConfirmButton:focus { border: 2px solid %3; }")
+                    .arg(QLatin1String(Theme::kTextPrimary),
+                         QLatin1String(Theme::kErrorBg),
+                         QLatin1String(Theme::kStateError),
+                         QLatin1String(Theme::kPressedBg)));
         }
         if (auto *cancelButton = qobject_cast<QPushButton *>(
                 confirmDialog.button(QMessageBox::No))) {
             cancelButton->setObjectName(QStringLiteral("cancelExitButton"));
-            cancelButton->setStyleSheet(R"(
-                QPushButton#cancelExitButton {
-                    min-width: 90px;
-                    min-height: 34px;
-                    padding: 2px 14px;
-                    color: #FFFFFF;
-                    background-color: #245B83;
-                    border: 1px solid #4B9BD3;
-                    border-radius: 5px;
-                    font-size: 14px;
-                    font-weight: 600;
-                }
-                QPushButton#cancelExitButton:hover {
-                    background-color: #2D6F9F;
-                }
-                QPushButton#cancelExitButton:pressed {
-                    background-color: #1E4B6B;
-                }
-                QPushButton#cancelExitButton:focus {
-                    border: 2px solid #79C2F2;
-                }
-            )");
-        }
+            cancelButton->setStyleSheet(
+                QStringLiteral(
+                    "QPushButton#cancelExitButton {"
+                    "  min-width: 90px; min-height: 34px; padding: 2px 14px;"
+                    "  color: %1; background-color: %2; border: 1px solid %3;"
+                    "  border-radius: 5px; font-size: 14px; font-weight: 600;"
+                    "}"
+                    "QPushButton#cancelExitButton:hover { background-color: %4; }"
+                    "QPushButton#cancelExitButton:pressed { background-color: %5; }"
+                    "QPushButton#cancelExitButton:focus { border: 2px solid %3; }")
+                    .arg(QLatin1String(Theme::kTextPrimary),
+                         QLatin1String(Theme::kRunningBg),
+                         QLatin1String(Theme::kAccent),
+                         QLatin1String(Theme::kSelectionBg),
+                         QLatin1String(Theme::kPressedBg)));
+}
         if (confirmDialog.exec() != QMessageBox::Yes) {
             event->ignore();
             return;
@@ -1132,6 +1112,10 @@ void MainWindow::setDatabaseReady(bool ready)
 
 void MainWindow::persistTaskRecord(quint64 taskId)
 {
+    // Demo shortcut (Ctrl+T) uses task 9001 — never write fake tasks into SQLite.
+    if (m_debugFakeActive || taskId == 9001) {
+        return;
+    }
     if (!m_databaseReady) {
         m_pendingDatabaseTaskIds.insert(taskId);
         LOG("[DB] 数据库初始化中，暂存任务记录: task=%llu",
@@ -1155,6 +1139,11 @@ void MainWindow::persistScanFrame(quint64 taskId,
                                   bool hasRange,
                                   bool hasIntensity)
 {
+    // Demo frames must not hit SQLite.
+    if (m_debugFakeActive || taskId == 9001) {
+        return;
+    }
+
     if (!m_databaseReady) {
         m_pendingDatabaseTaskIds.insert(taskId);
         m_pendingDatabaseFrames.append({taskId,
