@@ -817,7 +817,7 @@ QWidget *HistoryDialog::createDetailWidget(int recordId)
 
     auto *host = new QWidget();
     host->setAutoFillBackground(true);
-    host->setStyleSheet("background:#131E28;");
+    host->setStyleSheet(QStringLiteral("background:%1;").arg(QLatin1String(Theme::kWindowBg)));
 
     auto *hostLayout = new QVBoxLayout(host);
     hostLayout->setContentsMargins(10, 6, 10, 10);
