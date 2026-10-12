@@ -958,16 +958,25 @@ void MainWindow::startRos2Bridge()
                 }
                 if (m_deviceStatusPanel) {
                     m_deviceStatusPanel->setBackendOnline(
-                        QStringLiteral("已收到后端发布的 PLC 反馈"));
+                        QStringLiteral("收到后端转发的 PLC 反馈"));
                     m_deviceStatusPanel->setPlcStatus(feedback.statusWord,
-                                                      feedback.faultCode);
+                                                     feedback.faultCode);
                 }
                 if (m_runDataPanel) {
                     m_runDataPanel->setPlcPathCounts(int(feedback.completedPath),
-                                                     int(feedback.currentPath));
+                                                    int(feedback.currentPath));
                 }
                 if (m_taskFlowPanel) {
                     m_taskFlowPanel->setActivePath(int(feedback.currentPath));
+                }
+                if (m_imagePanel) {
+                    // Live tool tip on 2D view: same metric space as setMetricFrame hover.
+                    m_imagePanel->setToolPose(double(feedback.pathParams.xPos),
+                                              double(feedback.pathParams.yPos),
+                                              double(feedback.pathParams.zPos),
+                                              /*valid=*/true);
+                    m_imagePanel->setPathProgress(int(feedback.completedPath),
+                                                  int(feedback.currentPath));
                 }
             });
 
@@ -1285,6 +1294,9 @@ void MainWindow::applyMillingProgress(quint64 taskId,
 
     m_activeTaskFinished = true;
     m_activeBackendTaskId = 0;
+    if (m_imagePanel) {
+        m_imagePanel->clearToolPose(); // drop bit disc + trail when task ends
+    }
 
     const QString level = success ? QStringLiteral("INFO")
                                   : QStringLiteral("ERROR");

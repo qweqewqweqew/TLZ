@@ -146,6 +146,27 @@ void ImageDisplayPanel::clearMillingPaths()
     }
 }
 
+void ImageDisplayPanel::setToolPose(double xMm, double yMm, double zMm, bool valid)
+{
+    if (m_imageArea) {
+        m_imageArea->setToolPose(xMm, yMm, zMm, valid);
+    }
+}
+
+void ImageDisplayPanel::setPathProgress(int completedPath, int currentPath)
+{
+    if (m_imageArea) {
+        m_imageArea->setPathProgress(completedPath, currentPath);
+    }
+}
+
+void ImageDisplayPanel::clearToolPose()
+{
+    if (m_imageArea) {
+        m_imageArea->clearToolPose();
+    }
+}
+
 void ImageDisplayPanel::setAlgorithmImagePath(const QString &path)
 {
     m_algorithmImagePath = path.trimmed();

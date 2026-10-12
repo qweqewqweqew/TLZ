@@ -36,6 +36,13 @@ public:
     void clearMillingPaths();
     void setMetricFrame(const PointCloudFrame &frame);
 
+    // PLC tool pose in millimetres (same metric space as hover readout).
+    // valid=false clears the marker so no ghost point remains.
+    void setToolPose(double xMm, double yMm, double zMm, bool valid);
+    // PLC path indices: currentPath is 1-based (0 = none); completedPath is count.
+    void setPathProgress(int completedPath, int currentPath);
+    void clearToolPose();
+
 signals:
     // 单击叠加路径线：0-based 下标。
     void millingPathClicked(int pathIndex);
@@ -60,6 +67,9 @@ private:
     QString coordinateTextAt(int column, int row) const;
     int hitTestPath(const QPointF &widgetPos) const;
     QString tooltipForPath(const MillingPathVM &path, int indexOneBased) const;
+    bool mapMetricToImage(double xMm, double yMm, double *uOut, double *vOut) const;
+    void recomputeToolPoseMapping();
+    void requestPoseUpdate();
 
 private:
     QImage m_image;
@@ -80,6 +90,23 @@ private:
     QPoint m_lastDragPosition;
     bool m_dragging{false};
     bool m_dragMoved{false};
+
+    bool m_toolPoseValid{false};
+    bool m_toolPoseMapped{false};
+    double m_toolPoseXMm{0.0};
+    double m_toolPoseYMm{0.0};
+    double m_toolPoseZMm{0.0};
+    double m_toolPoseU{0.0};
+    double m_toolPoseV{0.0};
+    int m_completedPathCount{0};
+    int m_currentPathOneBased{0};
+    qint64 m_lastPoseUpdateMs{0};
+    bool m_poseUpdatePending{false};
+    static constexpr int kToolTrailCapacity = 12;
+    QPointF m_toolTrailUvRing[kToolTrailCapacity];
+    int m_toolTrailCount{0};
+    int m_toolTrailNext{0}; // next write index in ring
+    QVector<QPointF> m_toolTrail; // widget-space scratch for paint
 };
 
 #endif // IMAGEVIEWFRAME_H

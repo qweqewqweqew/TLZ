@@ -35,6 +35,11 @@ public:
     void setMillingPaths(const QVector<MillingPathVM> &paths);
     void clearMillingPaths();
 
+    // Forward PLC tool pose / path progress onto the 2D ImageViewFrame.
+    void setToolPose(double xMm, double yMm, double zMm, bool valid);
+    void setPathProgress(int completedPath, int currentPath);
+    void clearToolPose();
+
     // 算法 JSON drawimage_path：读取标注图，供「算法图像」视图显示。
     void setAlgorithmImagePath(const QString &path);
     void clearAlgorithmImage();

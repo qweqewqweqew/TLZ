@@ -3,6 +3,9 @@
 #include "app/Theme.h"
 
 #include <QApplication>
+#include <QtGlobal>
+#include <QDateTime>
+#include <QMetaObject>
 #include <QEvent>
 #include <QFont>
 #include <QFontMetrics>
@@ -10,6 +13,8 @@
 #include <QPainter>
 #include <QPen>
 #include <QPointF>
+#include <QLineF>
+#include <QVector>
 #include <QRect>
 #include <QToolTip>
 #include <QWheelEvent>
@@ -105,10 +110,166 @@ void ImageViewFrame::clearMillingPaths()
 void ImageViewFrame::setMetricFrame(const PointCloudFrame &frame)
 {
     m_metricFrame = frame;
+    recomputeToolPoseMapping();
     if (m_hoverCoordinateValid) {
         updateHoverCoordinate(m_hoverWidgetPos);
     }
+    if (m_toolPoseValid) {
+        update();
+    }
 }
+
+void ImageViewFrame::clearToolPose()
+{
+    setToolPose(0.0, 0.0, 0.0, false);
+}
+
+void ImageViewFrame::setToolPose(double xMm, double yMm, double zMm, bool valid)
+{
+    if (!valid) {
+        if (!m_toolPoseValid && !m_toolPoseMapped) {
+            return;
+        }
+        m_toolPoseValid = false;
+        m_toolPoseMapped = false;
+        m_toolTrailCount = 0;
+        m_toolTrailNext = 0;
+        m_toolTrail.clear();
+        requestPoseUpdate();
+        return;
+    }
+
+    const bool same = m_toolPoseValid
+        && qFuzzyIsNull(m_toolPoseXMm - xMm)
+        && qFuzzyIsNull(m_toolPoseYMm - yMm)
+        && qFuzzyIsNull(m_toolPoseZMm - zMm);
+    m_toolPoseValid = true;
+    m_toolPoseXMm = xMm;
+    m_toolPoseYMm = yMm;
+    m_toolPoseZMm = zMm;
+    recomputeToolPoseMapping();
+    if (m_toolPoseMapped) {
+        // Fixed ring buffer (~0.4s at 30Hz) — never grows unbounded.
+        const QPointF uv(m_toolPoseU, m_toolPoseV);
+        bool accept = (m_toolTrailCount == 0);
+        if (!accept) {
+            const int last = (m_toolTrailNext + kToolTrailCapacity - 1) % kToolTrailCapacity;
+            accept = QLineF(m_toolTrailUvRing[last], uv).length() > 0.15;
+        }
+        if (accept) {
+            m_toolTrailUvRing[m_toolTrailNext] = uv;
+            m_toolTrailNext = (m_toolTrailNext + 1) % kToolTrailCapacity;
+            if (m_toolTrailCount < kToolTrailCapacity) {
+                ++m_toolTrailCount;
+            }
+        }
+    }
+    if (!same) {
+        requestPoseUpdate();
+    }
+}
+
+void ImageViewFrame::setPathProgress(int completedPath, int currentPath)
+{
+    const int completed = qMax(0, completedPath);
+    const int current = qMax(0, currentPath);
+    if (completed == m_completedPathCount && current == m_currentPathOneBased) {
+        return;
+    }
+    m_completedPathCount = completed;
+    m_currentPathOneBased = current;
+    requestPoseUpdate();
+}
+
+void ImageViewFrame::requestPoseUpdate()
+{
+    // PLC can be high-rate; Qt already coalesces update() into one paint per event-loop pass.
+    // Still gate hard repaints to ~30 Hz so we do not flood when the event loop is idle.
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (m_lastPoseUpdateMs > 0 && (now - m_lastPoseUpdateMs) < 33) {
+        if (!m_poseUpdatePending) {
+            m_poseUpdatePending = true;
+            QMetaObject::invokeMethod(this, [this]() {
+                m_poseUpdatePending = false;
+                m_lastPoseUpdateMs = QDateTime::currentMSecsSinceEpoch();
+                update();
+            }, Qt::QueuedConnection);
+        }
+        return;
+    }
+    m_lastPoseUpdateMs = now;
+    m_poseUpdatePending = false;
+    update();
+}
+
+void ImageViewFrame::recomputeToolPoseMapping()
+{
+    m_toolPoseMapped = false;
+    if (!m_toolPoseValid) {
+        return;
+    }
+    double u = 0.0;
+    double v = 0.0;
+    if (mapMetricToImage(m_toolPoseXMm, m_toolPoseYMm, &u, &v)) {
+        m_toolPoseU = u;
+        m_toolPoseV = v;
+        m_toolPoseMapped = true;
+    }
+}
+
+bool ImageViewFrame::mapMetricToImage(double xMm, double yMm, double *uOut, double *vOut) const
+{
+    if (!uOut || !vOut) {
+        return false;
+    }
+    if (!m_metricFrame.hasMetricGeometry || m_metricFrame.width == 0 || m_metricFrame.height == 0) {
+        return false;
+    }
+    if (qFuzzyIsNull(m_metricFrame.xScaleMm)) {
+        return false;
+    }
+
+    const double u = (xMm - m_metricFrame.xOffsetMm) / m_metricFrame.xScaleMm;
+    double v = 0.0;
+    const int height = int(m_metricFrame.height);
+    const bool hasEncoder = m_metricFrame.encoderResolutionMm > 0.0
+        && m_metricFrame.encoderValues.size() == height;
+    if (hasEncoder) {
+        // Find row whose metric Y is closest to yMm (same formula as hover readout).
+        double bestDist = 1.0e100;
+        int bestRow = -1;
+        const qint32 enc0 = m_metricFrame.encoderValues.first();
+        for (int row = 0; row < height; ++row) {
+            const double y = m_metricFrame.yOffsetMm
+                + double(qint64(m_metricFrame.encoderValues[row]) - qint64(enc0))
+                    * m_metricFrame.encoderResolutionMm;
+            const double d = std::abs(y - yMm);
+            if (d < bestDist) {
+                bestDist = d;
+                bestRow = row;
+            }
+        }
+        if (bestRow < 0) {
+            return false;
+        }
+        v = double(bestRow);
+    } else {
+        if (qFuzzyIsNull(m_metricFrame.yScaleMm)) {
+            return false;
+        }
+        v = (yMm - m_metricFrame.yOffsetMm) / m_metricFrame.yScaleMm;
+    }
+
+    if (u < -0.5 || v < -0.5
+        || u > double(m_metricFrame.width) - 0.5
+        || v > double(m_metricFrame.height) - 0.5) {
+        return false;
+    }
+    *uOut = u;
+    *vOut = v;
+    return true;
+}
+
 
 QRectF ImageViewFrame::imageViewportRect() const
 {
@@ -357,6 +518,9 @@ void ImageViewFrame::paintEvent(QPaintEvent *event)
         painter.setRenderHint(QPainter::Antialiasing, true);
         painter.setClipRect(dstRect.intersected(QRectF(area)));
 
+        const bool useProgress = (m_completedPathCount > 0 || m_currentPathOneBased > 0);
+        const int activeIndex = m_currentPathOneBased > 0 ? m_currentPathOneBased - 1 : -1;
+
         for (int i = 0; i < m_paths.size(); ++i) {
             const auto &p = m_paths[i];
             const QPointF a = mapImageToWidget(p.uStart, p.vStart);
@@ -364,20 +528,90 @@ void ImageViewFrame::paintEvent(QPaintEvent *event)
 
             const bool hovered = (i == m_hoveredPathIndex);
             QPen pen;
-            if (p.doCut) {
+            if (useProgress) {
+                if (i < m_completedPathCount) {
+                    QColor done(Theme::kTextMuted);
+                    done.setAlpha(160);
+                    pen.setColor(done);
+                    pen.setWidth(kMoveLineWidth);
+                } else if (i == activeIndex) {
+                    pen.setColor(QColor(Theme::kRealtime));
+                    pen.setWidth(kCutLineWidth + 1);
+                } else {
+                    QColor pending(Theme::kAccent);
+                    pending.setAlpha(110);
+                    pen.setColor(pending);
+                    pen.setWidth(kMoveLineWidth);
+                }
+                if (hovered) {
+                    pen.setWidth(pen.width() + 1);
+                }
+            } else if (p.doCut) {
                 pen.setColor(hovered ? kCutHoverColor : kCutColor);
                 pen.setWidth(hovered ? kCutLineWidth + 1 : kCutLineWidth);
-                pen.setStyle(Qt::SolidLine);
             } else {
                 pen.setColor(hovered ? kMoveHoverColor : kMoveColor);
                 pen.setWidth(hovered ? kMoveLineWidth + 1 : kMoveLineWidth);
-                pen.setStyle(Qt::SolidLine);
             }
+            pen.setStyle(Qt::SolidLine);
             pen.setCapStyle(Qt::RoundCap);
             painter.setPen(pen);
             painter.drawLine(a, b);
         }
 
+        painter.restore();
+    }
+
+    // Tool pose marker (PLC XYZ -> same metric mapping as hover).
+    if (m_toolPoseValid && m_toolPoseMapped && !dstRect.isEmpty()) {
+        const double sx = double(m_lastImageRect.width()) / double(m_lastImageSize.width());
+        const double sy = double(m_lastImageRect.height()) / double(m_lastImageSize.height());
+        m_toolTrail.clear();
+        m_toolTrail.reserve(m_toolTrailCount);
+        const int start = (m_toolTrailNext - m_toolTrailCount + kToolTrailCapacity)
+            % kToolTrailCapacity;
+        for (int i = 0; i < m_toolTrailCount; ++i) {
+            const QPointF &uv = m_toolTrailUvRing[(start + i) % kToolTrailCapacity];
+            m_toolTrail.push_back(QPointF(
+                m_lastImageRect.x() + uv.x() * sx,
+                m_lastImageRect.y() + uv.y() * sy));
+        }
+        const QPointF tip(
+            m_lastImageRect.x() + m_toolPoseU * sx,
+            m_lastImageRect.y() + m_toolPoseV * sy);
+
+        // Soft trail (about 0.4s of recent tips) then current bit disc.
+        painter.save();
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setClipRect(dstRect.intersected(QRectF(area)));
+        const QRectF drawBounds = dstRect.adjusted(-20, -20, 20, 20);
+        constexpr double kBitRadius = 7.5; // ~15px diameter
+        for (int i = 0; i < m_toolTrail.size(); ++i) {
+            const QPointF &pt = m_toolTrail.at(i);
+            if (!drawBounds.contains(pt)) {
+                continue;
+            }
+            const double age = (m_toolTrail.size() <= 1)
+                ? 1.0
+                : double(i + 1) / double(m_toolTrail.size());
+            QColor trail(Theme::kAccent);
+            trail.setAlpha(int(191 * age * 0.45));
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(trail);
+            painter.drawEllipse(pt, kBitRadius * 0.85, kBitRadius * 0.85);
+        }
+        if (drawBounds.contains(tip)) {
+            QColor bit(Theme::kAccent);
+            bit.setAlpha(191); // 75% opacity
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(bit);
+            painter.drawEllipse(tip, kBitRadius, kBitRadius);
+            // Tiny realtime center for alignment; keep subordinate to the disc.
+            QColor core(Theme::kRealtime);
+            core.setAlpha(220);
+            painter.setBrush(core);
+            painter.drawEllipse(tip, 2.0, 2.0);
+        }
         painter.restore();
     }
 
