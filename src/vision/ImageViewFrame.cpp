@@ -98,6 +98,10 @@ void ImageViewFrame::setOverlayText(const QString &text)
 void ImageViewFrame::setMillingPaths(const QVector<MillingPathVM> &paths)
 {
     m_paths = paths;
+    // Progress indices refer to the previous path set; keeping them would grey out
+    // the first paths of a new task until the PLC reports on it.
+    m_completedPathCount = 0;
+    m_currentPathOneBased = 0;
     m_hoveredPathIndex = -1;
     m_tooltipPathIndex = -1;
     QToolTip::hideText();
@@ -107,6 +111,8 @@ void ImageViewFrame::setMillingPaths(const QVector<MillingPathVM> &paths)
 void ImageViewFrame::clearMillingPaths()
 {
     m_paths.clear();
+    m_completedPathCount = 0;
+    m_currentPathOneBased = 0;
     m_hoveredPathIndex = -1;
     m_tooltipPathIndex = -1;
     QToolTip::hideText();
