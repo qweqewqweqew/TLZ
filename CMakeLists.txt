@@ -304,6 +304,12 @@ endforeach()
 
 get_filename_component(_hikvision_library_dir "${HIKVISION_HCNETSDK_LIBRARY}" DIRECTORY)
 file(GLOB _hikvision_runtime_dlls "${_hikvision_library_dir}/*.dll")
+if(WIN32 AND NOT _hikvision_runtime_dlls)
+    message(WARNING
+        "HCNetSDK 目录里没有 .dll：${_hikvision_library_dir}\n"
+        "能编译链接，但运行时相机实时预览会加载失败。请把 SDK 的 HCNetSDK.dll、HCCore.dll、"
+        "PlayCtrl.dll 等运行库和 HCNetSDKCom/ 目录放进该目录后重新配置。")
+endif()
 # ninja 生成的 post-build.bat 按系统代码页解析，中文「库文件」会乱码导致
 # copy_if_different 失败。拷贝改走 cmake -P，路径只出现在 UTF-8 脚本里。
 set(_hikvision_copy_script "${CMAKE_CURRENT_BINARY_DIR}/copy_hikvision_runtime.cmake")
