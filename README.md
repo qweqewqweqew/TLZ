@@ -23,36 +23,46 @@
 
 ## 注意事项
 
-### 急停（未完成）
+### 急停（软件急停，需后端配合）
 
-标题栏「急停」**当前不会向 PLC 下发急停**。双击后只有 toast 和事件日志提示。关闭窗口时会运行 `config/stop_all.bat`（对相关进程执行 `taskkill`），用于停止节点进程，**不是**闩锁式机床/PLC 急停。PLC 急停链路尚未实现，正式产线前需补齐设计与联调。
+双击标题栏「急停」会向 ROS 2 topic `plc/emergency_stop`（`std_msgs/Bool`，`true`，reliable）发送急停指令，并按订阅情况提示：
+
+| 情况 | 界面提示 |
+|------|----------|
+| 有节点订阅 | 「急停指令已发送」 |
+| 无节点订阅 | 「急停可能未生效」，要求立即使用硬件急停 |
+| ROS 2 未运行 | 「急停未发送」，要求立即使用硬件急停 |
+
+**后端（CopperMilling / milling_controller）需要订阅 `plc/emergency_stop` 并写 PLC 停机位**，否则指令无人接收。软件急停不能替代硬件急停回路。关闭窗口时运行的 `stop_all.bat` 只是 `taskkill` 节点进程，也不是机床急停。
 
 ### Ctrl+T / Ctrl+Shift+T（演示假数据）
-
-生产构建中仍保留调试快捷键：
 
 - `Ctrl+T`：切换演示模式。加载 `TestImage`，在 2D 图上沿蛇形路径动画显示刀具与磨削轨迹，并注入假的 PLC 反馈（task 9001）。演示期间真实扫描帧不会刷新画面
 - `Ctrl+Shift+T`：在演示模式下模拟任务完成
 
-演示期间的任务/扫描帧不会写入 SQLite（只按演示开关判断，真实的 task 9001 照常写库）。正式发布前仍建议用编译宏或配置开关关掉，避免误触。
+演示期间的任务/扫描帧不会写入 SQLite（只按演示开关判断，真实的 task 9001 照常写库）。
 
-### config/start_all.bat（需保留，路径写死）
+快捷键由 CMake 选项 `MZ_ENABLE_DEMO_MODE` 控制，默认开启。现场包用 `build.bat --no-demo` 构建即可去掉这两个快捷键。
 
-一键拉起算法 / 相机 / 后台节点，**请勿删除**。当前脚本内路径与参数多为硬编码，后续应外置到配置：
+### config/start_all.bat（路径可覆盖）
 
-| 项 | 当前硬编码示例 |
-|----|----------------|
-| 算法 | `D:\robot_client_move_test` |
-| 相机节点 | `D:\Camera_Node` |
-| 后台 | `D:\CopperMilling` |
-| ROS 前缀 | `C:\opt\ros\foxy\x64` |
-| PLC | `plc_ip:=192.168.1.60`（rack/slot 等） |
+一键拉起算法 / 相机 / 后台节点，**请勿删除**。UI 侧将脚本 **exit code 0** 视为启动成功。
 
-UI 侧将脚本 **exit code 0** 视为启动成功。换机部署前请先改这些路径。
+换机时不要改脚本本身：把 `start_all.local.bat.example` 复制为同目录下的 `start_all.local.bat`，只改不同的项（该文件不进 git，`build.bat` 也不会覆盖它）。也可以直接设置同名环境变量。
+
+| 变量 | 默认值 |
+|------|--------|
+| `MZ_ALGO_ROOT` | `D:\robot_client_move_test` |
+| `MZ_CAMERA_DIR` | `D:\Camera_Node` |
+| `MZ_BACKEND_ROOT` | `D:\CopperMilling` |
+| `MZ_ROS_PREFIX` | `C:\opt\ros\foxy\x64` |
+| `MZ_OPENCV_BIN` | `C:\opencv\build\x64\vc15\bin` |
+| `MZ_PLC_IP` | `192.168.1.60` |
+| `MZ_MILLING_ARGS` | 完整覆盖 milling_controller 参数（设置后 `MZ_PLC_IP` 不生效） |
 
 ### 海康 HCNetSDK 运行库
 
-CMake 从 `third_party/HCNetSDK/库文件` 链接 `.lib`，并在 POST_BUILD 用 `*.dll` glob（含 `HCNetSDKCom/`）拷到输出目录。**仓库里目前只有 `.lib`，没有 `.dll`**，需要手动把 SDK 的运行库放进该目录，否则相机实时预览会在加载时失败。
+CMake 从 `third_party/HCNetSDK/库文件` 链接 `.lib`，并在 POST_BUILD 用 `*.dll` glob（含 `HCNetSDKCom/`）拷到输出目录。**仓库里目前只有 `.lib`，没有 `.dll`**：`.gitignore` 里的全局 `*.dll` 规则把它们挡掉了。需要手动把 SDK 的运行库放进该目录，否则相机实时预览会在加载时失败；缺 DLL 时 CMake 配置阶段会给出警告。
 
 ## 构建
 
@@ -60,6 +70,8 @@ Windows + VS2019 + Qt 5.15.2（msvc2019_64）+ ROS 2 Foxy + OpenCV：
 
 ```bat
 build.bat
+REM 现场包（去掉 Ctrl+T 演示）：
+build.bat --no-demo
 ```
 
 产物在 `build\Release\MzTLZ.exe`，打包目录为 `deploy\MzTLZ`。注意 `build.bat` 会用 `config/` 里的 ini 覆盖 `deploy\MzTLZ` 中的同名文件（`backend_params.ini` 除外）。
