@@ -44,16 +44,23 @@ if not errorlevel 1 (
 
 set "VS_SETUP="
 set "CMAKE_GENERATOR="
-call :pick_vs "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat" "Visual Studio 17 2022"
-call :pick_vs "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat" "Visual Studio 17 2022"
-call :pick_vs "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" "Visual Studio 17 2022"
-call :pick_vs "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" "Visual Studio 17 2022"
-call :pick_vs "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\Tools\VsDevCmd.bat" "Visual Studio 16 2019"
-call :pick_vs "C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional\Common7\Tools\VsDevCmd.bat" "Visual Studio 16 2019"
-call :pick_vs "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\VsDevCmd.bat" "Visual Studio 16 2019"
-call :pick_vs "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\Common7\Tools\VsDevCmd.bat" "Visual Studio 16 2019"
+if defined MZ_VS_SETUP set "VS_SETUP=%MZ_VS_SETUP%"
+if defined MZ_CMAKE_GENERATOR set "CMAKE_GENERATOR=%MZ_CMAKE_GENERATOR%"
+if not defined VS_SETUP call :find_vs
+if defined VS_SETUP if not exist "%VS_SETUP%" (
+    echo [error] VsDevCmd.bat does not exist: %VS_SETUP%
+    set "VS_SETUP="
+)
 if not defined VS_SETUP (
-    echo [error] Visual Studio 2019 or 2022 was not found.
+    echo [error] No Visual Studio with the C++ toolset was found.
+    echo        Install the "Desktop development with C++" workload,
+    echo        or set MZ_VS_SETUP in build.local.bat to the full path of VsDevCmd.bat.
+    goto fail
+)
+if not defined CMAKE_GENERATOR (
+    echo [error] Could not choose a CMake generator for:
+    echo        %VS_SETUP%
+    echo        Set MZ_CMAKE_GENERATOR in build.local.bat, for example "Visual Studio 17 2022".
     goto fail
 )
 
@@ -239,6 +246,33 @@ echo [success] deploy package: %DEPLOY%\MzTLZ.exe
 dir "%DEPLOY%\MzTLZ.exe"
 if "%NO_PAUSE%"=="0" pause
 exit /b 0
+
+:find_vs
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if not exist "%VSWHERE%" set "VSWHERE=%ProgramFiles%\Microsoft Visual Studio\Installer\vswhere.exe"
+REM Prefer 2022, then 2019. This tree links Qt 5.15 msvc2019; 2026 is the last resort.
+call :vswhere_range "[17.0,18.0)" "Visual Studio 17 2022"
+call :vswhere_range "[16.0,17.0)" "Visual Studio 16 2019"
+call :vswhere_range "[18.0,19.0)" "Visual Studio 18 2026"
+if defined VS_SETUP goto :eof
+call :pick_vs "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat" "Visual Studio 17 2022"
+call :pick_vs "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat" "Visual Studio 17 2022"
+call :pick_vs "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" "Visual Studio 17 2022"
+call :pick_vs "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" "Visual Studio 17 2022"
+call :pick_vs "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\Tools\VsDevCmd.bat" "Visual Studio 16 2019"
+call :pick_vs "C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional\Common7\Tools\VsDevCmd.bat" "Visual Studio 16 2019"
+call :pick_vs "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\VsDevCmd.bat" "Visual Studio 16 2019"
+call :pick_vs "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\Common7\Tools\VsDevCmd.bat" "Visual Studio 16 2019"
+goto :eof
+
+:vswhere_range
+if defined VS_SETUP goto :eof
+if not exist "%VSWHERE%" goto :eof
+for /f "usebackq delims=" %%I in (`"%VSWHERE%" -latest -products * -version "%~1" -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2^>nul`) do (
+    set "VS_SETUP=%%I\Common7\Tools\VsDevCmd.bat"
+    set "CMAKE_GENERATOR=%~2"
+)
+goto :eof
 
 :pick_vs
 if defined VS_SETUP goto :eof
