@@ -151,6 +151,7 @@ copy /Y "%SRC%\config\hik_camera.ini" "%DEPLOY%\" >nul
 copy /Y "%SRC%\config\node_launcher.ini" "%DEPLOY%\" >nul
 copy /Y "%SRC%\config\display.ini" "%DEPLOY%\" >nul
 copy /Y "%SRC%\config\start_all.bat" "%DEPLOY%\" >nul
+copy /Y "%SRC%\config\start_all.local.bat.example" "%DEPLOY%\" >nul
 copy /Y "%SRC%\config\stop_all.bat" "%DEPLOY%\" >nul
 copy /Y "%SRC%\config\run.bat" "%DEPLOY%\" >nul
 

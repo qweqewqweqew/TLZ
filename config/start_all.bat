@@ -10,21 +10,32 @@ REM matching so milling_controller never receives plc/feedback_ack.
 set "NO_PAUSE=0"
 if /I "%~1"=="--no-pause" set "NO_PAUSE=1"
 
-set "ALGO_ROOT=D:\robot_client_move_test"
+REM Site paths: put overrides in start_all.local.bat next to this script
+REM (see start_all.local.bat.example) or set the MZ_* environment variables.
+if exist "%~dp0start_all.local.bat" call "%~dp0start_all.local.bat"
+if not defined MZ_ALGO_ROOT set "MZ_ALGO_ROOT=D:\robot_client_move_test"
+if not defined MZ_CAMERA_DIR set "MZ_CAMERA_DIR=D:\Camera_Node"
+if not defined MZ_BACKEND_ROOT set "MZ_BACKEND_ROOT=D:\CopperMilling"
+if not defined MZ_ROS_PREFIX set "MZ_ROS_PREFIX=C:\opt\ros\foxy\x64"
+if not defined MZ_OPENCV_BIN set "MZ_OPENCV_BIN=C:\opencv\build\x64\vc15\bin"
+if not defined MZ_PLC_IP set "MZ_PLC_IP=192.168.1.60"
+if not defined MZ_MILLING_ARGS set "MZ_MILLING_ARGS=-p plc_ip:=%MZ_PLC_IP% -p plc_rack:=0 -p plc_slot:=1 -p task_id_base:=1 -p task_count:=1"
+
+set "ALGO_ROOT=%MZ_ALGO_ROOT%"
 set "ALGO_EXE=%ALGO_ROOT%\copper_node.exe"
-set "CAMERA_DIR=D:\Camera_Node"
+set "CAMERA_DIR=%MZ_CAMERA_DIR%"
 set "CAMERA_IFACES=%CAMERA_DIR%\install\mz_interfaces"
 set "CAMERA_SENSOR=%CAMERA_DIR%\install\mz_sensor"
 set "CAMERA_RUNTIME=%CAMERA_SENSOR%\lib\mz_sensor"
 set "CAMERA_EXE=%CAMERA_RUNTIME%\camera_node.exe"
 set "CAMERA_CONFIG=%CAMERA_SENSOR%\share\mz_sensor\config\camera_node.yaml"
 set "CAMERA_SICK_CSV=%CAMERA_DIR%\mz_sensor\config\Configuration-io.csv"
-set "BACKEND_ROOT=D:\CopperMilling"
+set "BACKEND_ROOT=%MZ_BACKEND_ROOT%"
 set "BACKEND_EXE=%BACKEND_ROOT%\install\copper_milling\lib\copper_milling\milling_controller.exe"
 set "BACKEND_LOCAL_SETUP=%BACKEND_ROOT%\install\local_setup.bat"
-set "ROS_PREFIX=C:\opt\ros\foxy\x64"
+set "ROS_PREFIX=%MZ_ROS_PREFIX%"
 set "ROS_LOCAL_SETUP=%ROS_PREFIX%\local_setup.bat"
-set "MILLING_ARGS=-p plc_ip:=192.168.1.60 -p plc_rack:=0 -p plc_slot:=1 -p task_id_base:=1 -p task_count:=1"
+set "MILLING_ARGS=%MZ_MILLING_ARGS%"
 
 echo ========================================
 echo  Copper milling one-click start
@@ -96,7 +107,7 @@ call :wait 5
 echo.
 
 echo [3/3] starting backend node milling_controller
-start "milling_controller" cmd /c "title milling_controller && cd /d %BACKEND_ROOT% && set AMENT_PREFIX_PATH=& set COLCON_PREFIX_PATH=& set CMAKE_PREFIX_PATH=& set PATH=C:\opencv\build\x64\vc15\bin;%PATH% && call %ROS_LOCAL_SETUP% && call %BACKEND_LOCAL_SETUP% && %BACKEND_EXE% --ros-args %MILLING_ARGS%"
+start "milling_controller" cmd /c "title milling_controller && cd /d %BACKEND_ROOT% && set AMENT_PREFIX_PATH=& set COLCON_PREFIX_PATH=& set CMAKE_PREFIX_PATH=& set PATH=%MZ_OPENCV_BIN%;%PATH% && call %ROS_LOCAL_SETUP% && call %BACKEND_LOCAL_SETUP% && %BACKEND_EXE% --ros-args %MILLING_ARGS%"
 
 exit /b 0
 
@@ -107,5 +118,6 @@ goto :eof
 
 :fail
 echo.
+echo Paths can be changed in %~dp0start_all.local.bat (see start_all.local.bat.example).
 if not "%NO_PAUSE%"=="1" pause
 exit /b 1

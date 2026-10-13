@@ -93,6 +93,9 @@ CMakeLists.txt.user*
 !/ElaWidgetTools-main/ElaWidgetTools-main/ElaWidgetTools/
 !/ElaWidgetTools-main/ElaWidgetTools-main/ElaWidgetTools/**
 
+# Machine-specific node paths (template: config/start_all.local.bat.example)
+start_all.local.bat
+
 # Local scratch scripts and patch archives
 tmp_*
 *.tgz
