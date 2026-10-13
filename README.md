@@ -15,7 +15,8 @@
 
 - 收到 `plc/feedback` 后，2D 图上用半透明圆点显示 `path_params.x_pos / y_pos` 对应的位置，并带约 0.4 s 的拖尾
 - 映射使用当前扫描帧的 `scan_geometry`（`x_offset_mm` / `x_scale_mm`，有编码器值时按行查找 Y）；没有几何信息或点落在图外时不显示
-- 路径线按 PLC `completed_path` / `current_path` 着色：已完成为灰色，当前为黄色，未执行为淡蓝色
+- 路径线按 PLC `completed_path` / `current_path` 着色：已完成为灰色，当前为黄色，未执行为淡蓝色；下发新路径或清空路径时进度归零
+- 没有进行中的任务时，PLC 反馈不会显示刀具圆点；圆点重绘限制在约 30 Hz
 - 磨削轨迹（半透明笔刷）目前只在 Ctrl+T 演示模式中绘制
 
 前提：PLC 坐标与扫描图坐标处于同一坐标系（mm）。若两者之间有标定偏移，圆点会整体偏移或不显示。
@@ -33,7 +34,7 @@
 - `Ctrl+T`：切换演示模式。加载 `TestImage`，在 2D 图上沿蛇形路径动画显示刀具与磨削轨迹，并注入假的 PLC 反馈（task 9001）。演示期间真实扫描帧不会刷新画面
 - `Ctrl+Shift+T`：在演示模式下模拟任务完成
 
-演示期间及 task 9001 的任务/扫描帧不会写入 SQLite。正式发布前仍建议用编译宏或配置开关关掉，避免误触。
+演示期间的任务/扫描帧不会写入 SQLite（只按演示开关判断，真实的 task 9001 照常写库）。正式发布前仍建议用编译宏或配置开关关掉，避免误触。
 
 ### config/start_all.bat（需保留，路径写死）
 
@@ -65,9 +66,22 @@ build.bat
 
 `mz_interfaces` 默认从 `../Camera_Node/install/mz_interfaces` 查找，可用 `MZ_INTERFACES_PREFIX` 覆盖。
 
+## 测试
+
+`tests/` 是独立的 Qt Test 工程，只依赖 Qt5 Core/Gui/Widgets/Test（不需要 ROS、HCNetSDK），覆盖 `ImageViewFrame` 的路径进度、刀具重绘节流和磨削笔宽缩放：
+
+```bat
+cmake -S tests -B build-tests
+cmake --build build-tests --config Release
+ctest --test-dir build-tests -C Release
+```
+
+测试以 `-platform offscreen` 运行，可在无显示环境（CI）执行。
+
 ## 布局速览
 
 - `src/` / `include/`：`app`、`bridge`、`camera`、`data`、`ui`、`vision`
 - `config/`：ini 与 start/stop 脚本
 - `third_party/`：`qcustomplot`、`HCNetSDK`
 - `cmake/`：辅助 CMake 模块
+- `tests/`：独立的 Qt Test 工程
