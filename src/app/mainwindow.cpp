@@ -42,6 +42,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRandomGenerator>
 #include <QShortcut>
 #include <QStackedWidget>
 #include <QTimer>
@@ -350,6 +351,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         if (auto *exitButton = qobject_cast<QPushButton *>(
                 confirmDialog.button(QMessageBox::Yes))) {
             exitButton->setObjectName(QStringLiteral("exitConfirmButton"));
+            const QColor exitColor(Theme::kStateError);
             exitButton->setStyleSheet(
                 QStringLiteral(
                     "QPushButton#exitConfirmButton {"
@@ -361,9 +363,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
                     "QPushButton#exitConfirmButton:pressed { background-color: %4; }"
                     "QPushButton#exitConfirmButton:focus { border: 2px solid %3; }")
                     .arg(QLatin1String(Theme::kTextPrimary),
-                         QLatin1String(Theme::kErrorBg),
-                         QLatin1String(Theme::kStateError),
-                         QLatin1String(Theme::kPressedBg)));
+                         exitColor.darker(118).name(),
+                         exitColor.lighter(112).name(),
+                         exitColor.darker(140).name()));
         }
         if (auto *cancelButton = qobject_cast<QPushButton *>(
                 confirmDialog.button(QMessageBox::No))) {
@@ -383,7 +385,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
                          QLatin1String(Theme::kAccent),
                          QLatin1String(Theme::kSelectionBg),
                          QLatin1String(Theme::kPressedBg)));
-}
+        }
         if (confirmDialog.exec() != QMessageBox::Yes) {
             event->ignore();
             return;
@@ -598,13 +600,36 @@ void MainWindow::connectTitleBar()
     connect(m_titleBar, &TitleBar::startNodesRequested, this, &MainWindow::startNodes);
     connect(m_titleBar, &TitleBar::stopNodesRequested, this, &MainWindow::stopNodes);
     connect(m_titleBar, &TitleBar::emergencyStopRequested, this, [this]() {
-        ElaMessageBar::error(
-            ElaMessageBarType::BottomRight,
-            "急停请求已触发",
-            "请立即确认设备与 PLC 状态。",
-            3500,
-            this);
-        appendEventLog("ERROR", "操作员双击触发急停请求");
+        const Ros2Bridge::EmergencyStopResult result =
+            m_ros2Bridge ? m_ros2Bridge->publishEmergencyStop()
+                         : Ros2Bridge::EmergencyStopResult::NotRunning;
+        switch (result) {
+        case Ros2Bridge::EmergencyStopResult::Sent:
+            ElaMessageBar::error(ElaMessageBarType::BottomRight,
+                                 "急停指令已发送",
+                                 "已发送到 plc/emergency_stop，请确认设备已停止。",
+                                 5000,
+                                 this);
+            appendEventLog("ERROR", "操作员双击急停：已发送 plc/emergency_stop");
+            break;
+        case Ros2Bridge::EmergencyStopResult::NoSubscriber:
+            ElaMessageBar::error(ElaMessageBarType::BottomRight,
+                                 "急停可能未生效",
+                                 "没有后端节点订阅 plc/emergency_stop，请立即使用硬件急停！",
+                                 8000,
+                                 this);
+            appendEventLog("ERROR",
+                           "操作员双击急停：plc/emergency_stop 无订阅者，指令可能未到达 PLC，请使用硬件急停");
+            break;
+        case Ros2Bridge::EmergencyStopResult::NotRunning:
+            ElaMessageBar::error(ElaMessageBarType::BottomRight,
+                                 "急停未发送",
+                                 "ROS2 通信未运行，请立即使用硬件急停！",
+                                 8000,
+                                 this);
+            appendEventLog("ERROR", "操作员双击急停：ROS2 未运行，急停指令未发送，请使用硬件急停");
+            break;
+        }
     });
     connect(m_titleBar, &TitleBar::minimizeRequested, this, &QWidget::showMinimized);
     connect(m_titleBar, &TitleBar::maximizeRestoreRequested, this, &MainWindow::toggleMaximized);
@@ -979,17 +1004,26 @@ void MainWindow::startRos2Bridge()
                 if (m_imagePanel && !m_debugFakeActive) {
                     // Live tool tip on 2D view: same metric space as setMetricFrame hover.
                     // Demo mode drives pose itself (with cut/rapid stamp control).
-                    m_imagePanel->setToolPose(double(feedback.pathParams.xPos),
-                                              double(feedback.pathParams.yPos),
-                                              double(feedback.pathParams.zPos),
-                                              /*valid=*/true);
-                    m_imagePanel->setPathProgress(int(feedback.completedPath),
-                                                  int(feedback.currentPath));
+                    // PLC keeps publishing after a task ends; without an active task
+                    // the marker would reappear right after applyMillingProgress clears it.
+                    const bool taskActive =
+                        m_activeBackendTaskId != 0 && !m_activeTaskFinished;
+                    if (taskActive) {
+                        m_imagePanel->setToolPose(double(feedback.pathParams.xPos),
+                                                  double(feedback.pathParams.yPos),
+                                                  double(feedback.pathParams.zPos),
+                                                  /*valid=*/true);
+                        m_imagePanel->setPathProgress(int(feedback.completedPath),
+                                                      int(feedback.currentPath));
+                    } else {
+                        m_imagePanel->clearToolPose();
+                    }
                 }
             });
 
     m_ros2Bridge->start();
 
+#ifdef MZ_ENABLE_DEMO_MODE
     // 调试快捷键 Ctrl+T：切换演示模式。
     // 第一次按：加载相机保存的本地图像 + 示例任务数据。
     // 再按一次：清掉假图，任务条复位为"待命"。
@@ -1129,6 +1163,7 @@ void MainWindow::startRos2Bridge()
             9001, 100.0f, /*finished*/ true, /*success*/ true,
             QStringLiteral("调试模式：模拟完成"));
     });
+#endif
 }
 
 void MainWindow::setDatabaseReady(bool ready)
@@ -1141,8 +1176,9 @@ void MainWindow::setDatabaseReady(bool ready)
 
 void MainWindow::persistTaskRecord(quint64 taskId)
 {
-    // Demo shortcut (Ctrl+T) uses task 9001 — never write fake tasks into SQLite.
-    if (m_debugFakeActive || taskId == 9001) {
+    // Ctrl+T demo fakes task 9001; only the mode flag may gate writes, since the
+    // backend can legitimately reach task_id 9001.
+    if (m_debugFakeActive) {
         return;
     }
     if (!m_databaseReady) {
@@ -1168,8 +1204,7 @@ void MainWindow::persistScanFrame(quint64 taskId,
                                   bool hasRange,
                                   bool hasIntensity)
 {
-    // Demo frames must not hit SQLite.
-    if (m_debugFakeActive || taskId == 9001) {
+    if (m_debugFakeActive) {
         return;
     }
 
@@ -1360,8 +1395,9 @@ void MainWindow::setSimulationRunning(bool running)
 
 void MainWindow::onWaveformUpdate()
 {
-    const double speed = 2000 + 800 * qSin(m_currentT * 0.5) + (qrand() % 200);
-    const double torque = 15 + 5 * qCos(m_currentT * 0.7) + (qrand() % 100) * 0.05;
+    QRandomGenerator *rng = QRandomGenerator::global();
+    const double speed = 2000 + 800 * qSin(m_currentT * 0.5) + rng->bounded(200);
+    const double torque = 15 + 5 * qCos(m_currentT * 0.7) + rng->bounded(100) * 0.05;
     appendTelemetrySample(speed, torque);
 }
 

@@ -1,0 +1,13 @@
+@echo off
+REM Copy to start_all.local.bat (same folder as start_all.bat) and keep only
+REM the lines that differ on this machine. start_all.local.bat is not tracked
+REM by git and build.bat does not overwrite it in deploy\MzTLZ.
+
+set "MZ_ALGO_ROOT=D:\robot_client_move_test"
+set "MZ_CAMERA_DIR=D:\Camera_Node"
+set "MZ_BACKEND_ROOT=D:\CopperMilling"
+set "MZ_ROS_PREFIX=C:\opt\ros\foxy\x64"
+set "MZ_OPENCV_BIN=C:\opencv\build\x64\vc15\bin"
+set "MZ_PLC_IP=192.168.1.60"
+REM Full override of the milling_controller arguments (plc_ip above is ignored then):
+REM set "MZ_MILLING_ARGS=-p plc_ip:=192.168.1.60 -p plc_rack:=0 -p plc_slot:=1 -p task_id_base:=1 -p task_count:=1"

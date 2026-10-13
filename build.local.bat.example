@@ -1,0 +1,12 @@
+@echo off
+REM Copy to build.local.bat (same folder as build.bat). Not tracked by git.
+REM Keep only the lines that differ on this machine.
+
+set "MZ_QT_PREFIX=C:\Qt\5.15.2\msvc2019_64"
+set "MZ_OPENCV_DIR=C:\opencv\build"
+set "MZ_ROS_PREFIX=C:\opt\ros\foxy\x64"
+set "MZ_INTERFACES_PREFIX=D:\Camera_Node\install\mz_interfaces"
+set "MZ_HIK_SDK=C:\Users\28651\Desktop\CH-HCNetSDKV6.1.9.48_build20230410_win64(1)"
+REM Only if vswhere cannot see the install:
+REM set "MZ_VS_SETUP=C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat"
+REM set "MZ_CMAKE_GENERATOR=Visual Studio 17 2022"
