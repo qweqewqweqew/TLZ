@@ -83,6 +83,11 @@ EventLogPanel::EventLogPanel(QWidget *parent)
     panelLayout->addWidget(m_eventLogEdit, 1);
 }
 
+QString EventLogPanel::snapshotText() const
+{
+    return m_eventLogEdit ? m_eventLogEdit->toPlainText() : QString();
+}
+
 void EventLogPanel::appendEvent(const QString &level, const QString &message)
 {
     if (!m_eventLogEdit) {

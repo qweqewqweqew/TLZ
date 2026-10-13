@@ -179,6 +179,8 @@ add_executable(MzTLZ
     include/app/TitleBar.h
     src/app/UiHelpers.cpp
     include/app/UiHelpers.h
+    src/app/RuntimeIniPaths.cpp
+    include/app/RuntimeIniPaths.h
     include/app/Logger.h
     include/app/Theme.h
     src/ui/panels/DataStatisticsPanel.cpp
@@ -199,6 +201,28 @@ add_executable(MzTLZ
     include/ui/dialogs/HistoryDialog.h
     src/ui/dialogs/BackendParamsDialog.cpp
     include/ui/dialogs/BackendParamsDialog.h
+    src/ui/dialogs/TeachingDialog.cpp
+    include/ui/dialogs/TeachingDialog.h
+    src/ui/settings/SettingsSubPage.cpp
+    include/ui/settings/SettingsSubPage.h
+    src/ui/settings/SettingsFormWidgets.cpp
+    include/ui/settings/SettingsFormWidgets.h
+    src/ui/settings/SettingsPage.cpp
+    include/ui/settings/SettingsPage.h
+    src/ui/settings/ProcessSettingsPage.cpp
+    include/ui/settings/ProcessSettingsPage.h
+    src/ui/settings/VisionSettingsPage.cpp
+    include/ui/settings/VisionSettingsPage.h
+    src/ui/settings/DisplaySettingsPage.cpp
+    include/ui/settings/DisplaySettingsPage.h
+    src/ui/settings/NodeCommSettingsPage.cpp
+    include/ui/settings/NodeCommSettingsPage.h
+    src/ui/settings/AlarmSettingsPage.cpp
+    include/ui/settings/AlarmSettingsPage.h
+    src/ui/settings/AccountSettingsPage.cpp
+    include/ui/settings/AccountSettingsPage.h
+    src/ui/settings/AboutSettingsPage.cpp
+    include/ui/settings/AboutSettingsPage.h
     src/ui/widgets/TelemetryPlotWidget.cpp
     include/ui/widgets/TelemetryPlotWidget.h
     src/ui/widgets/VerticalGauge.cpp

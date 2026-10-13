@@ -18,6 +18,7 @@ struct HikCameraConfig
 
     static QString defaultFilePath();
     static HikCameraConfig load(const QString &filePath, QString *error = nullptr);
+    bool save(const QString &filePath, QString *error = nullptr) const;
     bool validate(QString *error = nullptr) const;
 };
 

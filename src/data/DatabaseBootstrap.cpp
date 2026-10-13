@@ -1,6 +1,7 @@
 #include "data/DatabaseBootstrap.h"
 
 #include "app/Logger.h"
+#include "app/RuntimeIniPaths.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -22,8 +23,7 @@ struct DatabaseSettings
 
 DatabaseSettings loadSettings()
 {
-    const QString configPath = QDir(QCoreApplication::applicationDirPath())
-                                   .filePath(QStringLiteral("database.ini"));
+    const QString configPath = databaseIniPath();
     QSettings settings(configPath, QSettings::IniFormat);
     settings.setIniCodec("UTF-8");
 

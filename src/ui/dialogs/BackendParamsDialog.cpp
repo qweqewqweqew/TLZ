@@ -1,14 +1,15 @@
 #include "ui/dialogs/BackendParamsDialog.h"
 
 #include "ElaCheckBox.h"
+#include "ElaMessageBar.h"
 #include "ElaPushButton.h"
 #include "app/Logger.h"
+#include "app/RuntimeIniPaths.h"
 #include "app/Theme.h"
 #include "app/UiHelpers.h"
 #include "bridge/Ros2Bridge.h"
 
-#include <QCoreApplication>
-#include <QDir>
+#include <QCheckBox>
 #include <QDoubleValidator>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -19,12 +20,6 @@
 #include <QVBoxLayout>
 
 namespace {
-
-QString settingsFilePath()
-{
-    return QDir(QCoreApplication::applicationDirPath())
-        .filePath(QStringLiteral("backend_params.ini"));
-}
 
 QString formatOffset(double value)
 {
@@ -180,8 +175,18 @@ BackendParamsDialog::BackendParamsDialog(Ros2Bridge *bridge, QWidget *parent)
     root->addWidget(applyBtn);
 
     connect(applyBtn, &ElaPushButton::clicked, this, &BackendParamsDialog::applyParams);
+    const auto markDirty = [this]() { emit dirtyChanged(isDirty()); };
+    connect(m_offsetXEdit, &QLineEdit::textChanged, this, markDirty);
+    connect(m_offsetYEdit, &QLineEdit::textChanged, this, markDirty);
+    connect(m_offsetZEdit, &QLineEdit::textChanged, this, markDirty);
+    connect(m_dispatchPathsCheck, &QCheckBox::toggled, this, markDirty);
 
     loadSettings();
+}
+
+QString BackendParamsDialog::filePath()
+{
+    return backendParamsIniPath();
 }
 
 QLineEdit *BackendParamsDialog::makeOffsetEdit(QWidget *parent)
@@ -215,7 +220,7 @@ QLineEdit *BackendParamsDialog::makeOffsetEdit(QWidget *parent)
 
 void BackendParamsDialog::loadSettings()
 {
-    QSettings settings(settingsFilePath(), QSettings::IniFormat);
+    QSettings settings(filePath(), QSettings::IniFormat);
     settings.setIniCodec("UTF-8");
     settings.beginGroup(QStringLiteral("BackendParams"));
 
@@ -238,14 +243,17 @@ void BackendParamsDialog::loadSettings()
         m_dispatchPathsCheck->setChecked(dispatch);
     }
 
+    rememberDisk();
+    emit dirtyChanged(false);
+
     LOG("[设置参数] 已加载本地配置: offset=(%.3f, %.3f, %.3f) mm, dispatch=%s, file=%s",
         x, y, z, dispatch ? "true" : "false",
-        settingsFilePath().toUtf8().constData());
+        filePath().toUtf8().constData());
 }
 
-void BackendParamsDialog::saveSettings() const
+bool BackendParamsDialog::saveSettings() const
 {
-    QSettings settings(settingsFilePath(), QSettings::IniFormat);
+    QSettings settings(filePath(), QSettings::IniFormat);
     settings.setIniCodec("UTF-8");
     settings.beginGroup(QStringLiteral("BackendParams"));
     settings.setValue(QStringLiteral("OffsetX"), offsetX());
@@ -254,11 +262,88 @@ void BackendParamsDialog::saveSettings() const
     settings.setValue(QStringLiteral("DispatchPathsToPlc"), dispatchPathsToPlc());
     settings.endGroup();
     settings.sync();
+    if (settings.status() != QSettings::NoError) {
+        LOG("[设置参数] 保存本地配置失败: file=%s status=%d",
+            filePath().toUtf8().constData(),
+            int(settings.status()));
+        return false;
+    }
 
     LOG("[设置参数] 已保存本地配置: offset=(%.3f, %.3f, %.3f) mm, dispatch=%s, file=%s",
         offsetX(), offsetY(), offsetZ(),
         dispatchPathsToPlc() ? "true" : "false",
-        settingsFilePath().toUtf8().constData());
+        filePath().toUtf8().constData());
+    return true;
+}
+
+void BackendParamsDialog::rememberDisk()
+{
+    m_diskX = offsetX();
+    m_diskY = offsetY();
+    m_diskZ = offsetZ();
+    m_diskDispatch = dispatchPathsToPlc();
+}
+
+bool BackendParamsDialog::isDirty() const
+{
+    return qAbs(offsetX() - m_diskX) > 0.0005
+           || qAbs(offsetY() - m_diskY) > 0.0005
+           || qAbs(offsetZ() - m_diskZ) > 0.0005
+           || dispatchPathsToPlc() != m_diskDispatch;
+}
+
+bool BackendParamsDialog::commitToBackend(QString *error)
+{
+    if (!m_bridge) {
+        LOG("[设置参数] 应用失败: Ros2Bridge 为空");
+        if (error) {
+            *error = QStringLiteral("Ros2Bridge 为空，未写入 backend_params.ini，也未下发。");
+        }
+        return false;
+    }
+
+    const double x = offsetX();
+    const double y = offsetY();
+    const double z = offsetZ();
+    const bool dispatch = dispatchPathsToPlc();
+    LOG("[设置参数] 用户点击应用: offset=(%.3f, %.3f, %.3f) mm, dispatch_paths_to_plc=%s",
+        x, y, z, dispatch ? "true" : "false");
+
+    m_bridge->publishCoordinateOffset(x, y, z);
+    m_bridge->publishDispatchPathsToPlc(dispatch);
+    if (!saveSettings()) {
+        if (error) {
+            *error = QStringLiteral("已尝试下发到后端，但写入 %1 失败。").arg(filePath());
+        }
+        return false;
+    }
+    rememberDisk();
+    emit dirtyChanged(false);
+    if (error) {
+        error->clear();
+    }
+    return true;
+}
+
+void BackendParamsDialog::reloadFromDisk()
+{
+    loadSettings();
+}
+
+void BackendParamsDialog::applyFactoryDefaults()
+{
+    if (m_offsetXEdit) {
+        m_offsetXEdit->setText(QStringLiteral("0"));
+    }
+    if (m_offsetYEdit) {
+        m_offsetYEdit->setText(QStringLiteral("0"));
+    }
+    if (m_offsetZEdit) {
+        m_offsetZEdit->setText(QStringLiteral("0"));
+    }
+    if (m_dispatchPathsCheck) {
+        m_dispatchPathsCheck->setChecked(true);
+    }
 }
 
 double BackendParamsDialog::offsetX() const
@@ -283,20 +368,26 @@ bool BackendParamsDialog::dispatchPathsToPlc() const
 
 void BackendParamsDialog::applyParams()
 {
-    if (!m_bridge) {
-        LOG("[设置参数] 应用失败: Ros2Bridge 为空");
+    QString error;
+    if (!commitToBackend(&error)) {
+        ElaMessageBar::error(ElaMessageBarType::BottomRight,
+                             QStringLiteral("加工参数未保存"),
+                             error,
+                             3600,
+                             this);
         return;
     }
-
-    const double x = offsetX();
-    const double y = offsetY();
-    const double z = offsetZ();
-    const bool dispatch = dispatchPathsToPlc();
-
-    LOG("[设置参数] 用户点击应用: offset=(%.3f, %.3f, %.3f) mm, dispatch_paths_to_plc=%s",
-        x, y, z, dispatch ? "true" : "false");
-
-    m_bridge->publishCoordinateOffset(x, y, z);
-    m_bridge->publishDispatchPathsToPlc(dispatch);
-    saveSettings();
+    if (!m_bridge || !m_bridge->isRunning()) {
+        ElaMessageBar::warning(ElaMessageBarType::BottomRight,
+                               QStringLiteral("加工参数已写入文件"),
+                               QStringLiteral("ROS 节点未运行，坐标补偿与路径开关没有发到后端。"),
+                               3600,
+                               this);
+        return;
+    }
+    ElaMessageBar::success(ElaMessageBarType::BottomRight,
+                           QStringLiteral("加工参数已应用"),
+                           QStringLiteral("已写入 backend_params.ini，并已请求下发到后端。"),
+                           2400,
+                           this);
 }

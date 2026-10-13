@@ -19,7 +19,8 @@
 #include "ui/panels/RunDataPanel.h"
 #include "ui/panels/RunningStatusPanel.h"
 #include "ui/panels/TaskFlowPanel.h"
-#include "ui/dialogs/BackendParamsDialog.h"
+#include "app/RuntimeIniPaths.h"
+#include "ui/settings/SettingsPage.h"
 #include "app/TitleBar.h"
 #include "app/Theme.h"
 #include "app/UiHelpers.h"
@@ -29,7 +30,6 @@
 #include <QFileInfo>
 #include <QFrame>
 #include <QProcess>
-#include <QSettings>
 #include <QStringList>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -57,21 +57,6 @@
 #include <limits>
 
 namespace {
-
-void appendAncestorLauncherConfigs(QStringList *candidates, const QString &startDir)
-{
-    QDir dir(startDir);
-    for (int i = 0; i < 8; ++i) {
-        const QString configPath = QFileInfo(dir.filePath(QStringLiteral("node_launcher.ini")))
-                                       .absoluteFilePath();
-        if (QFileInfo::exists(configPath) && !candidates->contains(configPath)) {
-            candidates->append(configPath);
-        }
-        if (!dir.cdUp()) {
-            break;
-        }
-    }
-}
 
 QString resolveProjectRootDir()
 {
@@ -329,6 +314,14 @@ MainWindow::~MainWindow()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    if (m_settingsPage && !m_settingsPage->confirmLeave()) {
+        event->ignore();
+        if (m_titleBar) {
+            m_titleBar->setWorkspacePage(TitleBar::WorkspacePage::Settings);
+        }
+        return;
+    }
+
     // 破坏性操作保护：打磨任务进行中时关闭主窗口会中断任务，需二次确认。
     const bool taskInProgress = !m_activeTaskFinished && m_activeBackendTaskId != 0;
     if (taskInProgress) {
@@ -502,15 +495,6 @@ void MainWindow::buildMainView()
 
     mainLayout->addWidget(rightColumn, 1);
     m_contentStack->addWidget(m_monitorPage);
-    m_settingsPage = new QWidget(m_contentStack);
-    m_settingsPage->setObjectName("settingsPage");
-    m_settingsPage->setStyleSheet(QStringLiteral("QWidget#settingsPage{background:%1;}")
-                                      .arg(Theme::kWindowBg));
-    auto *settingsLayout = new QVBoxLayout(m_settingsPage);
-    settingsLayout->setContentsMargins(20, 16, 20, 16);
-    settingsLayout->setSpacing(16);
-    settingsLayout->addStretch(1);
-    m_contentStack->addWidget(m_settingsPage);
 
     // 横跨主窗口底部的状态栏：左侧合并状态文字，右侧三个状态指示控件。
     m_deviceStatusPanel = new DeviceStatusPanel(root);
@@ -533,19 +517,16 @@ void MainWindow::buildMainView()
     connect(m_demoPoseTimer, &QTimer::timeout, this, &MainWindow::onDemoPoseUpdate);
 
     startRos2Bridge();
-    if (auto *settingsLayout = qobject_cast<QVBoxLayout *>(m_settingsPage->layout())) {
-        auto *cardGrid = new QWidget(m_settingsPage);
-        auto *cardGridLayout = new QHBoxLayout(cardGrid);
-        cardGridLayout->setContentsMargins(0, 0, 0, 0);
-        cardGridLayout->setSpacing(16);
-        cardGridLayout->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-
-        m_backendParamsDialog = new BackendParamsDialog(m_ros2Bridge, cardGrid);
-        cardGridLayout->addWidget(m_backendParamsDialog, 0, Qt::AlignTop);
-        cardGridLayout->addStretch(1);
-
-        settingsLayout->insertWidget(0, cardGrid, 0, Qt::AlignLeft | Qt::AlignTop);
-    }
+    m_settingsPage = new SettingsPage(m_ros2Bridge,
+                                      m_nodeLifecycleMonitor,
+                                      m_eventLogPanel,
+                                      m_contentStack);
+    m_contentStack->addWidget(m_settingsPage);
+    connect(m_settingsPage, &SettingsPage::historyRequested, this, &MainWindow::showHistoryPage);
+    connect(m_settingsPage, &SettingsPage::logRequested, this,
+            [this](const QString &level, const QString &message) {
+                appendEventLog(level, message);
+            });
 }
 
 void MainWindow::connectTitleBar()
@@ -566,6 +547,11 @@ void MainWindow::connectTitleBar()
         if (!m_contentStack || !m_monitorPage) {
             return;
         }
+        if (m_contentStack->currentWidget() == m_settingsPage && m_settingsPage
+            && !m_settingsPage->confirmLeave()) {
+            m_titleBar->setWorkspacePage(TitleBar::WorkspacePage::Settings);
+            return;
+        }
 
         const bool pageChanged = m_contentStack->currentWidget() != m_monitorPage;
         m_contentStack->setCurrentWidget(m_monitorPage);
@@ -574,27 +560,7 @@ void MainWindow::connectTitleBar()
             appendEventLog("INFO", "用户返回了首页");
         }
     });
-    connect(m_titleBar, &TitleBar::historyRequested, this, [this]() {
-        if (!m_contentStack || !m_monitorPage) {
-            return;
-        }
-
-        const bool historyVisible = m_historyDialog
-                                    && m_contentStack->currentWidget() == m_historyDialog;
-        if (historyVisible) {
-            m_titleBar->setWorkspacePage(TitleBar::WorkspacePage::History);
-            return;
-        }
-
-        if (!m_historyDialog) {
-            m_historyDialog = new HistoryDialog(m_contentStack);
-            m_contentStack->addWidget(m_historyDialog);
-        }
-        m_historyDialog->reloadRecords();
-        m_contentStack->setCurrentWidget(m_historyDialog);
-        m_titleBar->setWorkspacePage(TitleBar::WorkspacePage::History);
-        appendEventLog("INFO", "用户打开了历史记录");
-    });
+    connect(m_titleBar, &TitleBar::historyRequested, this, &MainWindow::showHistoryPage);
     connect(m_titleBar, &TitleBar::startNodesRequested, this, &MainWindow::startNodes);
     connect(m_titleBar, &TitleBar::stopNodesRequested, this, &MainWindow::stopNodes);
     connect(m_titleBar, &TitleBar::emergencyStopRequested, this, [this]() {
@@ -622,46 +588,42 @@ void MainWindow::connectTitleBar()
 
 QString MainWindow::resolveLauncherConfigPath() const
 {
-    QStringList candidates;
-    appendAncestorLauncherConfigs(&candidates, QDir::currentPath());
-    appendAncestorLauncherConfigs(&candidates, QCoreApplication::applicationDirPath());
-
-    for (const QString &path : candidates) {
-        const QDir root(QFileInfo(path).absolutePath());
-        if (QFileInfo::exists(root.filePath(QStringLiteral("CMakeLists.txt")))) {
-            return path;
-        }
-    }
-    if (!candidates.isEmpty()) {
-        return candidates.front();
-    }
-    return QString();
+    return nodeLauncherIniPath();
 }
 
 QString MainWindow::resolveLauncherScript(const QString &key) const
 {
-    const QString configPath = resolveLauncherConfigPath();
-    if (configPath.isEmpty()) {
-        return QString();
+    return resolveNodeLauncherScript(key);
+}
+
+void MainWindow::showHistoryPage()
+{
+    if (!m_contentStack || !m_monitorPage) {
+        return;
+    }
+    if (m_settingsPage && m_contentStack->currentWidget() == m_settingsPage
+        && !m_settingsPage->confirmLeave()) {
+        if (m_titleBar) {
+            m_titleBar->setWorkspacePage(TitleBar::WorkspacePage::Settings);
+        }
+        return;
     }
 
-    QSettings settings(configPath, QSettings::IniFormat);
-    settings.setIniCodec("UTF-8");
-    const QString configured = settings.value(QStringLiteral("Launcher/%1").arg(key))
-                                   .toString()
-                                   .trimmed();
-    if (configured.isEmpty()) {
-        return QString();
+    const bool historyVisible = m_historyDialog
+                                && m_contentStack->currentWidget() == m_historyDialog;
+    if (historyVisible) {
+        m_titleBar->setWorkspacePage(TitleBar::WorkspacePage::History);
+        return;
     }
 
-    QFileInfo info(configured);
-    if (info.isRelative()) {
-        info.setFile(QDir(QFileInfo(configPath).absolutePath()).filePath(configured));
+    if (!m_historyDialog) {
+        m_historyDialog = new HistoryDialog(m_contentStack);
+        m_contentStack->addWidget(m_historyDialog);
     }
-    if (!info.exists()) {
-        return QString();
-    }
-    return info.absoluteFilePath();
+    m_historyDialog->reloadRecords();
+    m_contentStack->setCurrentWidget(m_historyDialog);
+    m_titleBar->setWorkspacePage(TitleBar::WorkspacePage::History);
+    appendEventLog("INFO", "用户打开了历史记录");
 }
 
 QString MainWindow::resolveStartAllScript() const

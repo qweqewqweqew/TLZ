@@ -1,10 +1,10 @@
 #ifndef UIHELPERS_H
 #define UIHELPERS_H
 
+#include <QFrame>
 #include <QString>
 
 class ElaPushButton;
-class QFrame;
 class QLabel;
 class QWidget;
 
