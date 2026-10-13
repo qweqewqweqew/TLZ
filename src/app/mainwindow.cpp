@@ -1141,8 +1141,9 @@ void MainWindow::setDatabaseReady(bool ready)
 
 void MainWindow::persistTaskRecord(quint64 taskId)
 {
-    // Demo shortcut (Ctrl+T) uses task 9001 — never write fake tasks into SQLite.
-    if (m_debugFakeActive || taskId == 9001) {
+    // Ctrl+T demo fakes task 9001; only the mode flag may gate writes, since the
+    // backend can legitimately reach task_id 9001.
+    if (m_debugFakeActive) {
         return;
     }
     if (!m_databaseReady) {
@@ -1168,8 +1169,7 @@ void MainWindow::persistScanFrame(quint64 taskId,
                                   bool hasRange,
                                   bool hasIntensity)
 {
-    // Demo frames must not hit SQLite.
-    if (m_debugFakeActive || taskId == 9001) {
+    if (m_debugFakeActive) {
         return;
     }
 
