@@ -252,6 +252,34 @@ void ImageViewFrame::rebuildGrindLayer()
     }
 }
 
+void ImageViewFrame::drawIncrementalStroke(const QPointF &from, const QPointF &to)
+{
+    if (m_image.isNull()) {
+        return;
+    }
+    ensureGrindLayer();
+
+    // Calculate pen width matching rebuildGrindLayer logic.
+    double sx = 1.0;
+    if (!m_lastImageRect.isEmpty() && m_lastImageSize.width() > 0) {
+        sx = double(m_lastImageRect.width()) / double(m_lastImageSize.width());
+    }
+    double penW = 20.0 / qMax(sx, 0.05);
+    penW = qBound(16.0, penW, 96.0);
+
+    QPainter gp(&m_grindLayer);
+    gp.setRenderHint(QPainter::Antialiasing, true);
+    gp.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    QColor ink(Theme::kAccent);
+    ink.setAlpha(85);
+    QPen pen(ink, penW, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    gp.setPen(pen);
+    gp.setBrush(Qt::NoBrush);
+
+    // Draw only the new line segment.
+    gp.drawLine(from, to);
+}
+
 void ImageViewFrame::strokeGrindToImageUv(double u, double v)
 {
     if (m_image.isNull()) {
@@ -262,7 +290,7 @@ void ImageViewFrame::strokeGrindToImageUv(double u, double v)
         m_activeGrindPath = QPainterPath();
         m_activeGrindPath.moveTo(cur);
         m_hasActiveGrindPath = true;
-        rebuildGrindLayer();
+        ensureGrindLayer();
         return;
     }
 
@@ -270,9 +298,13 @@ void ImageViewFrame::strokeGrindToImageUv(double u, double v)
     if (QLineF(m_activeGrindPath.currentPosition(), cur).length() < 0.5) {
         return;
     }
+
+    const QPointF prev = m_activeGrindPath.currentPosition();
     m_activeGrindPath.lineTo(cur);
-    // Redraw full cut strokes once so translucent alpha does not stack.
-    rebuildGrindLayer();
+
+    // Incremental drawing: only paint the new segment, not the entire layer.
+    // This changes O(n) full redraws to O(1) per tick.
+    drawIncrementalStroke(prev, cur);
 }
 
 void ImageViewFrame::setPathProgress(int completedPath, int currentPath)

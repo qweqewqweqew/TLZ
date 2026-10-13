@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 setlocal EnableExtensions
 REM MzTLZ Release build script for the target PC.
 REM Do NOT call ROS setup.bat here: it prepends older Qt headers and breaks Qt 5.15.
@@ -52,7 +52,7 @@ if exist C:\opt\ros\foxy\x64\python.exe (
     set "PATH=C:\opt\ros\foxy\x64;C:\opt\ros\foxy\x64\Scripts;%PATH%"
 )
 
-set "QT_PREFIX=C:\Qt\5.15.2\msvc2019_64"
+set "QT_PREFIX=D:\Qt\5.15.2\msvc2019_64"
 if not exist "%QT_PREFIX%\lib\cmake\Qt5\Qt5Config.cmake" (
     echo [error] Qt5 not found: %QT_PREFIX%
     goto fail
@@ -81,11 +81,11 @@ if errorlevel 1 goto fail
 echo.
 echo [info] Configuring...
 "%CMAKE_EXE%" -G "Visual Studio 16 2019" -A x64 ^
-  -DCMAKE_PREFIX_PATH="C:/Qt/5.15.2/msvc2019_64;C:/opencv/build;C:/opt/ros/foxy/x64;D:/Camera_Node/install/mz_interfaces" ^
-  -DQt5_DIR="C:/Qt/5.15.2/msvc2019_64/lib/cmake/Qt5" ^
-  -DOpenCV_DIR="C:/opencv/build" ^
+  -DCMAKE_PREFIX_PATH="D:/Qt/5.15.2/msvc2019_64;D:/opencv/build;C:/opt/ros/foxy/x64;D:/TLZ/Camera_Node/install/mz_interfaces" ^
+  -DQt5_DIR="D:/Qt/5.15.2/msvc2019_64/lib/cmake/Qt5" ^
+  -DOpenCV_DIR="D:/opencv/build" ^
   -DMZ_ROS_PREFIX="C:/opt/ros/foxy/x64" ^
-  -DMZ_INTERFACES_PREFIX="D:/Camera_Node/install/mz_interfaces" ^
+  -DMZ_INTERFACES_PREFIX="D:/TLZ/Camera_Node/install/mz_interfaces" ^
   -DHIKVISION_HCNETSDK_ROOT="%SRC:\=/%/third_party/HCNetSDK" ^
   -DPYTHON_EXECUTABLE="C:/opt/ros/foxy/x64/python.exe" ^
   -DPython3_EXECUTABLE="C:/opt/ros/foxy/x64/python.exe" ^
@@ -157,9 +157,9 @@ del /f /q "%DEPLOY%\opengl32sw.dll" "%DEPLOY%\libEGL.dll" "%DEPLOY%\libGLESv2.dl
 
 echo [info] Copying OpenCV / CRT DLLs
 set "ROS_BIN=C:\opt\ros\foxy\x64\bin"
-set "OPENCV_BIN=C:\opencv\build\x64\vc15\bin"
+set "OPENCV_BIN=D:\opencv\build\x64\vc16\bin"
 
-call :copy_glob "%OPENCV_BIN%\opencv_world346.dll"
+call :copy_glob "%OPENCV_BIN%\opencv_world490.dll"
 call :copy_glob "%OPENCV_BIN%\jpeg62.dll"
 call :copy_glob "%OPENCV_BIN%\libpng16.dll"
 call :copy_glob "%OPENCV_BIN%\lzma.dll"

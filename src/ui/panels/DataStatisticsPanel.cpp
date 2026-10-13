@@ -106,6 +106,8 @@ void DataStatisticsPanel::setupPlot()
     speedGraph->setBrush(Qt::NoBrush);
     speedGraph->setPen(QPen(speedColor, 1.75));
     speedGraph->setAntialiased(true);
+    speedGraph->setAdaptiveSampling(false);  // Disable adaptive sampling to prevent filled area
+    speedGraph->setScatterStyle(QCPScatterStyle::ssNone);
 
     auto *torqueGraph = m_plot->addGraph(m_plot->xAxis, m_plot->yAxis);
     torqueGraph->setName(QStringLiteral("主轴扭矩"));
@@ -113,6 +115,8 @@ void DataStatisticsPanel::setupPlot()
     torqueGraph->setBrush(Qt::NoBrush);
     torqueGraph->setPen(QPen(torqueColor, 1.75));
     torqueGraph->setAntialiased(true);
+    torqueGraph->setAdaptiveSampling(false);  // Disable adaptive sampling to prevent filled area
+    torqueGraph->setScatterStyle(QCPScatterStyle::ssNone);
 
     m_plot->legend->setVisible(true);
     m_plot->legend->setBrush(QColor(Theme::kCanvasBg));
@@ -226,6 +230,8 @@ void DataStatisticsPanel::setSelectedMetric(SelectedMetric metric)
     m_plot->graph(1)->setBrush(Qt::NoBrush);
     m_plot->graph(0)->setLineStyle(QCPGraph::lsLine);
     m_plot->graph(1)->setLineStyle(QCPGraph::lsLine);
+    m_plot->graph(0)->setAdaptiveSampling(false);
+    m_plot->graph(1)->setAdaptiveSampling(false);
     m_plot->graph(0)->setPen(QPen(speedPen, speedSelected ? 2.0 : 1.5));
     m_plot->graph(1)->setPen(QPen(torquePen, speedSelected ? 1.5 : 2.0));
     m_plot->replot(QCustomPlot::rpQueuedReplot);

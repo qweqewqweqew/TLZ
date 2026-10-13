@@ -77,6 +77,7 @@ private:
     void strokeGrindToImageUv(double u, double v);
     void breakGrindStroke();
     void rebuildGrindLayer();
+    void drawIncrementalStroke(const QPointF &from, const QPointF &to);
 
 private:
     QImage m_image;

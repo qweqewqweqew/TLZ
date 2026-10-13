@@ -1,4 +1,4 @@
-#include "app/mainwindow.h"
+﻿#include "app/mainwindow.h"
 #include "ui_mainwindow.h"
 
 #include "app/AppStyle.h"
@@ -958,7 +958,9 @@ void MainWindow::startRos2Bridge()
                 if (m_statusPanel) {
                     m_statusPanel->setPlcFeedback(feedback);
                 }
-                if (m_dataStatisticsPanel) {
+                // Waveform timer already drives the plot in debug simulation;
+                // appending PLC samples too paints dense sawtooth bands.
+                if (m_dataStatisticsPanel && !m_simulationRunning) {
                     m_dataStatisticsPanel->appendSpindleSample(
                         feedback.pathParams.spindleSpeed,
                         feedback.pathParams.spindleTorque);
@@ -1360,8 +1362,11 @@ void MainWindow::setSimulationRunning(bool running)
 
 void MainWindow::onWaveformUpdate()
 {
-    const double speed = 2000 + 800 * qSin(m_currentT * 0.5) + (qrand() % 200);
-    const double torque = 15 + 5 * qCos(m_currentT * 0.7) + (qrand() % 100) * 0.05;
+    // Smooth simulated curves: no large random jumps that paint as sawtooth bands.
+    const double speed = 2000.0 + 180.0 * qSin(m_currentT * 0.35)
+                         + 40.0 * qSin(m_currentT * 1.1);
+    const double torque = 15.0 + 2.2 * qCos(m_currentT * 0.45)
+                          + 0.6 * qSin(m_currentT * 0.9);
     appendTelemetrySample(speed, torque);
 }
 
