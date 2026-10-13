@@ -42,6 +42,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRandomGenerator>
 #include <QShortcut>
 #include <QStackedWidget>
 #include <QTimer>
@@ -1394,8 +1395,9 @@ void MainWindow::setSimulationRunning(bool running)
 
 void MainWindow::onWaveformUpdate()
 {
-    const double speed = 2000 + 800 * qSin(m_currentT * 0.5) + (qrand() % 200);
-    const double torque = 15 + 5 * qCos(m_currentT * 0.7) + (qrand() % 100) * 0.05;
+    QRandomGenerator *rng = QRandomGenerator::global();
+    const double speed = 2000 + 800 * qSin(m_currentT * 0.5) + rng->bounded(200);
+    const double torque = 15 + 5 * qCos(m_currentT * 0.7) + rng->bounded(100) * 0.05;
     appendTelemetrySample(speed, torque);
 }
 

@@ -576,7 +576,7 @@ void HeightMap3DFrame::wheelEvent(QWheelEvent *event)
         return;
     }
 
-    const QVector3D anchor = cursorAnchor(event->posF());
+    const QVector3D anchor = cursorAnchor(event->position());
     const float steps = float(event->angleDelta().y()) / 120.0f;
     const float requestedFactor = std::pow(0.82f, steps);
     const float newDistance = std::clamp(m_distance * requestedFactor,

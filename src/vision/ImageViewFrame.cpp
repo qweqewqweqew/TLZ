@@ -800,7 +800,7 @@ void ImageViewFrame::wheelEvent(QWheelEvent *event)
         return;
     }
 
-    QPointF anchor = event->posF();
+    QPointF anchor = event->position();
     if (!oldRect.contains(anchor)) {
         anchor = oldRect.center();
     }

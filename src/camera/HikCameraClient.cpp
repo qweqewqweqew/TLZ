@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <utility>
@@ -85,7 +86,8 @@ public:
         previewInfo.lChannel = config.channel;
         previewInfo.dwStreamType = DWORD(config.streamType);
         previewInfo.dwLinkMode = DWORD(config.linkMode);
-        previewInfo.hPlayWnd = reinterpret_cast<HWND>(targetWindow);
+        // Linux SDK 把头文件里的 HWND 定义成 unsigned int，和 64 位 WId 不能直接 reinterpret_cast。
+        previewInfo.hPlayWnd = static_cast<HWND>(static_cast<std::uintptr_t>(targetWindow));
         previewInfo.bBlocked = FALSE;
         previewInfo.dwDisplayBufNum = 1;
 
