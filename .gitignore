@@ -95,6 +95,8 @@ CMakeLists.txt.user*
 
 # Machine-specific node paths (template: config/start_all.local.bat.example)
 start_all.local.bat
+# Machine-specific build paths (template: build.local.bat.example)
+build.local.bat
 
 # Local scratch scripts and patch archives
 tmp_*

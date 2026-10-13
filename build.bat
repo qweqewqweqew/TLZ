@@ -5,6 +5,7 @@ REM Do NOT call ROS setup.bat here: it prepends older Qt headers and breaks Qt 5
 REM Close MzTLZ.exe before building if the linker cannot overwrite the exe.
 
 REM Options: --no-pause, --no-demo (drop the Ctrl+T demo shortcuts, use for site packages)
+REM Machine paths: build.local.bat next to this script, or the MZ_* variables below.
 set "NO_PAUSE=0"
 set "DEMO_MODE=ON"
 :parse_args
@@ -14,6 +15,12 @@ if /I "%~1"=="--no-demo" set "DEMO_MODE=OFF"
 shift
 goto parse_args
 :args_done
+
+if exist "%~dp0build.local.bat" call "%~dp0build.local.bat"
+if not defined MZ_QT_PREFIX set "MZ_QT_PREFIX=C:\Qt\5.15.2\msvc2019_64"
+if not defined MZ_OPENCV_DIR set "MZ_OPENCV_DIR=C:\opencv\build"
+if not defined MZ_ROS_PREFIX set "MZ_ROS_PREFIX=C:\opt\ros\foxy\x64"
+if not defined MZ_INTERFACES_PREFIX set "MZ_INTERFACES_PREFIX=D:\Camera_Node\install\mz_interfaces"
 
 set "SRC=%~dp0"
 REM %~dp0 always ends with \, strip it.
@@ -36,34 +43,40 @@ if not errorlevel 1 (
 )
 
 set "VS_SETUP="
-for %%P in (
-    "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\Tools\VsDevCmd.bat"
-    "C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional\Common7\Tools\VsDevCmd.bat"
-    "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\Common7\Tools\VsDevCmd.bat"
-) do (
-    if not defined VS_SETUP if exist "%%~P" set "VS_SETUP=%%~P"
-)
+set "CMAKE_GENERATOR="
+call :pick_vs "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat" "Visual Studio 17 2022"
+call :pick_vs "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat" "Visual Studio 17 2022"
+call :pick_vs "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" "Visual Studio 17 2022"
+call :pick_vs "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" "Visual Studio 17 2022"
+call :pick_vs "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\Tools\VsDevCmd.bat" "Visual Studio 16 2019"
+call :pick_vs "C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional\Common7\Tools\VsDevCmd.bat" "Visual Studio 16 2019"
+call :pick_vs "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\VsDevCmd.bat" "Visual Studio 16 2019"
+call :pick_vs "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\Common7\Tools\VsDevCmd.bat" "Visual Studio 16 2019"
 if not defined VS_SETUP (
-    echo [error] Visual Studio 2019 was not found.
+    echo [error] Visual Studio 2019 or 2022 was not found.
     goto fail
 )
 
 echo [info] VS: %VS_SETUP%
-call "%VS_SETUP%" -arch=x64
+echo [info] generator: %CMAKE_GENERATOR%
+call "%VS_SETUP%" -arch=x64 -host_arch=x64
+REM VsDevCmd often returns a stale errorlevel even when cl.exe is on PATH.
+where cl >nul 2>&1
 if errorlevel 1 (
-    echo [error] Failed to load VS environment.
+    echo [error] Failed to load VS environment: cl.exe not found.
     goto fail
 )
 
-if exist C:\opt\ros\foxy\x64\python.exe (
-    set "PYTHON_EXECUTABLE=C:\opt\ros\foxy\x64\python.exe"
-    set "Python3_EXECUTABLE=C:\opt\ros\foxy\x64\python.exe"
-    set "PATH=C:\opt\ros\foxy\x64;C:\opt\ros\foxy\x64\Scripts;%PATH%"
+if exist "%MZ_ROS_PREFIX%\python.exe" (
+    set "PYTHON_EXECUTABLE=%MZ_ROS_PREFIX%\python.exe"
+    set "Python3_EXECUTABLE=%MZ_ROS_PREFIX%\python.exe"
+    set "PATH=%MZ_ROS_PREFIX%;%MZ_ROS_PREFIX%\Scripts;%PATH%"
 )
 
-set "QT_PREFIX=C:\Qt\5.15.2\msvc2019_64"
+set "QT_PREFIX=%MZ_QT_PREFIX%"
 if not exist "%QT_PREFIX%\lib\cmake\Qt5\Qt5Config.cmake" (
     echo [error] Qt5 not found: %QT_PREFIX%
+    echo        set MZ_QT_PREFIX in build.local.bat
     goto fail
 )
 set "INCLUDE=%QT_PREFIX%\include;%INCLUDE%"
@@ -71,8 +84,10 @@ set "INCLUDE=%QT_PREFIX%\include;%INCLUDE%"
 set "CMAKE_EXE="
 if exist "C:\Qt\Tools\CMake_64\bin\cmake.exe" set "CMAKE_EXE=C:\Qt\Tools\CMake_64\bin\cmake.exe"
 if not defined CMAKE_EXE if exist "C:\Program Files\CMake\bin\cmake.exe" set "CMAKE_EXE=C:\Program Files\CMake\bin\cmake.exe"
-if not defined CMAKE_EXE if exist "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" set "CMAKE_EXE=C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
-if not defined CMAKE_EXE if exist "C:\opt\ros\foxy\x64\Scripts\cmake.exe" set "CMAKE_EXE=C:\opt\ros\foxy\x64\Scripts\cmake.exe"
+if not defined CMAKE_EXE if exist "%VS_SETUP%\..\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" (
+    for %%C in ("%VS_SETUP%\..\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe") do set "CMAKE_EXE=%%~fC"
+)
+if not defined CMAKE_EXE if exist "%MZ_ROS_PREFIX%\Scripts\cmake.exe" set "CMAKE_EXE=%MZ_ROS_PREFIX%\Scripts\cmake.exe"
 if not defined CMAKE_EXE (
     echo [error] cmake.exe was not found.
     goto fail
@@ -87,17 +102,27 @@ if not exist "%BUILD%" mkdir "%BUILD%"
 cd /d "%BUILD%"
 if errorlevel 1 goto fail
 
+set "QT_CMAKE=%MZ_QT_PREFIX:\=/%"
+set "OPENCV_CMAKE=%MZ_OPENCV_DIR:\=/%"
+set "ROS_CMAKE=%MZ_ROS_PREFIX:\=/%"
+set "IFACES_CMAKE=%MZ_INTERFACES_PREFIX:\=/%"
+if not exist "%MZ_INTERFACES_PREFIX%\share\mz_interfaces\cmake\mz_interfacesConfig.cmake" (
+    echo [error] mz_interfaces not found: %MZ_INTERFACES_PREFIX%
+    echo        build Camera_Node first, or set MZ_INTERFACES_PREFIX in build.local.bat
+    goto fail
+)
+
 echo.
 echo [info] Configuring...
-"%CMAKE_EXE%" -G "Visual Studio 16 2019" -A x64 ^
-  -DCMAKE_PREFIX_PATH="C:/Qt/5.15.2/msvc2019_64;C:/opencv/build;C:/opt/ros/foxy/x64;D:/Camera_Node/install/mz_interfaces" ^
-  -DQt5_DIR="C:/Qt/5.15.2/msvc2019_64/lib/cmake/Qt5" ^
-  -DOpenCV_DIR="C:/opencv/build" ^
-  -DMZ_ROS_PREFIX="C:/opt/ros/foxy/x64" ^
-  -DMZ_INTERFACES_PREFIX="D:/Camera_Node/install/mz_interfaces" ^
+"%CMAKE_EXE%" -G "%CMAKE_GENERATOR%" -A x64 ^
+  -DCMAKE_PREFIX_PATH="%QT_CMAKE%;%OPENCV_CMAKE%;%ROS_CMAKE%;%IFACES_CMAKE%" ^
+  -DQt5_DIR="%QT_CMAKE%/lib/cmake/Qt5" ^
+  -DOpenCV_DIR="%OPENCV_CMAKE%" ^
+  -DMZ_ROS_PREFIX="%ROS_CMAKE%" ^
+  -DMZ_INTERFACES_PREFIX="%IFACES_CMAKE%" ^
   -DHIKVISION_HCNETSDK_ROOT="%SRC:\=/%/third_party/HCNetSDK" ^
-  -DPYTHON_EXECUTABLE="C:/opt/ros/foxy/x64/python.exe" ^
-  -DPython3_EXECUTABLE="C:/opt/ros/foxy/x64/python.exe" ^
+  -DPYTHON_EXECUTABLE="%ROS_CMAKE%/python.exe" ^
+  -DPython3_EXECUTABLE="%ROS_CMAKE%/python.exe" ^
   -DMZ_ENABLE_DEMO_MODE=%DEMO_MODE% ^
   -UCMAKE_AUTOGEN_PARALLEL ^
   "%SRC%"
@@ -167,8 +192,8 @@ if exist "%QT_PREFIX%\bin\Qt5PrintSupport.dll" copy /Y "%QT_PREFIX%\bin\Qt5Print
 del /f /q "%DEPLOY%\opengl32sw.dll" "%DEPLOY%\libEGL.dll" "%DEPLOY%\libGLESv2.dll" >nul 2>nul
 
 echo [info] Copying OpenCV / CRT DLLs
-set "ROS_BIN=C:\opt\ros\foxy\x64\bin"
-set "OPENCV_BIN=C:\opencv\build\x64\vc15\bin"
+set "ROS_BIN=%MZ_ROS_PREFIX%\bin"
+set "OPENCV_BIN=%MZ_OPENCV_DIR%\x64\vc15\bin"
 
 call :copy_glob "%OPENCV_BIN%\opencv_world346.dll"
 call :copy_glob "%OPENCV_BIN%\jpeg62.dll"
@@ -214,6 +239,13 @@ echo [success] deploy package: %DEPLOY%\MzTLZ.exe
 dir "%DEPLOY%\MzTLZ.exe"
 if "%NO_PAUSE%"=="0" pause
 exit /b 0
+
+:pick_vs
+if defined VS_SETUP goto :eof
+if not exist "%~1" goto :eof
+set "VS_SETUP=%~1"
+set "CMAKE_GENERATOR=%~2"
+goto :eof
 
 :copy_glob
 if exist %1 copy /Y %1 "%DEPLOY%\" >nul

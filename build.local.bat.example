@@ -1,0 +1,8 @@
+@echo off
+REM Copy to build.local.bat (same folder as build.bat). Not tracked by git.
+REM Keep only the lines that differ on this machine.
+
+set "MZ_QT_PREFIX=C:\Qt\5.15.2\msvc2019_64"
+set "MZ_OPENCV_DIR=C:\opencv\build"
+set "MZ_ROS_PREFIX=C:\opt\ros\foxy\x64"
+set "MZ_INTERFACES_PREFIX=D:\Camera_Node\install\mz_interfaces"
