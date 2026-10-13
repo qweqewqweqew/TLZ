@@ -21,6 +21,7 @@ if not defined MZ_QT_PREFIX set "MZ_QT_PREFIX=C:\Qt\5.15.2\msvc2019_64"
 if not defined MZ_OPENCV_DIR set "MZ_OPENCV_DIR=C:\opencv\build"
 if not defined MZ_ROS_PREFIX set "MZ_ROS_PREFIX=C:\opt\ros\foxy\x64"
 if not defined MZ_INTERFACES_PREFIX set "MZ_INTERFACES_PREFIX=D:\Camera_Node\install\mz_interfaces"
+if not defined MZ_HIK_SDK set "MZ_HIK_SDK=C:\Users\28651\Desktop\CH-HCNetSDKV6.1.9.48_build20230410_win64(1)"
 
 set "SRC=%~dp0"
 REM %~dp0 always ends with \, strip it.
@@ -241,6 +242,15 @@ del /f /q "%DEPLOY%\unique_identifier_msgs*.dll" "%DEPLOY%\action_msgs*.dll" "%D
 del /f /q "%DEPLOY%\mz_interfaces*.dll" >nul 2>nul
 if exist "%DEPLOY%\share" rd /s /q "%DEPLOY%\share"
 
+echo [info] Copying Hikvision runtime
+call :copy_hik_runtime "%MZ_HIK_SDK%" "%DEPLOY%"
+call :stage_hik_into_tree "%MZ_HIK_SDK%" "%SRC%\third_party\HCNetSDK"
+if not exist "%DEPLOY%\HCNetSDK.dll" call :copy_hik_runtime "%SRC%\third_party\HCNetSDK" "%DEPLOY%"
+if not exist "%DEPLOY%\HCNetSDK.dll" (
+    echo [warn] HCNetSDK.dll was not copied. Live preview will not load.
+    echo        Expected the SDK at %MZ_HIK_SDK%
+)
+
 echo.
 echo [success] deploy package: %DEPLOY%\MzTLZ.exe
 dir "%DEPLOY%\MzTLZ.exe"
@@ -283,6 +293,54 @@ goto :eof
 
 :copy_glob
 if exist %1 copy /Y %1 "%DEPLOY%\" >nul
+goto :eof
+
+:copy_hik_runtime
+set "HIK_DLL="
+set "HIK_LIB="
+if "%~1"=="" goto :eof
+if "%~2"=="" goto :eof
+if not exist "%~1" (
+    echo [warn] Hikvision SDK folder not found: %~1
+    goto :eof
+)
+if exist "%~1\HCNetSDK.dll" (
+    set "HIK_LIB=%~1"
+    goto build_copy_hik_files
+)
+pushd "%~1" >nul || goto :eof
+for /f "delims=" %%D in ('dir /s /b HCNetSDK.dll 2^>nul') do (
+    if not defined HIK_DLL set "HIK_DLL=%%D"
+)
+popd
+if not defined HIK_DLL (
+    echo [warn] HCNetSDK.dll not found under %~1
+    goto :eof
+)
+call :hik_lib_from_dll "%HIK_DLL%"
+:build_copy_hik_files
+if not defined HIK_LIB goto :eof
+echo [info] Copying Hikvision runtime from %HIK_LIB%
+copy /Y "%HIK_LIB%\*.dll" "%~2\" >nul
+if exist "%HIK_LIB%\HCNetSDKCom" xcopy /E /I /Y "%HIK_LIB%\HCNetSDKCom" "%~2\HCNetSDKCom\" >nul
+goto :eof
+
+:stage_hik_into_tree
+set "HIK_IMPLIB="
+if not exist "%~2" goto :eof
+pushd "%~2" >nul || goto :eof
+for /f "delims=" %%L in ('dir /s /b HCNetSDK.lib 2^>nul') do (
+    if not defined HIK_IMPLIB set "HIK_IMPLIB=%%L"
+)
+popd
+if not defined HIK_IMPLIB goto :eof
+call :hik_lib_from_dll "%HIK_IMPLIB%"
+set "HIK_DEST=%HIK_LIB%"
+call :copy_hik_runtime "%~1" "%HIK_DEST%"
+goto :eof
+
+:hik_lib_from_dll
+set "HIK_LIB=%~dp1"
 goto :eof
 
 :fail

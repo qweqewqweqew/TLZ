@@ -18,6 +18,7 @@ if not defined MZ_QT_PREFIX set "MZ_QT_PREFIX=C:\Qt\5.15.2\msvc2019_64"
 if not defined MZ_OPENCV_DIR set "MZ_OPENCV_DIR=C:\opencv\build"
 if not defined MZ_ROS_PREFIX set "MZ_ROS_PREFIX=C:\opt\ros\foxy\x64"
 if not defined MZ_INTERFACES_PREFIX set "MZ_INTERFACES_PREFIX=D:\Camera_Node\install\mz_interfaces"
+if not defined MZ_HIK_SDK set "MZ_HIK_SDK=C:\Users\28651\Desktop\CH-HCNetSDKV6.1.9.48_build20230410_win64(1)"
 set "OPENCV_BIN=%MZ_OPENCV_DIR%\x64\vc15\bin"
 
 set "APP_DIR="
@@ -56,8 +57,15 @@ if not exist "%MZ_INTERFACES_PREFIX%\bin" (
     echo [error] mz_interfaces bin missing: %MZ_INTERFACES_PREFIX%\bin
     set "MISSING=1"
 )
+call :copy_hik_runtime "%MZ_HIK_SDK%" "%APP_DIR%"
+set "REPO_SDK=%HERE%\..\third_party\HCNetSDK"
+if not exist "%REPO_SDK%" set "REPO_SDK=%HERE%\..\..\third_party\HCNetSDK"
+if exist "%REPO_SDK%" call :stage_hik_into_tree "%MZ_HIK_SDK%" "%REPO_SDK%"
+if not exist "%APP_DIR%\HCNetSDK.dll" if exist "%REPO_SDK%" call :copy_hik_runtime "%REPO_SDK%" "%APP_DIR%"
 if not exist "%APP_DIR%\HCNetSDK.dll" (
-    echo [warn] HCNetSDK.dll is not next to MzTLZ.exe. The process will not start until that DLL is in deploy\MzTLZ.
+    echo [error] HCNetSDK.dll was not copied next to MzTLZ.exe.
+    echo        Looked in %MZ_HIK_SDK%
+    set "MISSING=1"
 )
 if "%MISSING%"=="1" goto fail
 
@@ -65,6 +73,54 @@ echo [info] starting %APP_DIR%\MzTLZ.exe
 cd /d "%APP_DIR%"
 start "" "%APP_DIR%\MzTLZ.exe"
 exit /b 0
+
+:copy_hik_runtime
+set "HIK_DLL="
+set "HIK_LIB="
+if "%~1"=="" goto :eof
+if "%~2"=="" goto :eof
+if not exist "%~1" (
+    echo [warn] Hikvision SDK folder not found: %~1
+    goto :eof
+)
+if exist "%~1\HCNetSDK.dll" (
+    set "HIK_LIB=%~1"
+    goto copy_hik_files
+)
+pushd "%~1" >nul || goto :eof
+for /f "delims=" %%D in ('dir /s /b HCNetSDK.dll 2^>nul') do (
+    if not defined HIK_DLL set "HIK_DLL=%%D"
+)
+popd
+if not defined HIK_DLL (
+    echo [warn] HCNetSDK.dll not found under %~1
+    goto :eof
+)
+call :hik_lib_from_dll "%HIK_DLL%"
+:copy_hik_files
+if not defined HIK_LIB goto :eof
+echo [info] Copying Hikvision runtime from %HIK_LIB%
+copy /Y "%HIK_LIB%\*.dll" "%~2\" >nul
+if exist "%HIK_LIB%\HCNetSDKCom" xcopy /E /I /Y "%HIK_LIB%\HCNetSDKCom" "%~2\HCNetSDKCom\" >nul
+goto :eof
+
+:stage_hik_into_tree
+set "HIK_IMPLIB="
+if not exist "%~2" goto :eof
+pushd "%~2" >nul || goto :eof
+for /f "delims=" %%L in ('dir /s /b HCNetSDK.lib 2^>nul') do (
+    if not defined HIK_IMPLIB set "HIK_IMPLIB=%%L"
+)
+popd
+if not defined HIK_IMPLIB goto :eof
+call :hik_lib_from_dll "%HIK_IMPLIB%"
+set "HIK_DEST=%HIK_LIB%"
+call :copy_hik_runtime "%~1" "%HIK_DEST%"
+goto :eof
+
+:hik_lib_from_dll
+set "HIK_LIB=%~dp1"
+goto :eof
 
 :fail
 echo.
