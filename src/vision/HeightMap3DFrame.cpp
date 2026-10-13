@@ -1,11 +1,9 @@
 #include "vision/HeightMap3DFrame.h"
 
+#include "app/RuntimeIniPaths.h"
 #include "app/Theme.h"
 
 #include <QColor>
-#include <QCoreApplication>
-#include <QDir>
-#include <QFileInfo>
 #include <QLinearGradient>
 #include <QMouseEvent>
 #include <QOpenGLShaderProgram>
@@ -42,40 +40,10 @@ struct HeightMapDisplayConfig
     int cropRightColumns{120};
 };
 
-QString resolveDisplayIniPath()
-{
-    QStringList candidates;
-    const QStringList starts = {
-        QDir::currentPath(),
-        QCoreApplication::applicationDirPath(),
-    };
-    for (const QString &start : starts) {
-        QDir dir(start);
-        for (int i = 0; i < 8; ++i) {
-            const QString path = QFileInfo(dir.filePath(QStringLiteral("display.ini")))
-                                     .absoluteFilePath();
-            if (QFileInfo::exists(path) && !candidates.contains(path)) {
-                candidates.append(path);
-            }
-            if (!dir.cdUp()) {
-                break;
-            }
-        }
-    }
-
-    for (const QString &path : candidates) {
-        if (QFileInfo::exists(QDir(QFileInfo(path).absolutePath())
-                                  .filePath(QStringLiteral("CMakeLists.txt")))) {
-            return path;
-        }
-    }
-    return candidates.isEmpty() ? QString() : candidates.front();
-}
-
 HeightMapDisplayConfig loadHeightMapDisplayConfig()
 {
     HeightMapDisplayConfig config;
-    const QString configPath = resolveDisplayIniPath();
+    const QString configPath = displayIniPath();
     if (configPath.isEmpty()) {
         return config;
     }

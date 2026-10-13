@@ -2,6 +2,7 @@
 #define BACKENDPARAMSDIALOG_H
 
 #include <QFrame>
+#include <QString>
 
 class ElaCheckBox;
 class ElaPushButton;
@@ -17,18 +18,32 @@ class BackendParamsDialog : public QFrame
 public:
     explicit BackendParamsDialog(Ros2Bridge *bridge, QWidget *parent = nullptr);
 
+    static QString filePath();
+
     double offsetX() const;
     double offsetY() const;
     double offsetZ() const;
     bool dispatchPathsToPlc() const;
+    bool isDirty() const;
+    bool commitToBackend(QString *error);
+    void reloadFromDisk();
+    void applyFactoryDefaults();
+
+signals:
+    void dirtyChanged(bool dirty);
 
 private:
     QLineEdit *makeOffsetEdit(QWidget *parent);
     void applyParams();
     void loadSettings();
-    void saveSettings() const;
+    bool saveSettings() const;
+    void rememberDisk();
 
     Ros2Bridge *m_bridge{nullptr};
+    double m_diskX{0.0};
+    double m_diskY{0.0};
+    double m_diskZ{0.0};
+    bool m_diskDispatch{true};
     QLineEdit *m_offsetXEdit{nullptr};
     QLineEdit *m_offsetYEdit{nullptr};
     QLineEdit *m_offsetZEdit{nullptr};

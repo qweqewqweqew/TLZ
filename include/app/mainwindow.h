@@ -18,7 +18,7 @@ class Ros2Bridge;
 class RunDataPanel;
 class RunningStatusPanel;
 class TaskFlowPanel;
-class BackendParamsDialog;
+class SettingsPage;
 class QStackedWidget;
 class QTimer;
 class TitleBar;
@@ -50,6 +50,7 @@ private:
 
     void buildMainView();
     void connectTitleBar();
+    void showHistoryPage();
     void startRos2Bridge();
     void startNodes();
     void stopNodes();
@@ -118,7 +119,7 @@ private:
     TitleBar *m_titleBar{nullptr};
     QStackedWidget *m_contentStack{nullptr};
     QWidget *m_monitorPage{nullptr};
-    QWidget *m_settingsPage{nullptr};
+    SettingsPage *m_settingsPage{nullptr};
     RunningStatusPanel *m_statusPanel{nullptr};
     DeviceStatusPanel *m_deviceStatusPanel{nullptr};
     ImageDisplayPanel *m_imagePanel{nullptr};
@@ -132,7 +133,6 @@ private:
     Ros2Bridge *m_ros2Bridge{nullptr};
     NodeLifecycleMonitor *m_nodeLifecycleMonitor{nullptr};
     QProcess *m_startAllProcess{nullptr};
-    BackendParamsDialog *m_backendParamsDialog{nullptr};
     HistoryDialog *m_historyDialog{nullptr};
     // 最近一次 MillingPaths 给的后端任务号，作为扫描帧落库时 task_id 的回退值
     quint64 m_currentBackendTaskId{0};

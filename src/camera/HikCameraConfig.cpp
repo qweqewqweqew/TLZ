@@ -41,6 +41,63 @@ HikCameraConfig HikCameraConfig::load(const QString &filePath, QString *error)
     return config;
 }
 
+bool HikCameraConfig::save(const QString &filePath, QString *error) const
+{
+    QString message;
+    if (port <= 0 || port > 65535) {
+        message = QStringLiteral("海康相机端口无效");
+    } else if (channel <= 0) {
+        message = QStringLiteral("海康相机通道号必须大于 0");
+    } else if (streamType < 0 || streamType > 10) {
+        message = QStringLiteral("海康相机码流类型超出范围");
+    } else if (linkMode < 0 || linkMode > 1) {
+        message = QStringLiteral("海康相机传输方式仅支持 TCP 或 UDP");
+    } else if (loginTimeoutMs < 100 || loginTimeoutMs > 60000) {
+        message = QStringLiteral("海康相机登录超时必须在 100~60000 ms 之间");
+    } else if (reconnectIntervalMs < 1000 || reconnectIntervalMs > 60000) {
+        message = QStringLiteral("海康相机重连间隔必须在 1000~60000 ms 之间");
+    } else if (enabled && address.trimmed().isEmpty()) {
+        message = QStringLiteral("海康相机 IP 未配置");
+    } else if (enabled && username.trimmed().isEmpty()) {
+        message = QStringLiteral("海康相机用户名未配置");
+    } else if (enabled && password.isEmpty()) {
+        message = QStringLiteral("海康相机密码未配置");
+    }
+
+    if (!message.isEmpty()) {
+        if (error) {
+            *error = message;
+        }
+        return false;
+    }
+
+    QSettings settings(filePath, QSettings::IniFormat);
+    settings.setIniCodec("UTF-8");
+    settings.beginGroup(QStringLiteral("HikCamera"));
+    settings.setValue(QStringLiteral("Enabled"), enabled);
+    settings.setValue(QStringLiteral("Address"), address.trimmed());
+    settings.setValue(QStringLiteral("Port"), port);
+    settings.setValue(QStringLiteral("Username"), username.trimmed());
+    settings.setValue(QStringLiteral("Password"), password);
+    settings.setValue(QStringLiteral("Channel"), channel);
+    settings.setValue(QStringLiteral("StreamType"), streamType);
+    settings.setValue(QStringLiteral("LinkMode"), linkMode);
+    settings.setValue(QStringLiteral("LoginTimeoutMs"), loginTimeoutMs);
+    settings.setValue(QStringLiteral("ReconnectIntervalMs"), reconnectIntervalMs);
+    settings.endGroup();
+    settings.sync();
+    if (settings.status() != QSettings::NoError) {
+        if (error) {
+            *error = QStringLiteral("写入海康配置失败：%1").arg(filePath);
+        }
+        return false;
+    }
+    if (error) {
+        error->clear();
+    }
+    return true;
+}
+
 bool HikCameraConfig::validate(QString *error) const
 {
     QString message;
