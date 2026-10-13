@@ -4,8 +4,6 @@
 
 #include <QApplication>
 #include <QtGlobal>
-#include <QDateTime>
-#include <QMetaObject>
 #include <QEvent>
 #include <QFont>
 #include <QFontMetrics>
@@ -17,6 +15,7 @@
 #include <QLineF>
 #include <QVector>
 #include <QRect>
+#include <QTimer>
 #include <QToolTip>
 #include <QWheelEvent>
 
@@ -298,22 +297,24 @@ void ImageViewFrame::setPathProgress(int completedPath, int currentPath)
 
 void ImageViewFrame::requestPoseUpdate()
 {
-    // PLC can be high-rate; Qt already coalesces update() into one paint per event-loop pass.
-    // Still gate hard repaints to ~30 Hz so we do not flood when the event loop is idle.
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (m_lastPoseUpdateMs > 0 && (now - m_lastPoseUpdateMs) < 33) {
-        if (!m_poseUpdatePending) {
-            m_poseUpdatePending = true;
-            QMetaObject::invokeMethod(this, [this]() {
-                m_poseUpdatePending = false;
-                m_lastPoseUpdateMs = QDateTime::currentMSecsSinceEpoch();
-                update();
-            }, Qt::QueuedConnection);
-        }
+    // PLC can be high-rate; cap pose repaints at ~30 Hz. A queued call would run on the
+    // next event-loop pass (well under 33 ms), so the deferred repaint uses a timer for
+    // the remaining interval. Monotonic clock: wall-clock jumps must not stall repaints.
+    if (m_poseUpdatePending) {
         return;
     }
-    m_lastPoseUpdateMs = now;
-    m_poseUpdatePending = false;
+    const qint64 elapsed = m_poseUpdateClock.isValid() ? m_poseUpdateClock.elapsed()
+                                                        : kPoseRepaintIntervalMs;
+    if (elapsed < kPoseRepaintIntervalMs) {
+        m_poseUpdatePending = true;
+        QTimer::singleShot(int(kPoseRepaintIntervalMs - elapsed), this, [this]() {
+            m_poseUpdatePending = false;
+            m_poseUpdateClock.start();
+            update();
+        });
+        return;
+    }
+    m_poseUpdateClock.start();
     update();
 }
 

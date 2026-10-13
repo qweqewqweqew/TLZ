@@ -4,6 +4,7 @@
 #include "bridge/MillingPathVM.h"
 #include "vision/PointCloudFrame.h"
 
+#include <QElapsedTimer>
 #include <QFrame>
 #include <QImage>
 #include <QPoint>
@@ -107,7 +108,8 @@ private:
     double m_toolPoseV{0.0};
     int m_completedPathCount{0};
     int m_currentPathOneBased{0};
-    qint64 m_lastPoseUpdateMs{0};
+    static constexpr qint64 kPoseRepaintIntervalMs = 33;
+    QElapsedTimer m_poseUpdateClock;
     bool m_poseUpdatePending{false};
     static constexpr int kToolTrailCapacity = 12;
     QPointF m_toolTrailUvRing[kToolTrailCapacity];
