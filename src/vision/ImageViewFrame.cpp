@@ -231,10 +231,13 @@ void ImageViewFrame::rebuildGrindLayer()
     ensureGrindLayer();
     m_grindLayer.fill(Qt::transparent);
 
-    // Stroke width ~ drill indicator diameter (~20px on screen).
+    // Stroke width ~ drill indicator diameter (~20px on screen at fit-to-view).
+    // Use the zoom-independent fitted scale: the layer is rebuilt from all strokes,
+    // so a zoom-dependent width would re-thicken the whole trace after zooming.
     double sx = 1.0;
-    if (!m_lastImageRect.isEmpty() && m_lastImageSize.width() > 0) {
-        sx = double(m_lastImageRect.width()) / double(m_lastImageSize.width());
+    const QSizeF fitted = fittedImageSize();
+    if (!fitted.isEmpty() && m_image.width() > 0) {
+        sx = fitted.width() / double(m_image.width());
     }
     double penW = 20.0 / qMax(sx, 0.05);
     penW = qBound(16.0, penW, 96.0);
