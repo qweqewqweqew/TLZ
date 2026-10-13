@@ -45,6 +45,15 @@ public:
     // 是否下发路径到 PLC（true=写 PLC，false=只发 milling/paths）
     void publishDispatchPathsToPlc(bool enabled);
 
+    enum class EmergencyStopResult
+    {
+        NotRunning,   // 未发出
+        NoSubscriber, // 已发出，但当前没有节点订阅 plc/emergency_stop
+        Sent,
+    };
+    // 软件急停：向 plc/emergency_stop 发送 true，需后端订阅并写 PLC。不能替代硬件急停。
+    EmergencyStopResult publishEmergencyStop();
+
 signals:
     void infoMessage(const QString &message);
     void errorMessage(const QString &message);

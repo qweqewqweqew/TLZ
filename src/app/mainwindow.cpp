@@ -599,13 +599,36 @@ void MainWindow::connectTitleBar()
     connect(m_titleBar, &TitleBar::startNodesRequested, this, &MainWindow::startNodes);
     connect(m_titleBar, &TitleBar::stopNodesRequested, this, &MainWindow::stopNodes);
     connect(m_titleBar, &TitleBar::emergencyStopRequested, this, [this]() {
-        ElaMessageBar::error(
-            ElaMessageBarType::BottomRight,
-            "急停请求已触发",
-            "请立即确认设备与 PLC 状态。",
-            3500,
-            this);
-        appendEventLog("ERROR", "操作员双击触发急停请求");
+        const Ros2Bridge::EmergencyStopResult result =
+            m_ros2Bridge ? m_ros2Bridge->publishEmergencyStop()
+                         : Ros2Bridge::EmergencyStopResult::NotRunning;
+        switch (result) {
+        case Ros2Bridge::EmergencyStopResult::Sent:
+            ElaMessageBar::error(ElaMessageBarType::BottomRight,
+                                 "急停指令已发送",
+                                 "已发送到 plc/emergency_stop，请确认设备已停止。",
+                                 5000,
+                                 this);
+            appendEventLog("ERROR", "操作员双击急停：已发送 plc/emergency_stop");
+            break;
+        case Ros2Bridge::EmergencyStopResult::NoSubscriber:
+            ElaMessageBar::error(ElaMessageBarType::BottomRight,
+                                 "急停可能未生效",
+                                 "没有后端节点订阅 plc/emergency_stop，请立即使用硬件急停！",
+                                 8000,
+                                 this);
+            appendEventLog("ERROR",
+                           "操作员双击急停：plc/emergency_stop 无订阅者，指令可能未到达 PLC，请使用硬件急停");
+            break;
+        case Ros2Bridge::EmergencyStopResult::NotRunning:
+            ElaMessageBar::error(ElaMessageBarType::BottomRight,
+                                 "急停未发送",
+                                 "ROS2 通信未运行，请立即使用硬件急停！",
+                                 8000,
+                                 this);
+            appendEventLog("ERROR", "操作员双击急停：ROS2 未运行，急停指令未发送，请使用硬件急停");
+            break;
+        }
     });
     connect(m_titleBar, &TitleBar::minimizeRequested, this, &QWidget::showMinimized);
     connect(m_titleBar, &TitleBar::maximizeRestoreRequested, this, &MainWindow::toggleMaximized);

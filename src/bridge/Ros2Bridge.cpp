@@ -41,6 +41,7 @@ constexpr char kMillingProgressTopic[] = "milling/progress";
 constexpr char kPlcFeedbackTopic[] = "plc/feedback";
 constexpr char kCoordinateOffsetTopic[] = "plc/coordinate_offset";
 constexpr char kDispatchPathsToPlcTopic[] = "plc/dispatch_paths_to_plc";
+constexpr char kEmergencyStopTopic[] = "plc/emergency_stop";
 constexpr std::uint64_t kInvalidFrame = ~std::uint64_t(0);
 constexpr std::uint32_t kCv8Uc1 = 0;
 constexpr std::uint32_t kCv16Uc1 = 2;
@@ -234,6 +235,7 @@ struct Ros2BridgeEntities final
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr teachRequest;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr coordinateOffset;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr dispatchPathsToPlc;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr emergencyStop;
 
     bool pendingHasRange{false};
     bool pendingHasIntensity{false};
@@ -723,6 +725,8 @@ bool Ros2Bridge::start()
             kCoordinateOffsetTopic, qos);
         m_entities->dispatchPathsToPlc = m_node->create_publisher<std_msgs::msg::Bool>(
             kDispatchPathsToPlcTopic, qos);
+        m_entities->emergencyStop = m_node->create_publisher<std_msgs::msg::Bool>(
+            kEmergencyStopTopic, qos);
 
         m_executor = std::make_unique<rclcpp::executors::SingleThreadedExecutor>();
         m_executor->add_node(m_node);
@@ -920,4 +924,25 @@ void Ros2Bridge::publishDispatchPathsToPlc(bool enabled)
     const QString flag = enabled ? QStringLiteral("true") : QStringLiteral("false");
     LOG("[设置参数] 已发送 plc/dispatch_paths_to_plc: %s", flag.toUtf8().constData());
     emit infoMessage(QStringLiteral("已发送下发路径开关 (plc/dispatch_paths_to_plc): %1").arg(flag));
+}
+
+Ros2Bridge::EmergencyStopResult Ros2Bridge::publishEmergencyStop()
+{
+    if (!m_running || !m_entities || !m_entities->emergencyStop) {
+        LOG("[急停] 发送失败: ROS2 节点未运行");
+        return EmergencyStopResult::NotRunning;
+    }
+
+    std_msgs::msg::Bool msg;
+    msg.data = true;
+    try {
+        m_entities->emergencyStop->publish(msg);
+    } catch (const std::exception &ex) {
+        LOG("[急停] 发送失败: %s", ex.what());
+        return EmergencyStopResult::NotRunning;
+    }
+
+    const size_t subscribers = m_entities->emergencyStop->get_subscription_count();
+    LOG("[急停] 已发送 plc/emergency_stop: true, subscribers=%zu", subscribers);
+    return subscribers == 0 ? EmergencyStopResult::NoSubscriber : EmergencyStopResult::Sent;
 }
