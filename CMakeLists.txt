@@ -9,6 +9,8 @@ set(CMAKE_UNITY_BUILD OFF)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+option(MZ_ENABLE_DEMO_MODE "Ctrl+T / Ctrl+Shift+T demo shortcuts (fake task 9001)" ON)
+
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/config/database.ini"
     "${CMAKE_CURRENT_BINARY_DIR}/database.ini"
@@ -253,6 +255,11 @@ target_link_libraries(MzTLZ
         ${std_msgs_LIBRARIES}
         ${HIKVISION_HCNETSDK_LIBRARY}
 )
+
+if(MZ_ENABLE_DEMO_MODE)
+    target_compile_definitions(MzTLZ PRIVATE MZ_ENABLE_DEMO_MODE)
+endif()
+message(STATUS "MzTLZ demo mode (Ctrl+T): ${MZ_ENABLE_DEMO_MODE}")
 
 get_target_property(_qt5_core_includes Qt5::Core INTERFACE_INCLUDE_DIRECTORIES)
 target_include_directories(MzTLZ BEFORE PRIVATE ${_qt5_core_includes})

@@ -999,6 +999,7 @@ void MainWindow::startRos2Bridge()
 
     m_ros2Bridge->start();
 
+#ifdef MZ_ENABLE_DEMO_MODE
     // 调试快捷键 Ctrl+T：切换演示模式。
     // 第一次按：加载相机保存的本地图像 + 示例任务数据。
     // 再按一次：清掉假图，任务条复位为"待命"。
@@ -1138,6 +1139,7 @@ void MainWindow::startRos2Bridge()
             9001, 100.0f, /*finished*/ true, /*success*/ true,
             QStringLiteral("调试模式：模拟完成"));
     });
+#endif
 }
 
 void MainWindow::setDatabaseReady(bool ready)

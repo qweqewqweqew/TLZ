@@ -4,8 +4,16 @@ REM MzTLZ Release build script for the target PC.
 REM Do NOT call ROS setup.bat here: it prepends older Qt headers and breaks Qt 5.15.
 REM Close MzTLZ.exe before building if the linker cannot overwrite the exe.
 
+REM Options: --no-pause, --no-demo (drop the Ctrl+T demo shortcuts, use for site packages)
 set "NO_PAUSE=0"
+set "DEMO_MODE=ON"
+:parse_args
+if "%~1"=="" goto args_done
 if /I "%~1"=="--no-pause" set "NO_PAUSE=1"
+if /I "%~1"=="--no-demo" set "DEMO_MODE=OFF"
+shift
+goto parse_args
+:args_done
 
 set "SRC=%~dp0"
 REM %~dp0 always ends with \, strip it.
@@ -17,6 +25,7 @@ echo ========================================
 echo  MzTLZ Release build
 echo  source: %SRC%
 echo  deploy: %DEPLOY%
+echo  demo mode (Ctrl+T): %DEMO_MODE%
 echo ========================================
 echo.
 
@@ -89,6 +98,7 @@ echo [info] Configuring...
   -DHIKVISION_HCNETSDK_ROOT="%SRC:\=/%/third_party/HCNetSDK" ^
   -DPYTHON_EXECUTABLE="C:/opt/ros/foxy/x64/python.exe" ^
   -DPython3_EXECUTABLE="C:/opt/ros/foxy/x64/python.exe" ^
+  -DMZ_ENABLE_DEMO_MODE=%DEMO_MODE% ^
   -UCMAKE_AUTOGEN_PARALLEL ^
   "%SRC%"
 if errorlevel 1 (
