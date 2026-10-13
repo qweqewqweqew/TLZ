@@ -33,13 +33,14 @@ if not defined APP_DIR (
 )
 for %%I in ("%APP_DIR%") do set "APP_DIR=%%~fI"
 
-set "PATH=%MZ_QT_PREFIX%\bin;%OPENCV_BIN%;%MZ_ROS_PREFIX%\bin;%MZ_INTERFACES_PREFIX%\bin;%PATH%"
 set "QT_PLUGIN_PATH=%MZ_QT_PREFIX%\plugins"
 set "QT_OPENGL=desktop"
 if exist "%MZ_ROS_PREFIX%\local_setup.bat" call "%MZ_ROS_PREFIX%\local_setup.bat"
+REM After local_setup, so that script cannot drop the Camera_Node bin from PATH.
+set "PATH=%MZ_QT_PREFIX%\bin;%OPENCV_BIN%;%MZ_ROS_PREFIX%\bin;%MZ_INTERFACES_PREFIX%\bin;%MZ_INTERFACES_PREFIX%\lib;%PATH%"
 set "AMENT_PREFIX_PATH=%MZ_INTERFACES_PREFIX%;%AMENT_PREFIX_PATH%"
-
 set "MISSING=0"
+call :copy_interface_dlls "%MZ_INTERFACES_PREFIX%" "%APP_DIR%"
 if not exist "%APP_DIR%\Qt5Core.dll" if not exist "%MZ_QT_PREFIX%\bin\Qt5Core.dll" (
     echo [error] Qt5Core.dll missing. Expected %MZ_QT_PREFIX%\bin or next to MzTLZ.exe
     set "MISSING=1"
@@ -53,8 +54,8 @@ if not exist "%MZ_ROS_PREFIX%\bin\rclcpp.dll" (
     echo        build.bat removes ROS DLLs from deploy so they load from this install.
     set "MISSING=1"
 )
-if not exist "%MZ_INTERFACES_PREFIX%\bin" (
-    echo [error] mz_interfaces bin missing: %MZ_INTERFACES_PREFIX%\bin
+if not exist "%APP_DIR%\mz_interfaces__rosidl_typesupport_cpp.dll" (
+    echo [error] mz_interfaces__rosidl_typesupport_cpp.dll is still missing next to MzTLZ.exe.
     set "MISSING=1"
 )
 call :copy_hik_runtime "%MZ_HIK_SDK%" "%APP_DIR%"
@@ -121,6 +122,33 @@ goto :eof
 :hik_lib_from_dll
 set "HIK_LIB=%~dp1"
 goto :eof
+
+:copy_interface_dlls
+set "IFACE_DLL="
+if "%~1"=="" exit /b 1
+if "%~2"=="" exit /b 1
+if not exist "%~1" (
+    echo [error] mz_interfaces prefix not found: %~1
+    exit /b 1
+)
+pushd "%~1" >nul || exit /b 1
+for /f "delims=" %%D in ('dir /s /b mz_interfaces__rosidl_typesupport_cpp.dll 2^>nul') do (
+    if not defined IFACE_DLL set "IFACE_DLL=%%D"
+)
+popd
+if not defined IFACE_DLL (
+    echo [error] mz_interfaces__rosidl_typesupport_cpp.dll not found under %~1
+    echo        Build Camera_Node so that install\mz_interfaces contains this DLL.
+    exit /b 1
+)
+call :hik_lib_from_dll "%IFACE_DLL%"
+echo [info] Copying mz_interfaces DLLs from %HIK_LIB%
+copy /Y "%HIK_LIB%mz_interfaces*.dll" "%~2\" >nul
+if not exist "%~2\mz_interfaces__rosidl_typesupport_cpp.dll" (
+    echo [error] Failed to copy mz_interfaces DLLs into %~2
+    exit /b 1
+)
+exit /b 0
 
 :fail
 echo.

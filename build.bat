@@ -239,8 +239,14 @@ del /f /q "%DEPLOY%\libstatistics_collector.dll" "%DEPLOY%\ament_index_cpp.dll" 
 del /f /q "%DEPLOY%\builtin_interfaces*.dll" "%DEPLOY%\rcl_interfaces*.dll" "%DEPLOY%\rmw_dds_common*.dll" >nul 2>nul
 del /f /q "%DEPLOY%\rosgraph_msgs*.dll" "%DEPLOY%\statistics_msgs*.dll" "%DEPLOY%\std_msgs*.dll" >nul 2>nul
 del /f /q "%DEPLOY%\unique_identifier_msgs*.dll" "%DEPLOY%\action_msgs*.dll" "%DEPLOY%\foonathan_memory*.dll" >nul 2>nul
-del /f /q "%DEPLOY%\mz_interfaces*.dll" >nul 2>nul
 if exist "%DEPLOY%\share" rd /s /q "%DEPLOY%\share"
+
+echo [info] Copying mz_interfaces DLLs
+call :copy_interface_dlls "%MZ_INTERFACES_PREFIX%" "%DEPLOY%"
+if errorlevel 1 (
+    echo [warn] mz_interfaces__rosidl_typesupport_cpp.dll was not copied.
+    echo        MzTLZ.exe will not start until that DLL sits beside it.
+)
 
 echo [info] Copying Hikvision runtime
 call :copy_hik_runtime "%MZ_HIK_SDK%" "%DEPLOY%"
@@ -342,6 +348,29 @@ goto :eof
 :hik_lib_from_dll
 set "HIK_LIB=%~dp1"
 goto :eof
+
+:copy_interface_dlls
+set "IFACE_DLL="
+if "%~1"=="" exit /b 1
+if "%~2"=="" exit /b 1
+if not exist "%~1" (
+    echo [error] mz_interfaces prefix not found: %~1
+    exit /b 1
+)
+pushd "%~1" >nul || exit /b 1
+for /f "delims=" %%D in ('dir /s /b mz_interfaces__rosidl_typesupport_cpp.dll 2^>nul') do (
+    if not defined IFACE_DLL set "IFACE_DLL=%%D"
+)
+popd
+if not defined IFACE_DLL (
+    echo [error] mz_interfaces__rosidl_typesupport_cpp.dll not found under %~1
+    exit /b 1
+)
+call :hik_lib_from_dll "%IFACE_DLL%"
+echo [info] Copying mz_interfaces DLLs from %HIK_LIB%
+copy /Y "%HIK_LIB%mz_interfaces*.dll" "%~2\" >nul
+if not exist "%~2\mz_interfaces__rosidl_typesupport_cpp.dll" exit /b 1
+exit /b 0
 
 :fail
 echo.
