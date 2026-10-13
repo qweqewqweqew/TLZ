@@ -350,6 +350,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         if (auto *exitButton = qobject_cast<QPushButton *>(
                 confirmDialog.button(QMessageBox::Yes))) {
             exitButton->setObjectName(QStringLiteral("exitConfirmButton"));
+            const QColor exitColor(Theme::kStateError);
             exitButton->setStyleSheet(
                 QStringLiteral(
                     "QPushButton#exitConfirmButton {"
@@ -361,9 +362,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
                     "QPushButton#exitConfirmButton:pressed { background-color: %4; }"
                     "QPushButton#exitConfirmButton:focus { border: 2px solid %3; }")
                     .arg(QLatin1String(Theme::kTextPrimary),
-                         QLatin1String(Theme::kErrorBg),
-                         QLatin1String(Theme::kStateError),
-                         QLatin1String(Theme::kPressedBg)));
+                         exitColor.darker(118).name(),
+                         exitColor.lighter(112).name(),
+                         exitColor.darker(140).name()));
         }
         if (auto *cancelButton = qobject_cast<QPushButton *>(
                 confirmDialog.button(QMessageBox::No))) {
@@ -383,7 +384,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
                          QLatin1String(Theme::kAccent),
                          QLatin1String(Theme::kSelectionBg),
                          QLatin1String(Theme::kPressedBg)));
-}
+        }
         if (confirmDialog.exec() != QMessageBox::Yes) {
             event->ignore();
             return;
