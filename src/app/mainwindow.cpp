@@ -979,12 +979,20 @@ void MainWindow::startRos2Bridge()
                 if (m_imagePanel && !m_debugFakeActive) {
                     // Live tool tip on 2D view: same metric space as setMetricFrame hover.
                     // Demo mode drives pose itself (with cut/rapid stamp control).
-                    m_imagePanel->setToolPose(double(feedback.pathParams.xPos),
-                                              double(feedback.pathParams.yPos),
-                                              double(feedback.pathParams.zPos),
-                                              /*valid=*/true);
-                    m_imagePanel->setPathProgress(int(feedback.completedPath),
-                                                  int(feedback.currentPath));
+                    // PLC keeps publishing after a task ends; without an active task
+                    // the marker would reappear right after applyMillingProgress clears it.
+                    const bool taskActive =
+                        m_activeBackendTaskId != 0 && !m_activeTaskFinished;
+                    if (taskActive) {
+                        m_imagePanel->setToolPose(double(feedback.pathParams.xPos),
+                                                  double(feedback.pathParams.yPos),
+                                                  double(feedback.pathParams.zPos),
+                                                  /*valid=*/true);
+                        m_imagePanel->setPathProgress(int(feedback.completedPath),
+                                                      int(feedback.currentPath));
+                    } else {
+                        m_imagePanel->clearToolPose();
+                    }
                 }
             });
 
