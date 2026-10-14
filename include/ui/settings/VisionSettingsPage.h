@@ -21,6 +21,12 @@ public:
     SettingsSaveOutcome save() override;
     void revert() override;
     void restoreDefaults() override;
+    std::optional<Permission> writePermission() const override
+    {
+        return Permission::EditCameraConfig;
+    }
+    void setWriteAllowed(bool allowed) override;
+    QString pendingChangeSummary() const override;
 
 protected:
     void reloadFromSource() override;
@@ -31,6 +37,7 @@ private:
     void notifyDirty();
 
     HikCameraConfig m_loaded;
+    QWidget *m_form{nullptr};
     ElaCheckBox *m_enabled{nullptr};
     QLineEdit *m_address{nullptr};
     QSpinBox *m_port{nullptr};

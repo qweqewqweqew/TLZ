@@ -10,7 +10,7 @@ class QLineEdit;
 class Ros2Bridge;
 
 // 设置页：坐标补偿 + 是否下发路径到 PLC。
-// 点「应用」后通过 ROS topic 写入后端，并持久化到 backend_params.ini。
+// 「应用」只发出 applyRequested，由设置页统一做权限校验、写文件、下发和审计。
 class BackendParamsDialog : public QFrame
 {
     Q_OBJECT
@@ -25,16 +25,17 @@ public:
     double offsetZ() const;
     bool dispatchPathsToPlc() const;
     bool isDirty() const;
+    QString pendingChangeSummary() const;
     bool commitToBackend(QString *error);
     void reloadFromDisk();
     void applyFactoryDefaults();
 
 signals:
     void dirtyChanged(bool dirty);
+    void applyRequested();
 
 private:
     QLineEdit *makeOffsetEdit(QWidget *parent);
-    void applyParams();
     void loadSettings();
     bool saveSettings() const;
     void rememberDisk();

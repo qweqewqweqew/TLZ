@@ -1,4 +1,5 @@
 #include "app/mainwindow.h"
+#include "auth/AuthService.h"
 #include "data/Database.h"
 #include "data/DatabaseBootstrap.h"
 #include "data/InspectionRepository.h"
@@ -164,6 +165,7 @@ int main(int argc, char *argv[])
         databaseBootstrapThread->wait();
     }
     delete databaseBootstrapThread;
+    AuthService::instance().shutdown();
     Database::instance().close();
     if (rclcpp::ok()) {
         rclcpp::shutdown();

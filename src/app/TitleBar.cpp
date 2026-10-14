@@ -5,6 +5,7 @@
 #include "app/UiHelpers.h"
 
 #include <QColor>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
@@ -115,6 +116,7 @@ TitleBar::TitleBar(QWidget *parent)
     m_emergencyStopButton->installEventFilter(this);
     titleLayout->addStretch();
 
+    m_userButton = createUserChip();
     m_settingsButton = createActionButton("设置", 108, this);
     m_startNodesButton = createActionButton("启动", 108, this);
     m_startNodesButton->setToolTip(QStringLiteral("启动算法、相机、后端节点"));
@@ -132,8 +134,16 @@ TitleBar::TitleBar(QWidget *parent)
     titleLayout->addWidget(m_historyButton);
     titleLayout->addWidget(m_settingsButton);
     titleLayout->addWidget(m_startNodesButton);
-    titleLayout->addSpacing(24);
+    titleLayout->addSpacing(8);
+    auto *divider = new QFrame(this);
+    divider->setFixedSize(1, 30);
+    divider->setStyleSheet(QStringLiteral("background:%1;border:none;").arg(Theme::kBorder));
+    titleLayout->addWidget(divider);
+    titleLayout->addSpacing(4);
+    titleLayout->addWidget(m_userButton);
+    titleLayout->addSpacing(20);
     titleLayout->addWidget(m_emergencyStopButton);
+    setUserIdentity(QString(), Role::None);
 
     auto *minimizeShortcut = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Escape), this);
     auto *maximizeShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
@@ -142,6 +152,9 @@ TitleBar::TitleBar(QWidget *parent)
     maximizeShortcut->setContext(Qt::WindowShortcut);
     closeShortcut->setContext(Qt::WindowShortcut);
 
+    connect(m_userButton, &QPushButton::clicked, this, [this]() {
+        emit userRequested(m_userButton->mapToGlobal(QPoint(0, m_userButton->height() + 4)));
+    });
     connect(m_settingsButton, &QPushButton::clicked, this, &TitleBar::settingsRequested);
     connect(m_startNodesButton, &QPushButton::clicked, this, [this]() {
         if (m_nodesRunning) {
@@ -197,6 +210,94 @@ void TitleBar::setStartNodesBusy(bool busy)
     }
     m_startNodesBusy = busy;
     updateStartNodesButton();
+}
+
+QPushButton *TitleBar::createUserChip()
+{
+    auto *chip = new QPushButton(this);
+    chip->setObjectName(QStringLiteral("titleUserChip"));
+    chip->setFixedSize(188, 42);
+    chip->setCursor(Qt::PointingHandCursor);
+    chip->setStyleSheet(QStringLiteral(R"(
+        QPushButton#titleUserChip {
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 21px;
+        }
+        QPushButton#titleUserChip:hover {
+            background: %1;
+            border-color: %2;
+        }
+        QPushButton#titleUserChip:pressed {
+            background: %3;
+        }
+    )").arg(Theme::kHoverBg, Theme::kBorder, Theme::kPressedBg));
+
+    auto *layout = new QHBoxLayout(chip);
+    layout->setContentsMargins(5, 0, 10, 0);
+    layout->setSpacing(8);
+
+    m_userAvatar = new QLabel(chip);
+    m_userAvatar->setFixedSize(32, 32);
+    m_userAvatar->setAlignment(Qt::AlignCenter);
+    layout->addWidget(m_userAvatar);
+
+    auto *texts = new QVBoxLayout();
+    texts->setContentsMargins(0, 0, 0, 0);
+    texts->setSpacing(0);
+    m_userName = new QLabel(chip);
+    m_userName->setStyleSheet(QStringLiteral("color:%1;font-size:15px;font-weight:600;"
+                                             "background:transparent;border:none;")
+                                  .arg(Theme::kTextPrimary));
+    m_userRole = new QLabel(chip);
+    texts->addStretch(1);
+    texts->addWidget(m_userName);
+    texts->addWidget(m_userRole);
+    texts->addStretch(1);
+    layout->addLayout(texts, 1);
+
+    auto *arrow = new QLabel(QStringLiteral("▾"), chip);
+    arrow->setStyleSheet(QStringLiteral("color:%1;font-size:14px;background:transparent;border:none;")
+                             .arg(Theme::kTextMuted));
+    layout->addWidget(arrow);
+
+    for (QLabel *label : {m_userAvatar, m_userName, m_userRole, arrow}) {
+        label->setAttribute(Qt::WA_TransparentForMouseEvents);
+    }
+    return chip;
+}
+
+void TitleBar::setUserIdentity(const QString &username, Role role)
+{
+    if (!m_userButton) {
+        return;
+    }
+    const bool loggedIn = role != Role::None && !username.isEmpty();
+    QString color = QLatin1String(Theme::kStateUnknown);
+    if (role == Role::Administrator) {
+        color = QLatin1String(Theme::kRealtime);
+    } else if (role == Role::Technician) {
+        color = QLatin1String(Theme::kAccent);
+    } else if (role == Role::Operator) {
+        color = QLatin1String(Theme::kStateSuccess);
+    }
+
+    m_userAvatar->setText(loggedIn ? username.left(1).toUpper() : QStringLiteral("?"));
+    m_userAvatar->setStyleSheet(QStringLiteral("color:%1;background:%2;border:1px solid %1;"
+                                               "border-radius:16px;font-size:15px;font-weight:700;")
+                                    .arg(color, QString::fromLatin1(loggedIn ? Theme::kControlBg
+                                                                             : Theme::kPanelBg)));
+
+    const QFontMetrics metrics(m_userName->font());
+    m_userName->setText(loggedIn ? metrics.elidedText(username, Qt::ElideRight, 110)
+                                 : QStringLiteral("未登录"));
+    m_userRole->setText(loggedIn ? Auth::roleDisplayName(role) : QStringLiteral("点击登录"));
+    m_userRole->setStyleSheet(QStringLiteral("color:%1;font-size:12px;background:transparent;border:none;")
+                                  .arg(loggedIn ? color : QString::fromLatin1(Theme::kTextMuted)));
+    m_userButton->setToolTip(loggedIn
+                                 ? QStringLiteral("%1（%2）。点击修改密码或退出登录")
+                                       .arg(username, Auth::roleDisplayName(role))
+                                 : QStringLiteral("登录以修改受权限控制的设置"));
 }
 
 void TitleBar::updateStartNodesButton()

@@ -50,6 +50,8 @@ private:
 
     void buildMainView();
     void connectTitleBar();
+    void showUserMenu(const QPoint &anchor);
+    void refreshUserIdentity();
     void showHistoryPage();
     void startRos2Bridge();
     void startNodes();
@@ -157,6 +159,7 @@ private:
     double m_debugYOffsetMm{0.0};
     bool m_databaseReady{false};
     bool m_stopScriptLaunched{false};
+    QString m_lastIdentity;
 };
 
 #endif // MAINWINDOW_H

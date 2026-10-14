@@ -5,6 +5,7 @@
         <file>img/max.png</file>
         <file>img/mini.png</file>
         <file>img/minimize.png</file>
+        <file>img/chevron_down.svg</file>
         <file>icon/app.ico</file>
     </qresource>
 </RCC>

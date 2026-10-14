@@ -1,15 +1,18 @@
 #include "ui/settings/NodeCommSettingsPage.h"
 
 #include "app/RuntimeIniPaths.h"
+#include "app/Theme.h"
 #include "app/UiHelpers.h"
 #include "data/Database.h"
 #include "ui/settings/SettingsFormWidgets.h"
 
 #include <QCoreApplication>
 #include <QFileInfo>
+#include <QFormLayout>
 #include <QLabel>
 #include <QPlainTextEdit>
 #include <QSettings>
+#include <QTabWidget>
 #include <QVBoxLayout>
 
 namespace {
@@ -49,47 +52,53 @@ NodeCommSettingsPage::NodeCommSettingsPage(QWidget *parent)
 {
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(12);
-    root->addWidget(settingsSourceBanner(
-        QStringLiteral("数据来源：node_launcher.ini（与主窗口启动/停止脚本同一查找规则）"
-                       "和 database.ini（与 DatabaseBootstrap 相同，程序目录）。"
-                       "本页只读。启停脚本属于危险项，不在界面里修改。"),
+    root->setSpacing(0);
+    auto *tabs = settingsTabs(this);
+    root->addWidget(tabs);
+
+    QVBoxLayout *scriptTab = addSettingsTab(tabs, QStringLiteral("节点脚本"));
+    auto *launcher = createPanel(QStringLiteral("启动 / 停止脚本"), nullptr, this);
+    auto *launcherHost = new QWidget(launcher);
+    QFormLayout *launcherForm = settingsFormLayout(launcherHost);
+    m_launcherPath = settingsHint(QString(), launcherHost);
+    m_startScript = settingsHint(QString(), launcherHost);
+    m_stopScript = settingsHint(QString(), launcherHost);
+    for (QLabel *label : {m_launcherPath, m_startScript, m_stopScript}) {
+        label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        label->setStyleSheet(QStringLiteral(
+                                 "color:%1;font-size:13px;border:none;background:transparent;")
+                                 .arg(Theme::kTextPrimary));
+    }
+    addSettingsField(launcherForm, QStringLiteral("配置文件"), m_launcherPath, QString(), launcherHost);
+    addSettingsField(launcherForm, QStringLiteral("StartAll"), m_startScript, QString(), launcherHost);
+    addSettingsField(launcherForm, QStringLiteral("StopAll"), m_stopScript, QString(), launcherHost);
+    qobject_cast<QVBoxLayout *>(launcher->layout())->addWidget(launcherHost);
+    scriptTab->addWidget(launcher);
+    scriptTab->addWidget(settingsHint(
+        QStringLiteral("本页只读。启停脚本属于危险项，不在界面里修改。"),
+        this));
+    scriptTab->addStretch(1);
+    scriptTab->addWidget(settingsSourceBanner(
+        QStringLiteral("数据来源：node_launcher.ini，与主窗口启动 / 停止按钮同一查找规则。"),
         this));
 
-    auto *launcher = createPanel(QStringLiteral("节点脚本"), nullptr, this);
-    auto *launcherLayout = qobject_cast<QVBoxLayout *>(launcher->layout());
-    m_launcherPath = settingsHint(QString(), launcher);
-    m_startScript = settingsHint(QString(), launcher);
-    m_stopScript = settingsHint(QString(), launcher);
-    m_launcherPath->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    m_startScript->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    m_stopScript->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    launcherLayout->addWidget(m_launcherPath);
-    launcherLayout->addWidget(m_startScript);
-    launcherLayout->addWidget(m_stopScript);
-    launcherLayout->addWidget(settingsHint(
-        QStringLiteral("计划权限：管理员可改，技术员只读。当前界面保持只读，避免误改 StartAll/StopAll。"),
-        launcher));
-    root->addWidget(launcher);
+    QVBoxLayout *databaseTab = addSettingsTab(tabs, QStringLiteral("数据库"), false);
+    m_databaseSummary = settingsReadOnlyText(this);
+    databaseTab->addWidget(m_databaseSummary, 1);
+    databaseTab->addWidget(settingsSourceBanner(
+        QStringLiteral("数据来源：程序目录下的 database.ini。密码类键以掩码显示。"),
+        this));
 
-    auto *database = createPanel(QStringLiteral("数据库"), nullptr, this);
-    auto *databaseLayout = qobject_cast<QVBoxLayout *>(database->layout());
-    m_databaseSummary = settingsReadOnlyText(database);
-    databaseLayout->addWidget(m_databaseSummary);
-    root->addWidget(database);
-
-    auto *pending = createPanel(QStringLiteral("未对接通信项"), nullptr, this);
-    auto *pendingLayout = qobject_cast<QVBoxLayout *>(pending->layout());
-    pendingLayout->addWidget(settingsPendingBlock(
+    QVBoxLayout *pendingTab = addSettingsTab(tabs, QStringLiteral("PLC 与通信"));
+    pendingTab->addWidget(settingsPendingBlock(
         QStringLiteral("PLC / UDP 地址与超时"),
-        QStringLiteral("待对接 node_launcher.ini / 后端字段（PLC IP 等仍写在 start_all.bat 内，ini 没有这些键）。"),
-        pending));
-    pendingLayout->addWidget(settingsPendingBlock(
+        QStringLiteral("PLC IP 等仍写在 start_all.bat 内，node_launcher.ini 没有这些键。"),
+        this));
+    pendingTab->addWidget(settingsPendingBlock(
         QStringLiteral("单个节点启停"),
-        QStringLiteral("待对接 node_launcher.ini（现只有 StartAll / StopAll，且本页不提供执行按钮）。"),
-        pending));
-    root->addWidget(pending);
-    root->addStretch(1);
+        QStringLiteral("node_launcher.ini 现只有 StartAll / StopAll。"),
+        this));
+    pendingTab->addStretch(1);
     reloadFromSource();
 }
 
@@ -102,15 +111,13 @@ void NodeCommSettingsPage::reloadFromSource()
 {
     const QString launcherPath = nodeLauncherIniPath();
     if (m_launcherPath) {
-        m_launcherPath->setText(QStringLiteral("node_launcher.ini：%1").arg(existsText(launcherPath)));
+        m_launcherPath->setText(existsText(launcherPath));
     }
     if (m_startScript) {
-        m_startScript->setText(QStringLiteral("StartAll：%1")
-                                   .arg(existsText(resolveNodeLauncherScript(QStringLiteral("StartAll")))));
+        m_startScript->setText(existsText(resolveNodeLauncherScript(QStringLiteral("StartAll"))));
     }
     if (m_stopScript) {
-        m_stopScript->setText(QStringLiteral("StopAll：%1")
-                                  .arg(existsText(resolveNodeLauncherScript(QStringLiteral("StopAll")))));
+        m_stopScript->setText(existsText(resolveNodeLauncherScript(QStringLiteral("StopAll"))));
     }
 
     QStringList lines;

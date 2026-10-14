@@ -2,6 +2,7 @@
 
 #include "app/Logger.h"
 #include "app/RuntimeIniPaths.h"
+#include "auth/AccountSchema.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -186,7 +187,7 @@ bool ensureBaseSchema(QSqlDatabase &db, QString *errorMessage)
             return false;
         }
     }
-    return true;
+    return AccountSchema::ensure(db, errorMessage);
 }
 
 } // namespace

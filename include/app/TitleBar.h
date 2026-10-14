@@ -1,9 +1,12 @@
 #ifndef TITLEBAR_H
 #define TITLEBAR_H
 
+#include "auth/AuthTypes.h"
+
 #include <QFrame>
 #include <QPoint>
 
+class QLabel;
 class QPushButton;
 
 class TitleBar : public QFrame
@@ -23,8 +26,10 @@ public:
     void setWorkspacePage(WorkspacePage page);
     void setNodesRunning(bool running);
     void setStartNodesBusy(bool busy);
+    void setUserIdentity(const QString &username, Role role);
 
 signals:
+    void userRequested(const QPoint &menuAnchor);
     void homeRequested();
     void startNodesRequested();
     void stopNodesRequested();
@@ -41,6 +46,12 @@ protected:
 
 private:
     QPushButton *m_emergencyStopButton{nullptr};
+    QPushButton *createUserChip();
+
+    QPushButton *m_userButton{nullptr};
+    QLabel *m_userAvatar{nullptr};
+    QLabel *m_userName{nullptr};
+    QLabel *m_userRole{nullptr};
     QPushButton *m_homeButton{nullptr};
     QPushButton *m_historyButton{nullptr};
     QPushButton *m_settingsButton{nullptr};

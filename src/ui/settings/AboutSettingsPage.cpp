@@ -1,12 +1,15 @@
 #include "ui/settings/AboutSettingsPage.h"
 
 #include "app/RuntimeIniPaths.h"
+#include "app/Theme.h"
 #include "app/UiHelpers.h"
 #include "camera/HikCameraConfig.h"
 #include "ui/settings/SettingsFormWidgets.h"
 
 #include <QFileInfo>
+#include <QFormLayout>
 #include <QPlainTextEdit>
+#include <QTabWidget>
 #include <QVBoxLayout>
 
 namespace {
@@ -27,41 +30,38 @@ AboutSettingsPage::AboutSettingsPage(QWidget *parent)
 {
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(12);
-    root->addWidget(settingsSourceBanner(
-        QStringLiteral("数据来源：编译进界面的说明，加上各子页已经使用的 ini 路径。不另建版本配置。"),
+    root->setSpacing(0);
+    auto *tabs = settingsTabs(this);
+    root->addWidget(tabs);
+
+    QVBoxLayout *versionTab = addSettingsTab(tabs, QStringLiteral("版本信息"));
+    auto *version = createPanel(QStringLiteral("软件"), nullptr, this);
+    auto *versionHost = new QWidget(version);
+    QFormLayout *versionForm = settingsFormLayout(versionHost);
+    const auto addInfo = [versionForm, versionHost](const QString &name, const QString &value) {
+        auto *label = settingsHint(value, versionHost);
+        label->setStyleSheet(QStringLiteral(
+                                 "color:%1;font-size:14px;border:none;background:transparent;")
+                                 .arg(Theme::kTextPrimary));
+        addSettingsField(versionForm, name, label, QString(), versionHost);
+    };
+    addInfo(QStringLiteral("名称"), QStringLiteral("阴级铜表面粒子智能修整系统（MzTLZ）"));
+    addInfo(QStringLiteral("版本号"), QStringLiteral("未定义（CMake project 没有 VERSION）"));
+    addInfo(QStringLiteral("范围"), QStringLiteral("打磨机构上位机，不含整线画面和威纶通 HMI"));
+    qobject_cast<QVBoxLayout *>(version->layout())->addWidget(versionHost);
+    versionTab->addWidget(version);
+    versionTab->addWidget(settingsPendingBlock(
+        QStringLiteral("节点版本"),
+        QStringLiteral("算法 / 相机 / 后端节点没有版本 topic 或 ini 键。"),
         this));
+    versionTab->addStretch(1);
 
-    auto *version = createPanel(QStringLiteral("版本"), nullptr, this);
-    auto *versionLayout = qobject_cast<QVBoxLayout *>(version->layout());
-    versionLayout->addWidget(settingsHint(
-        QStringLiteral("软件：阴级铜表面粒子智能修整系统（MzTLZ）。"),
-        version));
-    versionLayout->addWidget(settingsHint(
-        QStringLiteral("版本号：CMake project(MzTLZ) 没有 VERSION，界面不编造版本号。"),
-        version));
-    versionLayout->addWidget(settingsHint(
-        QStringLiteral("设置信息架构：settings-ia v0.1，增量在 baseline-pre-settings-ia 之上。"),
-        version));
-    versionLayout->addWidget(settingsHint(
-        QStringLiteral("范围：打磨机构上位机。不含整线画面，也不包含威纶通 HMI。"),
-        version));
-    root->addWidget(version);
-
-    auto *paths = createPanel(QStringLiteral("配置路径"), nullptr, this);
-    auto *pathsLayout = qobject_cast<QVBoxLayout *>(paths->layout());
-    m_paths = settingsReadOnlyText(paths);
-    pathsLayout->addWidget(m_paths);
-    root->addWidget(paths);
-
-    auto *pending = createPanel(QStringLiteral("节点版本"), nullptr, this);
-    auto *pendingLayout = qobject_cast<QVBoxLayout *>(pending->layout());
-    pendingLayout->addWidget(settingsPendingBlock(
-        QStringLiteral("算法 / 相机 / 后端节点版本"),
-        QStringLiteral("待对接 节点版本上报（没有版本 topic 或 ini 键）。"),
-        pending));
-    root->addWidget(pending);
-    root->addStretch(1);
+    QVBoxLayout *pathsTab = addSettingsTab(tabs, QStringLiteral("配置路径"), false);
+    m_paths = settingsReadOnlyText(this);
+    pathsTab->addWidget(m_paths, 1);
+    pathsTab->addWidget(settingsSourceBanner(
+        QStringLiteral("各子页实际读写的配置文件，查找规则与运行时一致。"),
+        this));
     reloadFromSource();
 }
 

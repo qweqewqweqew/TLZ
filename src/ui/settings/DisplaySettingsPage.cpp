@@ -12,6 +12,8 @@
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStringList>
+#include <QTabWidget>
 #include <QVBoxLayout>
 
 DisplaySettingsPage::DisplaySettingsPage(QWidget *parent)
@@ -19,63 +21,59 @@ DisplaySettingsPage::DisplaySettingsPage(QWidget *parent)
 {
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(12);
-    root->addWidget(settingsSourceBanner(
-        QStringLiteral("数据来源：display.ini 的 [HeightMap3D] FlipX、CropLeftColumns、"
-                       "CropRightColumns。查找路径与三维视图相同。三维视图只在创建时读取，"
-                       "保存后要重新启动程序才作用到点云画面。"),
-        this));
-    root->addWidget(settingsHint(
-        QStringLiteral("计划权限：技术员及以上。当前没有登录钩子，此项不锁定。"),
-        this));
+    root->setSpacing(0);
+    auto *tabs = settingsTabs(this);
+    root->addWidget(tabs);
 
-    auto *panel = createPanel(QStringLiteral("三维高度图"), nullptr, this);
-    auto *panelLayout = qobject_cast<QVBoxLayout *>(panel->layout());
+    QVBoxLayout *heightTab = addSettingsTab(tabs, QStringLiteral("三维高度图"));
+    auto *panel = createPanel(QStringLiteral("显示裁切与翻转"), nullptr, this);
     auto *formHost = new QWidget(panel);
-    auto *form = new QFormLayout(formHost);
-    form->setContentsMargins(0, 0, 0, 0);
-    form->setHorizontalSpacing(12);
-    form->setVerticalSpacing(8);
+    m_form = formHost;
+    QFormLayout *form = settingsFormLayout(formHost);
 
-    m_flipX = settingsCheckBox(QStringLiteral("左右翻转（FlipX=1）"), formHost);
+    m_flipX = settingsCheckBox(QStringLiteral("左右翻转"), formHost);
     m_cropLeft = settingsSpinBox(formHost);
     m_cropLeft->setRange(0, 4096);
+    m_cropLeft->setSuffix(QStringLiteral(" 列"));
     m_cropRight = settingsSpinBox(formHost);
     m_cropRight->setRange(0, 4096);
-    addSettingsField(form,
-                     QStringLiteral("左右翻转"),
-                     m_flipX,
-                     QStringLiteral("写入整数 0 或 1。三维视图用 toInt()==1 判断，不能写成 true/false。"),
-                     formHost);
+    m_cropRight->setSuffix(QStringLiteral(" 列"));
+    addSettingsField(form, QStringLiteral("翻转"), m_flipX, QString(), formHost);
     addSettingsField(form, QStringLiteral("左侧裁列"), m_cropLeft, QString(), formHost);
     addSettingsField(form,
                      QStringLiteral("右侧裁列"),
                      m_cropRight,
                      QStringLiteral("只影响三维显示，不改变检测数据。"),
                      formHost);
-    panelLayout->addWidget(formHost);
-    root->addWidget(panel);
+    qobject_cast<QVBoxLayout *>(panel->layout())->addWidget(formHost);
+    panel->setMaximumWidth(640);
+    heightTab->addWidget(panel);
+    heightTab->addWidget(settingsHint(
+        QStringLiteral("技术员及以上可修改。三维视图只在创建时读取，保存后重启程序才作用到点云画面。"),
+        this));
+    heightTab->addStretch(1);
+    heightTab->addWidget(settingsSourceBanner(
+        QStringLiteral("数据来源：display.ini 的 [HeightMap3D]（FlipX 写 0/1，CropLeftColumns，CropRightColumns）。"),
+        this));
 
-    auto *pending = createPanel(QStringLiteral("未对接显示项"), nullptr, this);
-    auto *pendingLayout = qobject_cast<QVBoxLayout *>(pending->layout());
-    pendingLayout->addWidget(settingsPendingBlock(
+    QVBoxLayout *pendingTab = addSettingsTab(tabs, QStringLiteral("界面与主题"));
+    pendingTab->addWidget(settingsPendingBlock(
         QStringLiteral("图像叠加默认开关"),
-        QStringLiteral("待对接 display.ini（无叠加开关键）。"),
-        pending));
-    pendingLayout->addWidget(settingsPendingBlock(
+        QStringLiteral("display.ini 无叠加开关键。"),
+        this));
+    pendingTab->addWidget(settingsPendingBlock(
         QStringLiteral("曲线窗口"),
-        QStringLiteral("待对接 display.ini（无曲线窗口键）。"),
-        pending));
-    pendingLayout->addWidget(settingsPendingBlock(
+        QStringLiteral("display.ini 无曲线窗口键。"),
+        this));
+    pendingTab->addWidget(settingsPendingBlock(
         QStringLiteral("主题 / 字号"),
-        QStringLiteral("待对接 display.ini（主题现由 main.cpp 里 ElaTheme Dark 写死）。"),
-        pending));
-    pendingLayout->addWidget(settingsPendingBlock(
+        QStringLiteral("主题现由 main.cpp 写死为深色。"),
+        this));
+    pendingTab->addWidget(settingsPendingBlock(
         QStringLiteral("主页卡片显隐"),
-        QStringLiteral("待对接 display.ini（无卡片显隐键）。"),
-        pending));
-    root->addWidget(pending);
-    root->addStretch(1);
+        QStringLiteral("display.ini 无卡片显隐键。"),
+        this));
+    pendingTab->addStretch(1);
 
     connect(m_flipX, &QCheckBox::toggled, this, [this]() { notifyDirty(); });
     connect(m_cropLeft, qOverload<int>(&QSpinBox::valueChanged), this, [this](int) { notifyDirty(); });
@@ -184,6 +182,31 @@ QString DisplaySettingsPage::targetPath() const
         return existing;
     }
     return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("display.ini"));
+}
+
+void DisplaySettingsPage::setWriteAllowed(bool allowed)
+{
+    if (m_form) {
+        m_form->setEnabled(allowed);
+    }
+}
+
+QString DisplaySettingsPage::pendingChangeSummary() const
+{
+    const Values now = currentValues();
+    QStringList changes;
+    if (now.flipX != m_loaded.flipX) {
+        changes << QStringLiteral("左右翻转 %1 → %2")
+                       .arg(m_loaded.flipX ? 1 : 0)
+                       .arg(now.flipX ? 1 : 0);
+    }
+    if (now.cropLeft != m_loaded.cropLeft) {
+        changes << QStringLiteral("左侧裁列 %1 → %2").arg(m_loaded.cropLeft).arg(now.cropLeft);
+    }
+    if (now.cropRight != m_loaded.cropRight) {
+        changes << QStringLiteral("右侧裁列 %1 → %2").arg(m_loaded.cropRight).arg(now.cropRight);
+    }
+    return changes.join(QStringLiteral("；"));
 }
 
 void DisplaySettingsPage::notifyDirty()

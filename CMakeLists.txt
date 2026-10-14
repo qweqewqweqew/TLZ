@@ -183,6 +183,16 @@ add_executable(MzTLZ
     include/app/RuntimeIniPaths.h
     include/app/Logger.h
     include/app/Theme.h
+    src/auth/AuthTypes.cpp
+    include/auth/AuthTypes.h
+    src/auth/PasswordHasher.cpp
+    include/auth/PasswordHasher.h
+    src/auth/PasswordPolicy.cpp
+    include/auth/PasswordPolicy.h
+    src/auth/AccountSchema.cpp
+    include/auth/AccountSchema.h
+    src/auth/AuthService.cpp
+    include/auth/AuthService.h
     src/ui/panels/DataStatisticsPanel.cpp
     include/ui/panels/DataStatisticsPanel.h
     src/ui/panels/DeviceStatusPanel.cpp
@@ -203,6 +213,8 @@ add_executable(MzTLZ
     include/ui/dialogs/BackendParamsDialog.h
     src/ui/dialogs/TeachingDialog.cpp
     include/ui/dialogs/TeachingDialog.h
+    src/ui/dialogs/LoginDialog.cpp
+    include/ui/dialogs/LoginDialog.h
     src/ui/settings/SettingsSubPage.cpp
     include/ui/settings/SettingsSubPage.h
     src/ui/settings/SettingsFormWidgets.cpp
@@ -359,6 +371,12 @@ add_custom_command(TARGET MzTLZ POST_BUILD
         -DDEST=$<TARGET_FILE_DIR:MzTLZ>
         -P "${_hikvision_copy_script}"
 )
+
+option(MZTLZ_BUILD_TESTS "Build MzTLZ unit tests" ON)
+if(MZTLZ_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
 
 include(GNUInstallDirs)
 

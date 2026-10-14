@@ -8,9 +8,13 @@
 #include <QCheckBox>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QHBoxLayout>
+#include <QLabel>
 #include <QLineEdit>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStringList>
+#include <QTabWidget>
 #include <QVBoxLayout>
 
 namespace {
@@ -41,27 +45,33 @@ VisionSettingsPage::VisionSettingsPage(QWidget *parent)
 {
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(12);
-    root->addWidget(settingsSourceBanner(
-        QStringLiteral("数据来源：%1 的 [HikCamera]，字段与 HikCameraConfig::load 一致。"
-                       "保存写回该文件。HikCameraClient 在每次 startPreview 时重新读取，"
-                       "已打开的预览不会热更新。曝光、增益、触发方式、标定不在该 ini 中。"
-                       "独立 POE 视觉网段只作说明，本页不改路由。")
-            .arg(HikCameraConfig::defaultFilePath()),
-        this));
-    root->addWidget(settingsHint(
-        QStringLiteral("计划权限：管理员可写相机登录参数。当前没有登录钩子，此项不锁定。"),
-        this));
+    root->setSpacing(0);
+    auto *tabs = settingsTabs(this);
+    root->addWidget(tabs);
 
-    auto *panel = createPanel(QStringLiteral("海康连接"), nullptr, this);
-    auto *panelLayout = qobject_cast<QVBoxLayout *>(panel->layout());
-    auto *formHost = new QWidget(panel);
-    auto *form = new QFormLayout(formHost);
-    form->setContentsMargins(0, 0, 0, 0);
-    form->setHorizontalSpacing(12);
-    form->setVerticalSpacing(8);
+    QVBoxLayout *connectionTab = addSettingsTab(tabs, QStringLiteral("海康连接"));
+    auto *formHost = new QWidget(this);
+    m_form = formHost;
+    auto *columns = new QHBoxLayout(formHost);
+    columns->setContentsMargins(0, 0, 0, 0);
+    columns->setSpacing(16);
 
-    m_enabled = settingsCheckBox(QStringLiteral("启用海康预览（Enabled）"), formHost);
+    auto *loginPanel = createPanel(QStringLiteral("登录"), nullptr, formHost);
+    auto *loginHost = new QWidget(loginPanel);
+    QFormLayout *form = settingsFormLayout(loginHost);
+    qobject_cast<QVBoxLayout *>(loginPanel->layout())->addWidget(loginHost);
+    qobject_cast<QVBoxLayout *>(loginPanel->layout())->addStretch(1);
+
+    auto *streamPanel = createPanel(QStringLiteral("码流与重连"), nullptr, formHost);
+    auto *streamHost = new QWidget(streamPanel);
+    QFormLayout *streamForm = settingsFormLayout(streamHost);
+    qobject_cast<QVBoxLayout *>(streamPanel->layout())->addWidget(streamHost);
+    qobject_cast<QVBoxLayout *>(streamPanel->layout())->addStretch(1);
+
+    columns->addWidget(loginPanel, 1);
+    columns->addWidget(streamPanel, 1);
+
+    m_enabled = settingsCheckBox(QStringLiteral("启用海康预览"), formHost);
     m_address = settingsLineEdit(formHost);
     m_port = settingsSpinBox(formHost);
     m_port->setRange(1, 65535);
@@ -81,54 +91,59 @@ VisionSettingsPage::VisionSettingsPage(QWidget *parent)
     m_reconnect->setRange(1000, 60000);
     m_reconnect->setSuffix(QStringLiteral(" ms"));
 
-    form->addRow(m_enabled);
-    addSettingsField(form, QStringLiteral("IP / Address"), m_address, QString(), formHost);
-    addSettingsField(form, QStringLiteral("端口 / Port"), m_port, QString(), formHost);
-    addSettingsField(form, QStringLiteral("用户名"), m_username, QString(), formHost);
+    form->addRow(new QLabel(loginHost), m_enabled);
+    addSettingsField(form, QStringLiteral("IP 地址"), m_address, QString(), loginHost);
+    addSettingsField(form, QStringLiteral("端口"), m_port, QString(), loginHost);
+    addSettingsField(form, QStringLiteral("用户名"), m_username, QString(), loginHost);
     addSettingsField(form,
                      QStringLiteral("密码"),
                      m_password,
-                     QStringLiteral("密码只写回 hik_camera.ini，界面以掩码显示，日志不记录密码。"),
-                     formHost);
-    addSettingsField(form, QStringLiteral("通道 / Channel"), m_channel, QString(), formHost);
-    addSettingsField(form,
-                     QStringLiteral("码流 / StreamType"),
+                     QStringLiteral("以掩码显示，日志不记录密码。"),
+                     loginHost);
+    addSettingsField(streamForm, QStringLiteral("通道"), m_channel, QString(), streamHost);
+    addSettingsField(streamForm,
+                     QStringLiteral("码流"),
                      m_streamType,
-                     QStringLiteral("0=主码流，1=子码流。范围与 HikCameraConfig::validate 一致（0~10）。"),
-                     formHost);
-    addSettingsField(form,
-                     QStringLiteral("传输 / LinkMode"),
+                     QStringLiteral("0 = 主码流，1 = 子码流。"),
+                     streamHost);
+    addSettingsField(streamForm,
+                     QStringLiteral("传输方式"),
                      m_linkMode,
-                     QStringLiteral("0=TCP，1=UDP。这是传输方式，不是触发方式。"),
-                     formHost);
-    addSettingsField(form, QStringLiteral("登录超时"), m_loginTimeout, QString(), formHost);
-    addSettingsField(form, QStringLiteral("重连间隔"), m_reconnect, QString(), formHost);
-    panelLayout->addWidget(formHost);
-    root->addWidget(panel);
+                     QStringLiteral("0 = TCP，1 = UDP（不是触发方式）。"),
+                     streamHost);
+    addSettingsField(streamForm, QStringLiteral("登录超时"), m_loginTimeout, QString(), streamHost);
+    addSettingsField(streamForm, QStringLiteral("重连间隔"), m_reconnect, QString(), streamHost);
 
-    auto *pending = createPanel(QStringLiteral("未对接采集 / 标定"), nullptr, this);
-    auto *pendingLayout = qobject_cast<QVBoxLayout *>(pending->layout());
-    pendingLayout->addWidget(settingsPendingBlock(
+    connectionTab->addWidget(formHost);
+    connectionTab->addWidget(settingsHint(
+        QStringLiteral("只有管理员能修改相机登录参数。保存后在下次开始海康预览时生效，已打开的画面不会热更新。"),
+        this));
+    connectionTab->addStretch(1);
+    connectionTab->addWidget(settingsSourceBanner(
+        QStringLiteral("数据来源：%1 的 [HikCamera]。").arg(HikCameraConfig::defaultFilePath()),
+        this));
+
+    QVBoxLayout *pendingTab = addSettingsTab(tabs, QStringLiteral("采集与标定"));
+    pendingTab->addWidget(settingsPendingBlock(
         QStringLiteral("触发方式"),
-        QStringLiteral("待对接 hik_camera.ini（无 Trigger 键，HikCameraConfig 未读取）。"),
-        pending));
-    pendingLayout->addWidget(settingsPendingBlock(
+        QStringLiteral("hik_camera.ini 无 Trigger 键，HikCameraConfig 未读取。"),
+        this));
+    pendingTab->addWidget(settingsPendingBlock(
         QStringLiteral("曝光"),
-        QStringLiteral("待对接 hik_camera.ini（无 Exposure 键，HikCameraConfig 未读取）。"),
-        pending));
-    pendingLayout->addWidget(settingsPendingBlock(
+        QStringLiteral("hik_camera.ini 无 Exposure 键，HikCameraConfig 未读取。"),
+        this));
+    pendingTab->addWidget(settingsPendingBlock(
         QStringLiteral("增益"),
-        QStringLiteral("待对接 hik_camera.ini（无 Gain 键，HikCameraConfig 未读取）。"),
-        pending));
-    pendingLayout->addWidget(settingsPendingBlock(
+        QStringLiteral("hik_camera.ini 无 Gain 键，HikCameraConfig 未读取。"),
+        this));
+    pendingTab->addWidget(settingsPendingBlock(
         QStringLiteral("标定 / 坐标系"),
-        QStringLiteral("待对接 相机标定文件。XYZ 补偿在「加工与工艺」的 backend_params.ini，不是相机标定。"),
-        pending));
-    pendingLayout->addWidget(settingsHint(
-        QStringLiteral("POE 视觉网段：现场相机走独立网段。本页只维护登录参数，不配置交换机或路由。"),
-        pending));
-    root->addWidget(pending);
-    root->addStretch(1);
+        QStringLiteral("相机标定文件。XYZ 补偿在「加工与工艺」，不是相机标定。"),
+        this));
+    pendingTab->addWidget(settingsHint(
+        QStringLiteral("现场相机走独立 POE 网段。本页只维护登录参数，不配置交换机或路由。"),
+        this));
+    pendingTab->addStretch(1);
 
     const auto mark = [this]() { notifyDirty(); };
     connect(m_enabled, &QCheckBox::toggled, this, mark);
@@ -239,6 +254,43 @@ HikCameraConfig VisionSettingsPage::currentConfig() const
     config.loginTimeoutMs = m_loginTimeout ? m_loginTimeout->value() : 3000;
     config.reconnectIntervalMs = m_reconnect ? m_reconnect->value() : 10000;
     return config;
+}
+
+void VisionSettingsPage::setWriteAllowed(bool allowed)
+{
+    if (m_form) {
+        m_form->setEnabled(allowed);
+    }
+}
+
+QString VisionSettingsPage::pendingChangeSummary() const
+{
+    const HikCameraConfig now = currentConfig();
+    const HikCameraConfig &was = m_loaded;
+    QStringList changes;
+    const auto addText = [&changes](const QString &name, const QString &before, const QString &after) {
+        if (before != after) {
+            changes << QStringLiteral("%1 %2 → %3").arg(name, before, after);
+        }
+    };
+    const auto addInt = [&addText](const QString &name, int before, int after) {
+        addText(name, QString::number(before), QString::number(after));
+    };
+    addText(QStringLiteral("启用"),
+            was.enabled ? QStringLiteral("是") : QStringLiteral("否"),
+            now.enabled ? QStringLiteral("是") : QStringLiteral("否"));
+    addText(QStringLiteral("地址"), was.address, now.address);
+    addInt(QStringLiteral("端口"), was.port, now.port);
+    addText(QStringLiteral("用户名"), was.username, now.username);
+    if (was.password != now.password) {
+        changes << QStringLiteral("密码已修改");
+    }
+    addInt(QStringLiteral("通道"), was.channel, now.channel);
+    addInt(QStringLiteral("码流"), was.streamType, now.streamType);
+    addInt(QStringLiteral("传输"), was.linkMode, now.linkMode);
+    addInt(QStringLiteral("登录超时 ms"), was.loginTimeoutMs, now.loginTimeoutMs);
+    addInt(QStringLiteral("重连间隔 ms"), was.reconnectIntervalMs, now.reconnectIntervalMs);
+    return changes.join(QStringLiteral("；"));
 }
 
 void VisionSettingsPage::notifyDirty()

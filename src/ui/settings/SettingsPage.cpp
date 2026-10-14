@@ -4,6 +4,7 @@
 #include "ElaPushButton.h"
 #include "app/Theme.h"
 #include "app/UiHelpers.h"
+#include "auth/AuthService.h"
 #include "ui/settings/AboutSettingsPage.h"
 #include "ui/settings/AccountSettingsPage.h"
 #include "ui/settings/AlarmSettingsPage.h"
@@ -20,7 +21,6 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QScrollArea>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
@@ -63,8 +63,7 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
                       "  background: %5;"
                       "  color: %6;"
                       "}"
-                      "QListWidget#settingsNav::item:hover { background: %7; }"
-                      "QScrollArea#settingsScroll { background: transparent; border: none; }")
+                      "QListWidget#settingsNav::item:hover { background: %7; }")
                       .arg(Theme::kWindowBg,
                            Theme::kPanelBg,
                            Theme::kTextPrimary,
@@ -95,15 +94,18 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
     contentColumn->setSpacing(8);
     m_pageTitle = makeLabel(QString(), QStringLiteral("panelTitle"));
     contentColumn->addWidget(m_pageTitle);
+    m_accessBanner = makeLabel(QString(), QStringLiteral("sectionHint"));
+    m_accessBanner->setWordWrap(true);
+    contentColumn->addWidget(m_accessBanner);
 
+    // 各子页用页签分区、页签内自行滚动；外层不再包滚动区，否则栈会按最高的子页撑高，短页底部留白。
     m_stack = new QStackedWidget(this);
-    auto *scroll = new QScrollArea(this);
-    scroll->setObjectName(QStringLiteral("settingsScroll"));
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
-    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    scroll->setWidget(m_stack);
-    contentColumn->addWidget(scroll, 1);
+    contentColumn->addWidget(m_stack, 1);
+
+    auto *actionDivider = new QFrame(this);
+    actionDivider->setFixedHeight(1);
+    actionDivider->setStyleSheet(QStringLiteral("background:%1;border:none;").arg(Theme::kDivider));
+    contentColumn->addWidget(actionDivider);
 
     auto *actionRow = new QHBoxLayout();
     actionRow->setContentsMargins(0, 0, 0, 0);
@@ -122,6 +124,7 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
     m_defaultButton = defaultButton;
     m_status = makeLabel(QString(), QStringLiteral("sectionHint"));
     m_status->setWordWrap(true);
+    m_status->setMinimumHeight(36);
     actionRow->addWidget(saveButton);
     actionRow->addWidget(cancelButton);
     actionRow->addWidget(defaultButton);
@@ -137,7 +140,17 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
                 updateActions();
             }
         });
+        connect(page, &SettingsSubPage::editableChanged, this, [this, page]() {
+            if (page == currentPage()) {
+                updateActions();
+            }
+        });
         connect(page, &SettingsSubPage::historyRequested, this, &SettingsPage::historyRequested);
+        connect(page, &SettingsSubPage::saveRequested, this, [this, page]() {
+            if (page == currentPage()) {
+                saveCurrent();
+            }
+        });
     };
     addPage(QStringLiteral("加工与工艺"), new ProcessSettingsPage(bridge, m_stack));
     addPage(QStringLiteral("视觉与相机"), new VisionSettingsPage(m_stack));
@@ -170,16 +183,22 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
     });
     connect(defaultButton, &ElaPushButton::clicked, this, [this]() {
         if (auto *page = currentPage()) {
+            if (!canWrite(page)) {
+                return;
+            }
             page->restoreDefaults();
             setStatus(QStringLiteral("已填入该页默认值，尚未写入文件。确认后点「保存」。"), false);
             updateActions();
         }
     });
 
+    connect(&AuthService::instance(), &AuthService::sessionChanged, this, &SettingsPage::refreshAccess);
+
     m_updatingNav = true;
     m_nav->setCurrentRow(0);
     m_updatingNav = false;
     m_currentRow = 0;
+    refreshAccess();
     showPage(0);
 }
 
@@ -226,21 +245,26 @@ void SettingsPage::showPage(int row)
     if (auto *page = currentPage()) {
         setStatus(page->bindingSummary(), false);
     }
+    updateAccessBanner();
     updateActions();
 }
 
 void SettingsPage::updateActions()
 {
     auto *page = currentPage();
-    const bool editable = page && page->isEditable();
+    const bool hasFields = page && page->isEditable();
+    const bool editable = hasFields && canWrite(page);
     const bool dirty = page && page->isDirty();
     if (m_saveButton) {
+        m_saveButton->setVisible(hasFields);
         m_saveButton->setEnabled(editable && dirty);
     }
     if (m_cancelButton) {
+        m_cancelButton->setVisible(hasFields);
         m_cancelButton->setEnabled(editable && dirty);
     }
     if (m_defaultButton) {
+        m_defaultButton->setVisible(hasFields);
         m_defaultButton->setEnabled(editable);
     }
 }
@@ -264,9 +288,32 @@ bool SettingsPage::saveCurrent()
         return true;
     }
 
+    AuthService &auth = AuthService::instance();
+    const QString title = pageTitle(m_currentRow);
+    if (!canWrite(page)) {
+        const Role needed = Auth::minimumRole(*page->writePermission());
+        const QString message = QStringLiteral("保存被拒绝：本页需要「%1」及以上权限，当前身份：%2。")
+                                    .arg(Auth::roleDisplayName(needed), auth.identityText());
+        auth.audit(QStringLiteral("settings.save"), title, QStringLiteral("权限不足"), false);
+        setStatus(message, true);
+        ElaMessageBar::error(ElaMessageBarType::BottomRight,
+                             QStringLiteral("设置未保存"),
+                             message,
+                             3600,
+                             this);
+        emit logRequested(QStringLiteral("WARN"), message);
+        return false;
+    }
+
+    const QString summary = page->pendingChangeSummary();
     const SettingsSaveOutcome outcome = page->save();
     const bool rejected = outcome.status == SettingsSaveStatus::Rejected;
     const bool warning = outcome.status == SettingsSaveStatus::SavedWithWarning;
+    QString detail = summary.isEmpty() ? QStringLiteral("（无字段摘要）") : summary;
+    if (rejected || warning) {
+        detail += QStringLiteral("；结果：%1").arg(outcome.message);
+    }
+    auth.audit(QStringLiteral("settings.save"), title, detail, !rejected);
     setStatus(outcome.message, rejected || warning);
     if (rejected) {
         ElaMessageBar::error(ElaMessageBarType::BottomRight,
@@ -294,6 +341,79 @@ bool SettingsPage::saveCurrent()
     }
     updateActions();
     return true;
+}
+
+bool SettingsPage::canWrite(const SettingsSubPage *page) const
+{
+    if (!page) {
+        return false;
+    }
+    const std::optional<Permission> permission = page->writePermission();
+    return !permission || AuthService::instance().can(*permission);
+}
+
+void SettingsPage::refreshAccess()
+{
+    if (!m_stack) {
+        return;
+    }
+    for (int i = 0; i < m_stack->count(); ++i) {
+        auto *page = qobject_cast<SettingsSubPage *>(m_stack->widget(i));
+        if (!page) {
+            continue;
+        }
+        const bool allowed = canWrite(page);
+        // 会话结束（超时、退出、切换账户）时丢弃未保存的修改，避免下一位用户直接保存。
+        if (!allowed && page->isDirty()) {
+            page->revert();
+        }
+        page->setWriteAllowed(allowed);
+    }
+    updateAccessBanner();
+    updateActions();
+}
+
+void SettingsPage::updateAccessBanner()
+{
+    if (!m_accessBanner) {
+        return;
+    }
+    auto *page = currentPage();
+    const std::optional<Permission> permission = page ? page->writePermission() : std::nullopt;
+    if (!permission) {
+        m_accessBanner->hide();
+        return;
+    }
+    AuthService &auth = AuthService::instance();
+    const Role needed = Auth::minimumRole(*permission);
+    QString text;
+    bool problem = false;
+    if (!auth.isAvailable()) {
+        text = QStringLiteral("数据库未就绪，账户功能不可用。本页的受控项暂时锁定。");
+        problem = true;
+    } else if (auth.can(*permission)) {
+        text = QStringLiteral("当前身份：%1，可以修改本页（需要「%2」及以上）。")
+                   .arg(auth.identityText(), Auth::roleDisplayName(needed));
+    } else {
+        text = QStringLiteral("只读：修改本页需要「%1」及以上权限，当前身份：%2。点标题栏的账户按钮登录。")
+                   .arg(Auth::roleDisplayName(needed), auth.identityText());
+        problem = true;
+    }
+    m_accessBanner->setStyleSheet(QStringLiteral(
+                                      "color:%1;font-size:13px;border:none;border-radius:6px;"
+                                      "padding:5px 10px;background:%2;")
+                                      .arg(problem ? Theme::kStateWarning : Theme::kTextSecondary,
+                                           problem ? Theme::kWarningBg : Theme::kPanelBg));
+    m_accessBanner->setText(text);
+    m_accessBanner->show();
+}
+
+QString SettingsPage::pageTitle(int row) const
+{
+    if (m_nav && m_nav->item(row)) {
+        return m_nav->item(row)->text();
+    }
+    return QString();
 }
 
 SettingsSubPage *SettingsPage::currentPage() const

@@ -2,6 +2,9 @@
 #include "ui_mainwindow.h"
 
 #include "app/AppStyle.h"
+#include "auth/AuthService.h"
+#include "data/Database.h"
+#include "ui/dialogs/LoginDialog.h"
 #include "ui/panels/DataStatisticsPanel.h"
 #include "ui/panels/DeviceStatusPanel.h"
 #include "ElaMessageBar.h"
@@ -39,6 +42,7 @@
 #include <QCloseEvent>
 #include <QEvent>
 #include <QKeySequence>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPushButton>
@@ -561,6 +565,20 @@ void MainWindow::connectTitleBar()
         }
     });
     connect(m_titleBar, &TitleBar::historyRequested, this, &MainWindow::showHistoryPage);
+    connect(m_titleBar, &TitleBar::userRequested, this, &MainWindow::showUserMenu);
+    AuthService &auth = AuthService::instance();
+    connect(&auth, &AuthService::sessionChanged, this, &MainWindow::refreshUserIdentity);
+    connect(&auth, &AuthService::sessionExpired, this, [this]() {
+        const QString message = QStringLiteral("空闲超过 %1 分钟，已自动退出登录，设置退回只读。")
+                                    .arg(AuthService::instance().sessionTimeoutMinutes());
+        ElaMessageBar::warning(ElaMessageBarType::BottomRight,
+                               QStringLiteral("会话已超时"),
+                               message,
+                               4000,
+                               this);
+        appendEventLog(QStringLiteral("WARN"), message);
+    });
+    refreshUserIdentity();
     connect(m_titleBar, &TitleBar::startNodesRequested, this, &MainWindow::startNodes);
     connect(m_titleBar, &TitleBar::stopNodesRequested, this, &MainWindow::stopNodes);
     connect(m_titleBar, &TitleBar::emergencyStopRequested, this, [this]() {
@@ -584,6 +602,51 @@ void MainWindow::connectTitleBar()
     connect(m_nodeLifecycleMonitor, &NodeLifecycleMonitor::nodesRunningChanged,
             m_titleBar, &TitleBar::setNodesRunning);
     m_titleBar->setNodesRunning(m_nodeLifecycleMonitor->nodesRunning());
+}
+
+void MainWindow::showUserMenu(const QPoint &anchor)
+{
+    AuthService &auth = AuthService::instance();
+    if (!auth.isLoggedIn()) {
+        LoginDialog::runLogin(this);
+        return;
+    }
+
+    QMenu menu(this);
+    menu.setStyleSheet(QStringLiteral(
+                           "QMenu { background: %1; color: %2; border: 1px solid %3; font-size: 15px; }"
+                           "QMenu::item { padding: 8px 28px; }"
+                           "QMenu::item:selected { background: %4; }")
+                           .arg(Theme::kPanelBg, Theme::kTextPrimary, Theme::kBorder, Theme::kHoverBg));
+    QAction *changePassword = menu.addAction(QStringLiteral("修改密码"));
+    QAction *logout = menu.addAction(QStringLiteral("退出登录"));
+    QAction *chosen = menu.exec(anchor);
+    if (chosen == changePassword) {
+        if (LoginDialog::runChangePassword(this)) {
+            ElaMessageBar::success(ElaMessageBarType::BottomRight,
+                                   QStringLiteral("账户"),
+                                   QStringLiteral("密码已修改。"),
+                                   2400,
+                                   this);
+        }
+    } else if (chosen == logout) {
+        auth.logout();
+    }
+}
+
+void MainWindow::refreshUserIdentity()
+{
+    AuthService &auth = AuthService::instance();
+    const QString identity = auth.identityText();
+    if (m_titleBar) {
+        m_titleBar->setUserIdentity(auth.currentUsername(), auth.currentRole());
+    }
+    if (identity != m_lastIdentity) {
+        if (!m_lastIdentity.isEmpty()) {
+            appendEventLog(QStringLiteral("INFO"), QStringLiteral("当前身份：%1").arg(identity));
+        }
+        m_lastIdentity = identity;
+    }
 }
 
 QString MainWindow::resolveLauncherConfigPath() const
@@ -1099,6 +1162,15 @@ void MainWindow::setDatabaseReady(bool ready)
 {
     m_databaseReady = ready;
     if (m_databaseReady) {
+        AuthService &auth = AuthService::instance();
+        QString authError;
+        if (!auth.attachDatabase(QString::fromLatin1(Database::connectionName()), &authError)) {
+            appendEventLog(QStringLiteral("ERROR"),
+                           QStringLiteral("账户功能不可用，受控设置保持锁定: %1").arg(authError));
+        } else if (!auth.hasAccounts()) {
+            appendEventLog(QStringLiteral("WARN"), QStringLiteral("系统中还没有账户，请创建第一个管理员"));
+            QTimer::singleShot(0, this, [this]() { LoginDialog::runLogin(this); });
+        }
         flushPendingDatabaseWrites();
     }
 }

@@ -1,7 +1,6 @@
 #include "ui/dialogs/BackendParamsDialog.h"
 
 #include "ElaCheckBox.h"
-#include "ElaMessageBar.h"
 #include "ElaPushButton.h"
 #include "app/Logger.h"
 #include "app/RuntimeIniPaths.h"
@@ -17,6 +16,7 @@
 #include <QLineEdit>
 #include <QSettings>
 #include <QSizePolicy>
+#include <QStringList>
 #include <QVBoxLayout>
 
 namespace {
@@ -174,7 +174,7 @@ BackendParamsDialog::BackendParamsDialog(Ros2Bridge *bridge, QWidget *parent)
     applyPrimaryButtonStyle(applyBtn);
     root->addWidget(applyBtn);
 
-    connect(applyBtn, &ElaPushButton::clicked, this, &BackendParamsDialog::applyParams);
+    connect(applyBtn, &ElaPushButton::clicked, this, &BackendParamsDialog::applyRequested);
     const auto markDirty = [this]() { emit dirtyChanged(isDirty()); };
     connect(m_offsetXEdit, &QLineEdit::textChanged, this, markDirty);
     connect(m_offsetYEdit, &QLineEdit::textChanged, this, markDirty);
@@ -292,6 +292,26 @@ bool BackendParamsDialog::isDirty() const
            || dispatchPathsToPlc() != m_diskDispatch;
 }
 
+QString BackendParamsDialog::pendingChangeSummary() const
+{
+    QStringList changes;
+    const auto addOffset = [&changes](const QString &axis, double before, double after) {
+        if (qAbs(after - before) > 0.0005) {
+            changes << QStringLiteral("%1 偏移 %2 → %3 mm")
+                           .arg(axis, formatOffset(before), formatOffset(after));
+        }
+    };
+    addOffset(QStringLiteral("X"), m_diskX, offsetX());
+    addOffset(QStringLiteral("Y"), m_diskY, offsetY());
+    addOffset(QStringLiteral("Z"), m_diskZ, offsetZ());
+    if (dispatchPathsToPlc() != m_diskDispatch) {
+        changes << QStringLiteral("下发路径到 PLC %1 → %2")
+                       .arg(m_diskDispatch ? QStringLiteral("开") : QStringLiteral("关"),
+                            dispatchPathsToPlc() ? QStringLiteral("开") : QStringLiteral("关"));
+    }
+    return changes.join(QStringLiteral("；"));
+}
+
 bool BackendParamsDialog::commitToBackend(QString *error)
 {
     if (!m_bridge) {
@@ -364,30 +384,4 @@ double BackendParamsDialog::offsetZ() const
 bool BackendParamsDialog::dispatchPathsToPlc() const
 {
     return m_dispatchPathsCheck && m_dispatchPathsCheck->isChecked();
-}
-
-void BackendParamsDialog::applyParams()
-{
-    QString error;
-    if (!commitToBackend(&error)) {
-        ElaMessageBar::error(ElaMessageBarType::BottomRight,
-                             QStringLiteral("加工参数未保存"),
-                             error,
-                             3600,
-                             this);
-        return;
-    }
-    if (!m_bridge || !m_bridge->isRunning()) {
-        ElaMessageBar::warning(ElaMessageBarType::BottomRight,
-                               QStringLiteral("加工参数已写入文件"),
-                               QStringLiteral("ROS 节点未运行，坐标补偿与路径开关没有发到后端。"),
-                               3600,
-                               this);
-        return;
-    }
-    ElaMessageBar::success(ElaMessageBarType::BottomRight,
-                           QStringLiteral("加工参数已应用"),
-                           QStringLiteral("已写入 backend_params.ini，并已请求下发到后端。"),
-                           2400,
-                           this);
 }

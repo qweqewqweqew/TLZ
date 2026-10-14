@@ -9,9 +9,11 @@
 #include "ui/panels/EventLogPanel.h"
 #include "ui/settings/SettingsFormWidgets.h"
 
+#include <QDateTime>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QPlainTextEdit>
+#include <QTabWidget>
 #include <QVBoxLayout>
 
 AlarmSettingsPage::AlarmSettingsPage(NodeLifecycleMonitor *nodes,
@@ -23,56 +25,48 @@ AlarmSettingsPage::AlarmSettingsPage(NodeLifecycleMonitor *nodes,
 {
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(12);
-    root->addWidget(settingsSourceBanner(
-        QStringLiteral("范围：工控机软件 / 视觉侧诊断。轴、伺服、机床报警仍由威纶通 HMI 负责，本页不替换、不汇总轴控报警。"),
+    root->setSpacing(0);
+    auto *tabs = settingsTabs(this);
+    root->addWidget(tabs);
+
+    QVBoxLayout *checkTab = addSettingsTab(tabs, QStringLiteral("软件自检"), false);
+    auto *buttonRow = new QHBoxLayout();
+    buttonRow->setContentsMargins(0, 0, 0, 0);
+    buttonRow->setSpacing(8);
+    auto *checkButton = new ElaPushButton(QStringLiteral("重新自检"), this);
+    auto *historyButton = new ElaPushButton(QStringLiteral("打开历史记录"), this);
+    checkButton->setMinimumSize(112, 36);
+    historyButton->setMinimumSize(128, 36);
+    applyPrimaryButtonStyle(checkButton);
+    applySecondaryButtonStyle(historyButton);
+    buttonRow->addWidget(checkButton);
+    buttonRow->addWidget(historyButton);
+    buttonRow->addStretch(1);
+    checkTab->addLayout(buttonRow);
+    m_selfCheck = settingsReadOnlyText(this);
+    checkTab->addWidget(m_selfCheck, 1);
+    checkTab->addWidget(settingsSourceBanner(
+        QStringLiteral("范围：工控机软件与视觉侧诊断，只读，不修改配置也不向 PLC 下发。"
+                       "轴、伺服、机床报警仍由威纶通 HMI 负责。"),
         this));
 
-    auto *actions = createPanel(QStringLiteral("入口"), nullptr, this);
-    auto *actionsLayout = qobject_cast<QVBoxLayout *>(actions->layout());
-    auto *buttonRow = new QHBoxLayout();
-    auto *historyButton = new ElaPushButton(QStringLiteral("打开历史记录"), actions);
-    auto *checkButton = new ElaPushButton(QStringLiteral("重新自检"), actions);
-    historyButton->setMinimumHeight(36);
-    checkButton->setMinimumHeight(36);
-    applyPrimaryButtonStyle(historyButton);
-    applySecondaryButtonStyle(checkButton);
-    buttonRow->addWidget(historyButton, 0, Qt::AlignLeft);
-    buttonRow->addWidget(checkButton, 0, Qt::AlignLeft);
-    buttonRow->addStretch(1);
-    actionsLayout->addLayout(buttonRow);
-    actionsLayout->addWidget(settingsHint(
-        QStringLiteral("历史记录沿用现有历史页，不另建报警档案。"),
-        actions));
-    root->addWidget(actions);
+    QVBoxLayout *logTab = addSettingsTab(tabs, QStringLiteral("事件日志"), false);
+    m_eventSnapshot = settingsReadOnlyText(this);
+    logTab->addWidget(m_eventSnapshot, 1);
+    logTab->addWidget(settingsSourceBanner(
+        QStringLiteral("首页「报警与事件日志」的只读快照，切到本页或点「重新自检」时刷新。"),
+        this));
 
-    auto *checkPanel = createPanel(QStringLiteral("软件 / 节点自检"), nullptr, this);
-    auto *checkLayout = qobject_cast<QVBoxLayout *>(checkPanel->layout());
-    m_selfCheck = settingsReadOnlyText(checkPanel);
-    checkLayout->addWidget(m_selfCheck);
-    root->addWidget(checkPanel);
-
-    auto *logPanel = createPanel(QStringLiteral("首页事件日志快照"), nullptr, this);
-    auto *logLayout = qobject_cast<QVBoxLayout *>(logPanel->layout());
-    logLayout->addWidget(settingsHint(
-        QStringLiteral("这是首页「报警与事件日志」的只读拷贝，不是独立报警表。"),
-        logPanel));
-    m_eventSnapshot = settingsReadOnlyText(logPanel);
-    logLayout->addWidget(m_eventSnapshot);
-    root->addWidget(logPanel);
-
-    auto *pending = createPanel(QStringLiteral("当前报警"), nullptr, this);
-    auto *pendingLayout = qobject_cast<QVBoxLayout *>(pending->layout());
-    pendingLayout->addWidget(settingsPendingBlock(
+    QVBoxLayout *pendingTab = addSettingsTab(tabs, QStringLiteral("报警记录"));
+    pendingTab->addWidget(settingsPendingBlock(
         QStringLiteral("当前报警列表"),
-        QStringLiteral("待对接 软件报警队列（工程内无报警表；轴控报警不在本程序）。"),
-        pending));
-    pendingLayout->addWidget(settingsPendingBlock(
+        QStringLiteral("软件报警队列（工程内无报警表；轴控报警不在本程序）。"),
+        this));
+    pendingTab->addWidget(settingsPendingBlock(
         QStringLiteral("历史报警归档"),
-        QStringLiteral("待对接 报警历史表。加工历史请用上方「打开历史记录」。"),
-        pending));
-    root->addWidget(pending);
-    root->addStretch(1);
+        QStringLiteral("报警历史表。加工历史请用「软件自检」页的「打开历史记录」。"),
+        this));
+    pendingTab->addStretch(1);
 
     connect(historyButton, &ElaPushButton::clicked, this, &AlarmSettingsPage::historyRequested);
     connect(checkButton, &ElaPushButton::clicked, this, [this]() { reloadFromSource(); });
@@ -103,7 +97,8 @@ void AlarmSettingsPage::runSelfCheck()
     }
 
     QStringList lines;
-    lines << QStringLiteral("自检只读，不修改配置，也不向 PLC 下发。");
+    lines << QStringLiteral("自检时间：%1")
+                 .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
 
     QString health;
     if (Database::instance().healthCheck(&health)) {

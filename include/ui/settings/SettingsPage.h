@@ -32,13 +32,18 @@ signals:
 private:
     void showPage(int row);
     void updateActions();
+    void refreshAccess();
+    void updateAccessBanner();
     void setStatus(const QString &text, bool problem);
     bool saveCurrent();
+    bool canWrite(const SettingsSubPage *page) const;
+    QString pageTitle(int row) const;
     SettingsSubPage *currentPage() const;
 
     QListWidget *m_nav{nullptr};
     QStackedWidget *m_stack{nullptr};
     QLabel *m_pageTitle{nullptr};
+    QLabel *m_accessBanner{nullptr};
     QLabel *m_status{nullptr};
     QPushButton *m_saveButton{nullptr};
     QPushButton *m_cancelButton{nullptr};

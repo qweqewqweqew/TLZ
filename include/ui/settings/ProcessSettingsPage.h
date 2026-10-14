@@ -5,6 +5,7 @@
 
 class BackendParamsDialog;
 class Ros2Bridge;
+class TeachingDialog;
 
 class ProcessSettingsPage : public SettingsSubPage
 {
@@ -19,6 +20,12 @@ public:
     SettingsSaveOutcome save() override;
     void revert() override;
     void restoreDefaults() override;
+    std::optional<Permission> writePermission() const override
+    {
+        return Permission::EditProcessParams;
+    }
+    void setWriteAllowed(bool allowed) override;
+    QString pendingChangeSummary() const override;
 
 protected:
     void reloadFromSource() override;
@@ -26,6 +33,7 @@ protected:
 private:
     Ros2Bridge *m_bridge{nullptr};
     BackendParamsDialog *m_params{nullptr};
+    TeachingDialog *m_teaching{nullptr};
 };
 
 #endif // PROCESSSETTINGSPAGE_H

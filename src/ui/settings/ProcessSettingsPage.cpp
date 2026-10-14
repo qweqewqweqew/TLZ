@@ -8,6 +8,7 @@
 #include "ui/settings/SettingsFormWidgets.h"
 
 #include <QHBoxLayout>
+#include <QTabWidget>
 #include <QVBoxLayout>
 
 ProcessSettingsPage::ProcessSettingsPage(Ros2Bridge *bridge, QWidget *parent)
@@ -16,53 +17,81 @@ ProcessSettingsPage::ProcessSettingsPage(Ros2Bridge *bridge, QWidget *parent)
 {
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(12);
+    root->setSpacing(0);
+    auto *tabs = settingsTabs(this);
+    root->addWidget(tabs);
 
-    root->addWidget(settingsSourceBanner(
-        QStringLiteral("数据来源：%1 的 [BackendParams]（OffsetX / OffsetY / OffsetZ / "
-                       "DispatchPathsToPlc）。保存时写入该文件，并经 Ros2Bridge 发布 "
-                       "plc/coordinate_offset、plc/dispatch_paths_to_plc。"
-                       "示教沿用现有 TeachingDialog，只调用 publishTeachRequest。")
+    QVBoxLayout *offsetTab = addSettingsTab(tabs, QStringLiteral("坐标补偿与下发"));
+    m_params = new BackendParamsDialog(bridge, this);
+    auto *offsetRow = new QHBoxLayout();
+    offsetRow->setContentsMargins(0, 0, 0, 0);
+    offsetRow->addWidget(m_params, 0, Qt::AlignTop);
+    offsetRow->addStretch(1);
+    offsetTab->addLayout(offsetRow);
+    offsetTab->addWidget(settingsHint(
+        QStringLiteral("技术员及以上可修改。卡片内「应用」与页底「保存」相同，都会校验权限并写入操作审计。"),
+        this));
+    offsetTab->addStretch(1);
+    offsetTab->addWidget(settingsSourceBanner(
+        QStringLiteral("数据来源：%1 的 [BackendParams]。保存时写入该文件，并经 ROS 发布 "
+                       "plc/coordinate_offset、plc/dispatch_paths_to_plc。")
             .arg(backendParamsIniPath()),
         this));
 
-    auto *row = new QHBoxLayout();
-    row->setContentsMargins(0, 0, 0, 0);
-    row->setSpacing(16);
-    m_params = new BackendParamsDialog(bridge, this);
-    row->addWidget(m_params, 0, Qt::AlignTop);
-    row->addWidget(new TeachingDialog(bridge, this), 0, Qt::AlignTop);
-    row->addStretch(1);
-    root->addLayout(row);
-
-    root->addWidget(settingsHint(
-        QStringLiteral("计划权限：技术员及以上可改偏移与路径下发。当前没有登录钩子，此项不锁定。"
-                       "卡片内「应用」与页底「保存」相同。"),
+    QVBoxLayout *teachTab = addSettingsTab(tabs, QStringLiteral("示教取坐标"));
+    m_teaching = new TeachingDialog(bridge, this);
+    auto *teachRow = new QHBoxLayout();
+    teachRow->setContentsMargins(0, 0, 0, 0);
+    teachRow->addWidget(m_teaching, 0, Qt::AlignTop);
+    teachRow->addStretch(1);
+    teachTab->addLayout(teachRow);
+    teachTab->addWidget(settingsHint(QStringLiteral("技术员及以上可执行示教。"), this));
+    teachTab->addStretch(1);
+    teachTab->addWidget(settingsSourceBanner(
+        QStringLiteral("示教沿用现有示教模块，只发送 publishTeachRequest，不改任何配置文件。"),
         this));
 
-    auto *pending = createPanel(QStringLiteral("未对接工艺项"), nullptr, this);
-    auto *pendingLayout = qobject_cast<QVBoxLayout *>(pending->layout());
-    pendingLayout->addWidget(settingsPendingBlock(
+    QVBoxLayout *pendingTab = addSettingsTab(tabs, QStringLiteral("工艺参数"));
+    pendingTab->addWidget(settingsPendingBlock(
         QStringLiteral("进给"),
-        QStringLiteral("待对接 工艺点表 / PLC 可写字段（backend_params.ini 无进给）。"),
-        pending));
-    pendingLayout->addWidget(settingsPendingBlock(
+        QStringLiteral("工艺点表 / PLC 可写字段（backend_params.ini 无进给）。"),
+        this));
+    pendingTab->addWidget(settingsPendingBlock(
         QStringLiteral("深度"),
-        QStringLiteral("待对接 工艺点表 / PLC 可写字段（backend_params.ini 无深度）。"),
-        pending));
-    pendingLayout->addWidget(settingsPendingBlock(
+        QStringLiteral("工艺点表 / PLC 可写字段（backend_params.ini 无深度）。"),
+        this));
+    pendingTab->addWidget(settingsPendingBlock(
         QStringLiteral("转速"),
-        QStringLiteral("待对接 工艺点表 / PLC 可写字段（backend_params.ini 无转速）。"),
-        pending));
-    pendingLayout->addWidget(settingsPendingBlock(
+        QStringLiteral("工艺点表 / PLC 可写字段（backend_params.ini 无转速）。"),
+        this));
+    pendingTab->addWidget(settingsPendingBlock(
         QStringLiteral("板级策略"),
-        QStringLiteral("待对接 工艺点表（现网无板级策略配置键）。"),
-        pending));
-    root->addWidget(pending);
-    root->addStretch(1);
+        QStringLiteral("工艺点表（现网无板级策略配置键）。"),
+        this));
+    pendingTab->addStretch(1);
 
     connect(m_params, &BackendParamsDialog::dirtyChanged, this, &ProcessSettingsPage::dirtyChanged);
+    connect(m_params, &BackendParamsDialog::applyRequested, this, &ProcessSettingsPage::saveRequested);
     reloadFromSource();
+}
+
+void ProcessSettingsPage::setWriteAllowed(bool allowed)
+{
+    if (m_params) {
+        m_params->setEnabled(allowed);
+    }
+    if (m_teaching) {
+        m_teaching->setEnabled(allowed);
+    }
+}
+
+QString ProcessSettingsPage::pendingChangeSummary() const
+{
+    if (!m_params) {
+        return QString();
+    }
+    const QString changes = m_params->pendingChangeSummary();
+    return changes.isEmpty() ? QStringLiteral("参数未变，重新下发到后端") : changes;
 }
 
 QString ProcessSettingsPage::bindingSummary() const
