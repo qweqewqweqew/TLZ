@@ -6,10 +6,12 @@
 #include "data/Database.h"
 #include "ui/settings/SettingsFormWidgets.h"
 
+#include "ElaMessageBar.h"
 #include "ElaPushButton.h"
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QFontDatabase>
 #include <QFile>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -17,41 +19,12 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QPlainTextEdit>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QHash>
 #include <QVBoxLayout>
 
 namespace {
-
-bool isSecretKey(const QString &key)
-{
-    const QString lower = key.toLower();
-    return lower.contains(QStringLiteral("password"))
-           || lower.contains(QStringLiteral("passwd"))
-           || lower.contains(QStringLiteral("pwd"))
-           || lower.contains(QStringLiteral("secret"))
-           || lower.contains(QStringLiteral("token"));
-}
-
-QString maskSecret(const QString &value)
-{
-    if (value.isEmpty()) {
-        return QStringLiteral("（空）");
-    }
-    return QStringLiteral("••••••••（已隐藏，%1 个字符）").arg(value.size());
-}
-
-QString existsText(const QString &path)
-{
-    if (path.isEmpty()) {
-        return QStringLiteral("未找到");
-    }
-    return QFileInfo::exists(path)
-               ? QStringLiteral("%1（文件存在）").arg(path)
-               : QStringLiteral("%1（文件不存在）").arg(path);
-}
 
 struct NodeReadiness
 {
@@ -172,7 +145,7 @@ QFrame *makeReadinessCard(const QString &title,
     Theme::bindStyle(card, []() {
         return QStringLiteral("QFrame#nodeReadinessCard { background:%1; border:1px solid %2;"
                               " border-radius:6px; }")
-            .arg(Theme::kControlBg, Theme::kBorder);
+            .arg(Theme::kPanelBg, Theme::kBorder);
     });
     auto *layout = new QVBoxLayout(card);
     layout->setContentsMargins(10, 8, 10, 8);
@@ -258,6 +231,102 @@ void styleReadinessCard(QFrame *card, bool ready)
                                  ready ? Theme::kStateSuccess : Theme::kStateError));
 }
 
+void applyOutlinedButtonStyle(ElaPushButton *button)
+{
+    if (!button) {
+        return;
+    }
+    button->setBorderRadius(5);
+    button->setLightDefaultColor(QColor(Theme::kPanelBg));
+    button->setDarkDefaultColor(QColor(Theme::kControlBg));
+    button->setLightHoverColor(QColor(Theme::kHoverBg));
+    button->setDarkHoverColor(QColor(Theme::kHoverBg));
+    button->setLightPressColor(QColor(Theme::kPressedBg));
+    button->setDarkPressColor(QColor(Theme::kPressedBg));
+    button->setLightTextColor(QColor(Theme::markColor()));
+    button->setDarkTextColor(QColor(Theme::kTextPrimary));
+    button->setStyleSheet(QStringLiteral("QPushButton { border:1px solid %1; border-radius:5px; }")
+                              .arg(Theme::markColor()));
+}
+
+QWidget *makeDatabaseFact(const QString &labelText, QLabel **value, QWidget *parent)
+{
+    auto *row = new QFrame(parent);
+    row->setObjectName(QStringLiteral("databaseFact"));
+    Theme::bindStyle(row, []() {
+        return QStringLiteral("QFrame#databaseFact { background:%1; border:1px solid %2; border-radius:5px; }")
+            .arg(Theme::kPanelBg, Theme::kBorder);
+    });
+    auto *layout = new QHBoxLayout(row);
+    layout->setContentsMargins(10, 8, 10, 8);
+    layout->setSpacing(12);
+    auto *name = settingsFieldLabel(labelText, row);
+    name->setFixedWidth(82);
+    layout->addWidget(name);
+    *value = makeLabel(QStringLiteral("—"));
+    (*value)->setParent(row);
+    (*value)->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    (*value)->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    (*value)->setMinimumWidth(0);
+    (*value)->setWordWrap(true);
+    layout->addWidget(*value, 1);
+    return row;
+}
+
+QPushButton *makeCommunicationRow(const QString &title,
+                                  const QString &fieldSummary,
+                                  QWidget *parent,
+                                  const QString &message)
+{
+    auto *button = new QPushButton(parent);
+    button->setObjectName(QStringLiteral("communicationPendingRow"));
+    button->setCursor(Qt::PointingHandCursor);
+    button->setMinimumHeight(68);
+    button->setToolTip(message);
+    Theme::bindStyle(button, []() {
+        return QStringLiteral(
+                   "QPushButton#communicationPendingRow { text-align:left; background:%1; color:%2;"
+                   " border:1px solid %3; border-left:3px solid %4; border-radius:5px; padding:0; }"
+                   "QPushButton#communicationPendingRow:hover { background:%5; border-color:%4; }"
+                   "QPushButton#communicationPendingRow:pressed { background:%6; }")
+            .arg(Theme::kPanelBg,
+                 Theme::kTextPrimary,
+                 Theme::kBorder,
+                 Theme::kStateWarning,
+                 Theme::kHoverBg,
+                 Theme::kPressedBg);
+    });
+    auto *layout = new QVBoxLayout(button);
+    layout->setContentsMargins(10, 7, 10, 7);
+    layout->setSpacing(4);
+    auto *header = new QHBoxLayout();
+    header->setContentsMargins(0, 0, 0, 0);
+    auto *name = settingsSectionHeading(title, button);
+    header->addWidget(name, 1);
+    auto *badge = makeLabel(QStringLiteral("待接入"));
+    badge->setParent(button);
+    badge->setAlignment(Qt::AlignCenter);
+    badge->setFixedSize(54, 20);
+    Theme::bindStyle(badge, []() {
+        return QStringLiteral("color:%1;background:%2;border:1px solid %3;border-radius:4px;"
+                              "font-size:11px;padding:1px 5px;")
+            .arg(Theme::kStateWarning, Theme::kWarningBg, Theme::kBorder);
+    });
+    header->addWidget(badge, 0, Qt::AlignVCenter);
+    layout->addLayout(header);
+    auto *fields = settingsHint(fieldSummary, button);
+    fields->setWordWrap(false);
+    layout->addWidget(fields);
+    QObject::connect(button, &QPushButton::clicked, button, [button, title, message]() {
+        ElaMessageBar::information(ElaMessageBarType::BottomRight,
+                                   title,
+                                   message,
+                                   3000,
+                                   button->window());
+    });
+    return button;
+}
+
 } // namespace
 
 NodeCommSettingsPage::NodeCommSettingsPage(QWidget *parent)
@@ -288,14 +357,14 @@ NodeCommSettingsPage::NodeCommSettingsPage(QWidget *parent)
     controlRow->setContentsMargins(0, 0, 0, 0);
     controlRow->setSpacing(10);
     m_startButton = new ElaPushButton(QStringLiteral("启动节点"), control);
-    m_startButton->setFixedSize(96, 30);
+    m_startButton->setFixedSize(112, 34);
     applyPrimaryButtonStyle(m_startButton);
     m_stopButton = new ElaPushButton(QStringLiteral("暂停节点"), control);
-    m_stopButton->setFixedSize(96, 30);
-    applySecondaryButtonStyle(m_stopButton);
+    m_stopButton->setFixedSize(112, 34);
+    applyOutlinedButtonStyle(m_stopButton);
+    controlRow->addStretch(1);
     controlRow->addWidget(m_startButton);
     controlRow->addWidget(m_stopButton);
-    controlRow->addStretch(1);
     controlLayout->addLayout(controlRow);
     auto *readinessHeading = new QHBoxLayout();
     readinessHeading->setContentsMargins(0, 8, 0, 0);
@@ -303,7 +372,7 @@ NodeCommSettingsPage::NodeCommSettingsPage(QWidget *parent)
     readinessHeading->addStretch(1);
     m_checkButton = new ElaPushButton(QStringLiteral("重新检测"), control);
     m_checkButton->setFixedSize(96, 28);
-    applySecondaryButtonStyle(m_checkButton);
+    applyOutlinedButtonStyle(m_checkButton);
     readinessHeading->addWidget(m_checkButton);
     controlLayout->addLayout(readinessHeading);
     auto *readinessGrid = new QGridLayout();
@@ -347,36 +416,58 @@ NodeCommSettingsPage::NodeCommSettingsPage(QWidget *parent)
                                              QStringLiteral(":/img/kpi_check.svg"), this);
     root->addWidget(storagePanel, 1);
     auto *storageLayout = qobject_cast<QVBoxLayout *>(storagePanel->layout());
-    m_databaseSummary = settingsReadOnlyText(storagePanel);
+    m_databaseSummary = new QWidget(storagePanel);
+    auto *databaseFacts = new QVBoxLayout(m_databaseSummary);
+    databaseFacts->setContentsMargins(0, 0, 0, 0);
+    databaseFacts->setSpacing(8);
+    databaseFacts->addWidget(makeDatabaseFact(QStringLiteral("配置路径"),
+                                              &m_databaseConfigValue,
+                                              m_databaseSummary));
+    databaseFacts->addWidget(makeDatabaseFact(QStringLiteral("库文件"),
+                                              &m_databaseFileValue,
+                                              m_databaseSummary));
+    databaseFacts->addWidget(makeDatabaseFact(QStringLiteral("连接结果"),
+                                              &m_databaseStatusValue,
+                                              m_databaseSummary));
+    databaseFacts->addStretch(1);
     storageLayout->addWidget(m_databaseSummary, 1);
     storageLayout->addWidget(settingsSourceBanner(
-        QStringLiteral("数据来源：程序目录下的 database.ini。密码类键以掩码显示。"),
+        QStringLiteral("SQLite 本地存储；路径来自 database.ini，连接结果通过 SELECT 1 检查。"),
         storagePanel));
 
     auto *commPanel = settingsGroupPanel(QStringLiteral("设备通信"),
                                           QStringLiteral(":/img/nav_detect.svg"), this);
     root->addWidget(commPanel, 1);
     auto *commLayout = qobject_cast<QVBoxLayout *>(commPanel->layout());
-    commLayout->addWidget(settingsPendingBlock(
-        QStringLiteral("PLC / UDP 地址与超时"),
-        QStringLiteral("PLC IP 等仍写在 start_all.bat 内，node_launcher.ini 没有这些键。"),
-        commPanel));
-    commLayout->addWidget(settingsPendingBlock(
-        QStringLiteral("单个节点启停"),
-        QStringLiteral("node_launcher.ini 现只有 StartAll / StopAll。"),
-        commPanel));
-    commLayout->addWidget(settingsPendingBlock(
-        QStringLiteral("协议与超时"),
-        QStringLiteral("PLC / UDP 协议、心跳周期和重连策略待后端接口确认。"),
-        commPanel));
+    auto *plcRow = makeCommunicationRow(
+        QStringLiteral("PLC / UDP 地址"),
+        QStringLiteral("IP：--    协议：--    超时：--"),
+        commPanel,
+        QStringLiteral("PLC / UDP 地址、协议和超时尚未接入后端配置接口。"));
+    commLayout->addWidget(plcRow);
+    auto *nodeRow = makeCommunicationRow(
+        QStringLiteral("节点启停策略"),
+        QStringLiteral("启动：StartAll    暂停：StopAll"),
+        commPanel,
+        QStringLiteral("当前使用统一脚本启停，单个节点控制待后端接口提供。"));
+    commLayout->addWidget(nodeRow);
+    auto *protocolRow = makeCommunicationRow(
+        QStringLiteral("通信协议与心跳"),
+        QStringLiteral("协议：--    心跳：--    重连：--"),
+        commPanel,
+        QStringLiteral("协议、心跳周期和重连策略待设备通信接口确认。"));
+    commLayout->addWidget(protocolRow);
     commLayout->addWidget(settingsHint(
-        QStringLiteral("设备地址、协议和超时参数在接口定义前不提供可编辑输入，避免保存无效配置。"),
+        QStringLiteral("点击条目可查看待接入说明；接口确认后再开放编辑。"),
         commPanel));
     commLayout->addStretch(1);
     reloadFromSource();
     Theme::watch(this, [this]() {
+        applyPrimaryButtonStyle(m_startButton);
+        applyOutlinedButtonStyle(m_stopButton);
+        applyOutlinedButtonStyle(m_checkButton);
         updateNodeControls();
-        checkNodeReadiness();
+        reloadFromSource();
     });
 }
 
@@ -418,6 +509,9 @@ void NodeCommSettingsPage::updateNodeControls()
     }
     if (m_startButton) {
         m_startButton->setEnabled(!m_busy && !m_running && m_allReady);
+        m_startButton->setToolTip(m_allReady
+                                      ? QStringLiteral("启动相机、后端和算法服务")
+                                      : QStringLiteral("启动前置检查未通过，请先查看未就绪项"));
     }
     if (m_stopButton) {
         m_stopButton->setEnabled(!m_busy && m_running);
@@ -493,9 +587,13 @@ void NodeCommSettingsPage::checkNodeReadiness()
             detail += QStringLiteral("；变量提示：%1").arg(variableWarnings.join(QStringLiteral("；")));
         }
         m_readinessDetails->setText(detail);
+        m_readinessDetails->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     }
     if (m_startButton) {
         m_startButton->setEnabled(!m_busy && !m_running && allReady);
+        m_startButton->setToolTip(allReady
+                                      ? QStringLiteral("启动相机、后端和算法服务")
+                                      : QStringLiteral("启动前置检查未通过，请先查看未就绪项"));
     }
 }
 
@@ -503,39 +601,46 @@ void NodeCommSettingsPage::reloadFromSource()
 {
     checkNodeReadiness();
 
-    QStringList lines;
     const QString dbIni = databaseIniPath();
-    lines << QStringLiteral("database.ini：%1").arg(existsText(dbIni));
-    bool sawSecret = false;
-    if (QFileInfo::exists(dbIni)) {
-        QSettings settings(dbIni, QSettings::IniFormat);
-        settings.setIniCodec("UTF-8");
-        const QStringList keys = settings.allKeys();
-        if (keys.isEmpty()) {
-            lines << QStringLiteral("（文件里没有键）");
-        }
-        for (const QString &key : keys) {
-            const QString raw = settings.value(key).toString();
-            if (isSecretKey(key)) {
-                sawSecret = true;
-                lines << QStringLiteral("%1 = %2").arg(key, maskSecret(raw));
-            } else {
-                lines << QStringLiteral("%1 = %2").arg(key, raw);
-            }
-        }
+    QSettings settings(dbIni, QSettings::IniFormat);
+    settings.setIniCodec("UTF-8");
+    QString configuredPath = settings.value(QStringLiteral("Database/Path"),
+                                             QStringLiteral("data/mztlz.db"))
+                                 .toString()
+                                 .trimmed();
+    if (configuredPath.isEmpty()) {
+        configuredPath = QStringLiteral("data/mztlz.db");
     }
-    if (!sawSecret) {
-        lines << QStringLiteral("未发现密码类键（password/passwd/pwd/secret/token）。本分支是 SQLite 文件路径，无数据库密码。");
+    QFileInfo configuredFile(configuredPath);
+    if (configuredFile.isRelative()) {
+        configuredPath = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(configuredPath);
     }
     const QString livePath = qEnvironmentVariable("MZTLZ_DB_PATH").trimmed();
-    lines << QStringLiteral("MZTLZ_DB_PATH：%1")
-                 .arg(livePath.isEmpty() ? QStringLiteral("未设置（Database::open 会失败）") : livePath);
+    const QString databasePath = livePath.isEmpty() ? configuredPath : livePath;
+    if (m_databaseConfigValue) {
+        m_databaseConfigValue->setText(QDir::toNativeSeparators(dbIni));
+        m_databaseConfigValue->setToolTip(dbIni);
+        m_databaseConfigValue->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    }
+    if (m_databaseFileValue) {
+        const bool exists = QFileInfo::exists(databasePath);
+        m_databaseFileValue->setText(QStringLiteral("%1  ·  %2")
+                                         .arg(QDir::toNativeSeparators(databasePath),
+                                              exists ? QStringLiteral("文件存在") : QStringLiteral("文件不存在")));
+        m_databaseFileValue->setToolTip(databasePath);
+        m_databaseFileValue->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+        m_databaseFileValue->setStyleSheet(QStringLiteral("color:%1;font-size:11px;border:none;background:transparent;")
+                                               .arg(exists ? Theme::kStateSuccess : Theme::kStateWarning));
+    }
     QString health;
     const bool healthy = Database::instance().healthCheck(&health);
-    lines << (healthy
-                  ? QStringLiteral("连接健康检查：通过（SELECT 1）")
-                  : QStringLiteral("连接健康检查：%1").arg(health.isEmpty() ? QStringLiteral("未连接") : health));
-    if (m_databaseSummary) {
-        m_databaseSummary->setPlainText(lines.join(QStringLiteral("\n")));
+    if (m_databaseStatusValue) {
+        m_databaseStatusValue->setText(healthy
+                                           ? QStringLiteral("已连接  ·  SELECT 1 通过")
+                                           : QStringLiteral("未连接  ·  %1")
+                                                 .arg(health.isEmpty() ? QStringLiteral("健康检查失败") : health));
+        m_databaseStatusValue->setStyleSheet(
+            QStringLiteral("color:%1;font-size:12px;font-weight:600;border:none;background:transparent;")
+                .arg(healthy ? Theme::kStateSuccess : Theme::kStateError));
     }
 }

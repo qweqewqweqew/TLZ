@@ -183,8 +183,8 @@ QFrame *settingsGroupPanel(const QString &title, const QString &iconResource, QW
     panel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     Theme::bindStyle(panel, []() {
         return QStringLiteral("QFrame#settingsGroupPanel { background:%1; border:1px solid %2;"
-                              " border-radius:7px; }")
-            .arg(Theme::kPanelBg, Theme::kBorder);
+                              " border-top:3px solid %3; border-radius:7px; }")
+            .arg(Theme::kPanelBg, Theme::kBorder, Theme::markColor());
     });
     auto *layout = new QVBoxLayout(panel);
     layout->setContentsMargins(14, 12, 14, 14);

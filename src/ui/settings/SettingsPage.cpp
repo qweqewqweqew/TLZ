@@ -67,7 +67,7 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
                       "  background: %5; color: %6; border-color: %6;"
                       "}"
                       "QListWidget#settingsNav::item:hover { background: %7; }")
-                      .arg(Theme::kWindowBg,
+                      .arg(Theme::kCanvasBg,
                            Theme::kPanelBg,
                            Theme::kTextPrimary,
                            Theme::kBorder,
@@ -94,7 +94,7 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
                           "  background: %5; color: %6; border-color: %6;"
                           "}"
                           "QListWidget#settingsNav::item:hover { background: %7; }")
-                          .arg(Theme::kWindowBg,
+                          .arg(Theme::kCanvasBg,
                                Theme::kPanelBg,
                                Theme::kTextPrimary,
                                Theme::kBorder,

@@ -6,7 +6,7 @@
 class ElaPushButton;
 class QFrame;
 class QLabel;
-class QPlainTextEdit;
+class QWidget;
 
 class NodeCommSettingsPage : public SettingsSubPage
 {
@@ -48,7 +48,10 @@ private:
     ElaPushButton *m_startButton{nullptr};
     ElaPushButton *m_stopButton{nullptr};
     ElaPushButton *m_checkButton{nullptr};
-    QPlainTextEdit *m_databaseSummary{nullptr};
+    QWidget *m_databaseSummary{nullptr};
+    QLabel *m_databaseConfigValue{nullptr};
+    QLabel *m_databaseFileValue{nullptr};
+    QLabel *m_databaseStatusValue{nullptr};
     bool m_running{false};
     bool m_busy{false};
     bool m_allReady{false};
