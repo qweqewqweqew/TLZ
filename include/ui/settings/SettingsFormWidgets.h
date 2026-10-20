@@ -7,6 +7,7 @@
 #include <QString>
 
 class QFormLayout;
+class QFrame;
 class QLineEdit;
 class QPlainTextEdit;
 class QSpinBox;
@@ -22,6 +23,8 @@ QSpinBox *settingsSpinBox(QWidget *parent);
 QPlainTextEdit *settingsReadOnlyText(QWidget *parent);
 ElaCheckBox *settingsCheckBox(const QString &text, QWidget *parent);
 QWidget *settingsPendingBlock(const QString &title, const QString &note, QWidget *parent);
+QFrame *settingsGroupPanel(const QString &title, const QString &iconResource, QWidget *parent);
+QLabel *settingsSectionHeading(const QString &title, QWidget *parent);
 QFormLayout *settingsFormLayout(QWidget *host);
 void addSettingsField(QFormLayout *form,
                       const QString &label,
@@ -29,9 +32,11 @@ void addSettingsField(QFormLayout *form,
                       const QString &note,
                       QWidget *parent);
 
-// 设置子页内的二级页签。每个页签自带滚动，外层设置页不再整体滚动。
+// Legacy helper for settings subpages that still use secondary tabs.
 QTabWidget *settingsTabs(QWidget *parent);
-// scrollable=false 时内容占满页签高度，适合表格自己滚动的页签。
-QVBoxLayout *addSettingsTab(QTabWidget *tabs, const QString &title, bool scrollable = true);
+QVBoxLayout *addSettingsTab(QTabWidget *tabs,
+                            const QString &title,
+                            bool scrollable = true,
+                            const QString &iconPath = QString());
 
 #endif // SETTINGSFORMWIDGETS_H

@@ -35,8 +35,8 @@ AlarmSettingsPage::AlarmSettingsPage(NodeLifecycleMonitor *nodes,
     buttonRow->setSpacing(8);
     auto *checkButton = new ElaPushButton(QStringLiteral("重新自检"), this);
     auto *historyButton = new ElaPushButton(QStringLiteral("打开历史记录"), this);
-    checkButton->setMinimumSize(112, 36);
-    historyButton->setMinimumSize(128, 36);
+    checkButton->setMinimumSize(96, 30);
+    historyButton->setMinimumSize(112, 30);
     applyPrimaryButtonStyle(checkButton);
     applySecondaryButtonStyle(historyButton);
     buttonRow->addWidget(checkButton);

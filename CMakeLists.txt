@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(MzTLZ LANGUAGES CXX)
+project(MzTLZ VERSION 1.1.0 LANGUAGES CXX)
 
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
@@ -175,6 +175,8 @@ add_executable(MzTLZ
     src/app/mainwindow.ui
     src/app/AppStyle.cpp
     include/app/AppStyle.h
+    src/app/Theme.cpp
+    include/app/Theme.h
     src/app/TitleBar.cpp
     include/app/TitleBar.h
     src/app/UiHelpers.cpp
@@ -182,7 +184,12 @@ add_executable(MzTLZ
     src/app/RuntimeIniPaths.cpp
     include/app/RuntimeIniPaths.h
     include/app/Logger.h
-    include/app/Theme.h
+    src/app/NavigationBar.cpp
+    include/app/NavigationBar.h
+    src/app/NotificationDrawer.cpp
+    include/app/NotificationDrawer.h
+    src/ui/pages/ReportPage.cpp
+    include/ui/pages/ReportPage.h
     src/auth/AuthTypes.cpp
     include/auth/AuthTypes.h
     src/auth/PasswordHasher.cpp
@@ -201,12 +208,14 @@ add_executable(MzTLZ
     include/ui/panels/EventLogPanel.h
     src/ui/panels/ImageDisplayPanel.cpp
     include/ui/panels/ImageDisplayPanel.h
-    src/ui/panels/RunDataPanel.cpp
-    include/ui/panels/RunDataPanel.h
-    src/ui/panels/RunningStatusPanel.cpp
-    include/ui/panels/RunningStatusPanel.h
-    src/ui/panels/TaskFlowPanel.cpp
-    include/ui/panels/TaskFlowPanel.h
+    src/ui/panels/KpiStripPanel.cpp
+    include/ui/panels/KpiStripPanel.h
+    src/ui/panels/ParticleDetailPanel.cpp
+    include/ui/panels/ParticleDetailPanel.h
+    src/ui/panels/MachineStatusPanel.cpp
+    include/ui/panels/MachineStatusPanel.h
+    src/ui/panels/PathQueuePanel.cpp
+    include/ui/panels/PathQueuePanel.h
     src/ui/dialogs/HistoryDialog.cpp
     include/ui/dialogs/HistoryDialog.h
     src/ui/dialogs/BackendParamsDialog.cpp
@@ -237,8 +246,6 @@ add_executable(MzTLZ
     include/ui/settings/AboutSettingsPage.h
     src/ui/widgets/TelemetryPlotWidget.cpp
     include/ui/widgets/TelemetryPlotWidget.h
-    src/ui/widgets/VerticalGauge.cpp
-    include/ui/widgets/VerticalGauge.h
     src/vision/HeightMap3DFrame.cpp
     include/vision/HeightMap3DFrame.h
     src/vision/ImageViewFrame.cpp
@@ -289,6 +296,8 @@ target_link_libraries(MzTLZ
         ${std_msgs_LIBRARIES}
         ${HIKVISION_HCNETSDK_LIBRARY}
 )
+
+target_compile_definitions(MzTLZ PRIVATE MZTLZ_VERSION_STRING="${PROJECT_VERSION}")
 
 get_target_property(_qt5_core_includes Qt5::Core INTERFACE_INCLUDE_DIRECTORIES)
 target_include_directories(MzTLZ BEFORE PRIVATE ${_qt5_core_includes})

@@ -6,6 +6,7 @@
 
 #include <QDateTime>
 #include <QFont>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPen>
@@ -34,26 +35,38 @@ void styleAxis(QCPAxis *axis, const QColor &color)
 
 } // namespace
 
-DataStatisticsPanel::DataStatisticsPanel(QWidget *parent)
+DataStatisticsPanel::DataStatisticsPanel(QWidget *parent, bool framed)
     : QFrame(parent)
 {
     m_pauseHint = makeLabel(QStringLiteral("已暂停"), QStringLiteral("sectionHint"));
     m_pauseHint->setStyleSheet(QStringLiteral("color: %1;").arg(Theme::kStateWarning));
     m_pauseHint->setVisible(false);
-    auto *panel = createPanel(QStringLiteral("动态特性曲线"), m_pauseHint, this);
 
     auto *rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
-    rootLayout->addWidget(panel);
+    QVBoxLayout *hostLayout = rootLayout;
+    QWidget *host = this;
+    if (framed) {
+        auto *panel = createPanel(QStringLiteral("动态特性曲线"), m_pauseHint, this);
+        rootLayout->addWidget(panel);
+        hostLayout = qobject_cast<QVBoxLayout *>(panel->layout());
+        host = panel;
+        setMinimumHeight(270);
+        setMaximumHeight(340);
+    } else {
+        // 嵌入其他卡片时，暂停提示放在图的右上角
+        auto *hintRow = new QHBoxLayout();
+        hintRow->setContentsMargins(0, 0, 0, 0);
+        hintRow->addStretch(1);
+        hintRow->addWidget(m_pauseHint);
+        rootLayout->addLayout(hintRow);
+    }
 
-    setMinimumHeight(270);
-    setMaximumHeight(340);
-
-    auto *panelLayout = qobject_cast<QVBoxLayout *>(panel->layout());
-    m_plot = new QCustomPlot(panel);
+    m_plot = new QCustomPlot(host);
     m_plot->setToolTip(QStringLiteral("右键暂停 / 继续"));
     setupPlot();
-    panelLayout->addWidget(m_plot, 1);
+    hostLayout->addWidget(m_plot, 1);
+    Theme::watch(this, [this]() { applyPlotTheme(); });
 }
 
 void DataStatisticsPanel::appendSpindleSample(double speed, double torque)
@@ -189,14 +202,37 @@ void DataStatisticsPanel::setupPlot()
     m_plot->xAxis->setRange(now - kVisibleSeconds, now);
 }
 
+void DataStatisticsPanel::applyPlotTheme()
+{
+    if (!m_plot) {
+        return;
+    }
+    m_plot->setBackground(QColor(Theme::kCanvasBg));
+    m_plot->axisRect()->setBackground(QColor(Theme::kCanvasBg));
+    styleAxis(m_plot->xAxis, QColor(Theme::kTextMuted));
+    m_plot->xAxis->grid()->setPen(QPen(QColor(Theme::kDivider), 1, Qt::DotLine));
+    m_plot->yAxis->grid()->setPen(QPen(QColor(Theme::kDivider), 1, Qt::DotLine));
+    m_plot->legend->setBrush(QColor(Theme::kCanvasBg));
+    m_plot->legend->setTextColor(QColor(Theme::kTextSecondary));
+    if (m_pauseHint) {
+        m_pauseHint->setStyleSheet(QStringLiteral("color: %1;").arg(Theme::kStateWarning));
+    }
+    setSelectedMetric(m_metric);
+}
+
 void DataStatisticsPanel::setSelectedMetric(SelectedMetric metric)
 {
     if (!m_plot || m_plot->graphCount() < 2) {
         return;
     }
+    m_metric = metric;
 
     const bool speedSelected = metric == SelectedMetric::Speed;
-    const QColor selectedColor(speedSelected ? Theme::kRealtime : Theme::kAccent);
+    const QColor speedColor(Theme::current() == Theme::Id::Dark ? QColor(Theme::kRealtime)
+                                                                : QColor(Theme::markColor()));
+    const QColor torqueColor(Theme::current() == Theme::Id::Dark ? QColor(Theme::kAccentFill)
+                                                                 : QColor(Theme::kTextSecondary));
+    const QColor selectedColor = speedSelected ? speedColor : torqueColor;
 
     auto ticker = QSharedPointer<QCPAxisTickerText>(new QCPAxisTickerText);
     ticker->setSubTickCount(4);
@@ -218,8 +254,14 @@ void DataStatisticsPanel::setSelectedMetric(SelectedMetric metric)
     m_plot->yAxis->setTicker(ticker);
     styleAxis(m_plot->yAxis, selectedColor);
 
-    QColor speedPen(Theme::kRealtime);
-    QColor torquePen(Theme::kAccent);
+    QColor speedPen = speedColor;
+    QColor torquePen = torqueColor;
+    if (auto *speedItem = m_plot->legend->itemWithPlottable(m_plot->graph(0))) {
+        speedItem->setTextColor(speedColor);
+    }
+    if (auto *torqueItem = m_plot->legend->itemWithPlottable(m_plot->graph(1))) {
+        torqueItem->setTextColor(torqueColor);
+    }
     if (!speedSelected) {
         speedPen.setAlpha(102); // ~40% when unselected
     }

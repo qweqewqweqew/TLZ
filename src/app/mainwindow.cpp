@@ -1,7 +1,10 @@
-﻿#include "app/mainwindow.h"
+#include "app/mainwindow.h"
 #include "ui_mainwindow.h"
 
 #include "app/AppStyle.h"
+#include "app/NavigationBar.h"
+#include "app/NotificationDrawer.h"
+#include "ui/pages/ReportPage.h"
 #include "auth/AuthService.h"
 #include "data/Database.h"
 #include "ui/dialogs/LoginDialog.h"
@@ -12,6 +15,10 @@
 #include "ui/dialogs/HistoryDialog.h"
 #include "camera/HikCameraClient.h"
 #include "ui/panels/ImageDisplayPanel.h"
+#include "ui/panels/KpiStripPanel.h"
+#include "ui/panels/MachineStatusPanel.h"
+#include "ui/panels/ParticleDetailPanel.h"
+#include "ui/panels/PathQueuePanel.h"
 #include "data/InspectionRepository.h"
 #include "app/Logger.h"
 #include "bridge/NodeLifecycleMonitor.h"
@@ -19,9 +26,6 @@
 #include "bridge/PlcFeedbackVM.h"
 #include "vision/PointCloudFrame.h"
 #include "bridge/Ros2Bridge.h"
-#include "ui/panels/RunDataPanel.h"
-#include "ui/panels/RunningStatusPanel.h"
-#include "ui/panels/TaskFlowPanel.h"
 #include "app/RuntimeIniPaths.h"
 #include "ui/settings/SettingsPage.h"
 #include "app/TitleBar.h"
@@ -320,8 +324,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
 {
     if (m_settingsPage && !m_settingsPage->confirmLeave()) {
         event->ignore();
-        if (m_titleBar) {
-            m_titleBar->setWorkspacePage(TitleBar::WorkspacePage::Settings);
+        if (m_navBar) {
+            m_navBar->setCurrentPage(NavigationBar::Settings);
         }
         return;
     }
@@ -402,11 +406,11 @@ void MainWindow::buildMainView()
 {
     setWindowFlags(Qt::FramelessWindowHint | Qt::Window);
     setWindowIcon(QIcon(":/img/logo.png"));
-    setWindowTitle("阴级铜表面粒子智能修整系统");
-    resize(1680, 980);
+    setWindowTitle(QStringLiteral("阴极铜板粒子检测及修磨系统"));
+    resize(Theme::kDesignWidth, Theme::kDesignHeight);
     setMinimumSize(1500, 920);
     menuBar()->hide();
-    setStyleSheet(mainWindowStyleSheet());
+    Theme::watch(this, []() { applyRuntimeTheme(); });
 
     auto *root = new QWidget(this);
     auto *rootLayout = new QVBoxLayout(root);
@@ -416,27 +420,73 @@ void MainWindow::buildMainView()
 
     m_titleBar = new TitleBar(root);
     rootLayout->addWidget(m_titleBar);
+
+    // 顶栏之下：左侧导航 + 内容区；通知抽屉覆盖在内容区右侧，不参与布局。
+    auto *body = new QWidget(root);
+    auto *bodyLayout = new QHBoxLayout(body);
+    bodyLayout->setContentsMargins(0, 0, 0, 0);
+    bodyLayout->setSpacing(8);
+    rootLayout->addWidget(body, 1);
+
+    m_navBar = new NavigationBar(body);
+    bodyLayout->addWidget(m_navBar, 0);
+
+    m_contentStack = new QStackedWidget(body);
+    bodyLayout->addWidget(m_contentStack, 1);
+
+    m_drawer = new NotificationDrawer(root);
+    m_drawer->hide();
     connectTitleBar();
 
-    m_contentStack = new QStackedWidget(root);
-    rootLayout->addWidget(m_contentStack, 1);
-
+    // ---- 检测与修磨：KPI 条 / 粒子分布 + 右侧（选中粒子、修磨实时状态）/ 底部队列 ----
     m_monitorPage = new QWidget(m_contentStack);
-    auto *mainLayout = new QHBoxLayout(m_monitorPage);
-    mainLayout->setContentsMargins(0, 0, 0, 0);
-    mainLayout->setSpacing(10);
+    auto *monitorLayout = new QVBoxLayout(m_monitorPage);
+    monitorLayout->setContentsMargins(0, 0, 0, 0);
+    monitorLayout->setSpacing(10);
 
-    auto *leftWorkspace = new QWidget(m_monitorPage);
-    auto *leftWorkspaceLayout = new QGridLayout(leftWorkspace);
-    leftWorkspaceLayout->setContentsMargins(0, 0, 0, 0);
-    leftWorkspaceLayout->setHorizontalSpacing(10);
-    leftWorkspaceLayout->setVerticalSpacing(10);
+    m_kpiPanel = new KpiStripPanel(m_monitorPage);
+    monitorLayout->addWidget(m_kpiPanel, 0);
 
-    m_statusPanel = new RunningStatusPanel(leftWorkspace);
-    leftWorkspaceLayout->addWidget(m_statusPanel, 0, 0);
+    // 左列只有粒子分布，吃满 KPI 以下的高度，画面按扫描图比例放大；
+    // 修磨队列不再横跨底部，收到右列，把高度让出来。
+    auto *middle = new QWidget(m_monitorPage);
+    auto *middleLayout = new QHBoxLayout(middle);
+    middleLayout->setContentsMargins(0, 0, 0, 0);
+    middleLayout->setSpacing(10);
 
-    m_imagePanel = new ImageDisplayPanel(leftWorkspace);
-    leftWorkspaceLayout->addWidget(m_imagePanel, 0, 1);
+    m_imagePanel = new ImageDisplayPanel(middle);
+    // 上限贴近扫描图宽高比，避免卡片比画面宽、两侧留白。
+    m_imagePanel->setMinimumWidth(640);
+    m_imagePanel->setMaximumWidth(980);
+    middleLayout->addWidget(m_imagePanel, 1);
+
+    auto *rightColumn = new QWidget(middle);
+    rightColumn->setMinimumWidth(640);
+    auto *rightColumnLayout = new QVBoxLayout(rightColumn);
+    rightColumnLayout->setContentsMargins(0, 0, 0, 0);
+    rightColumnLayout->setSpacing(10);
+    m_particlePanel = new ParticleDetailPanel(rightColumn);
+    rightColumnLayout->addWidget(m_particlePanel, 8);
+    m_machinePanel = new MachineStatusPanel(rightColumn);
+    m_particlePanel->setSideContent(m_machinePanel->metricColumn());
+    rightColumnLayout->addWidget(m_machinePanel, 3);
+    m_queuePanel = new PathQueuePanel(rightColumn);
+    m_queuePanel->setMinimumHeight(180);
+    m_dataStatisticsPanel = m_queuePanel->telemetry();
+    rightColumnLayout->addWidget(m_queuePanel, 3);
+    middleLayout->addWidget(rightColumn, 1);
+    monitorLayout->addWidget(middle, 1);
+    m_contentStack->addWidget(m_monitorPage);
+
+    // 2D 图点选路径 → 右侧粒子卡 + 队列表；队列表点选 → 粒子卡
+    connect(m_imagePanel, &ImageDisplayPanel::millingPathClicked, this, [this](int pathIndex) {
+        m_particlePanel->selectPath(pathIndex);
+        m_queuePanel->selectPath(pathIndex);
+    });
+    connect(m_queuePanel, &PathQueuePanel::pathSelected, this, [this](int pathIndex) {
+        m_particlePanel->selectPath(pathIndex);
+    });
+    connect(m_imagePanel, &ImageDisplayPanel::demoToggleRequested, this, &MainWindow::toggleDemoMode);
 
     m_hikCameraClient = new HikCameraClient(this);
     connect(m_imagePanel, &ImageDisplayPanel::liveViewRequested, this,
@@ -465,41 +515,6 @@ void MainWindow::buildMainView()
                 appendEventLog(QStringLiteral("ERROR"), message);
             });
 
-    m_eventLogPanel = new EventLogPanel(leftWorkspace);
-    leftWorkspaceLayout->addWidget(m_eventLogPanel, 1, 0);
-
-    m_dataStatisticsPanel = new DataStatisticsPanel(leftWorkspace);
-    leftWorkspaceLayout->addWidget(m_dataStatisticsPanel, 1, 1);
-
-    leftWorkspaceLayout->setColumnStretch(0, 1);
-    leftWorkspaceLayout->setColumnStretch(1, 0);
-    leftWorkspaceLayout->setRowStretch(0, 1);
-    leftWorkspaceLayout->setRowStretch(1, 0);
-
-    mainLayout->addWidget(leftWorkspace, 3);
-
-    auto *rightColumn = new QWidget(m_monitorPage);
-    rightColumn->setMinimumWidth(420);
-    auto *rightColumnLayout = new QVBoxLayout(rightColumn);
-    rightColumnLayout->setContentsMargins(0, 0, 0, 0);
-    rightColumnLayout->setSpacing(10);
-
-    m_runDataPanel = new RunDataPanel(rightColumn);
-    rightColumnLayout->addWidget(m_runDataPanel, 2);
-
-    m_taskFlowPanel = new TaskFlowPanel(rightColumn);
-    rightColumnLayout->addWidget(m_taskFlowPanel, 5);
-
-    connect(m_imagePanel, &ImageDisplayPanel::millingPathClicked, this,
-            [this](int pathIndex) {
-                if (m_taskFlowPanel) {
-                    m_taskFlowPanel->selectPath(pathIndex);
-                }
-            });
-
-    mainLayout->addWidget(rightColumn, 1);
-    m_contentStack->addWidget(m_monitorPage);
-
     // 横跨主窗口底部的状态栏：左侧合并状态文字，右侧三个状态指示控件。
     m_deviceStatusPanel = new DeviceStatusPanel(root);
     rootLayout->addWidget(m_deviceStatusPanel, 0);
@@ -517,13 +532,18 @@ void MainWindow::buildMainView()
             this, &MainWindow::onSimulationProgressUpdate);
 
     m_demoPoseTimer = new QTimer(this);
-    m_demoPoseTimer->setInterval(50);
+    m_demoPoseTimer->setInterval(33);
     connect(m_demoPoseTimer, &QTimer::timeout, this, &MainWindow::onDemoPoseUpdate);
 
     startRos2Bridge();
+
+    // 历史查询页在首次进入时才创建（HistoryDialog 查库较重），占位由 showPage 处理。
+    m_reportPage = new ReportPage(m_contentStack);
+    connect(m_reportPage, &ReportPage::logRequested, this, &MainWindow::appendEventLog);
+
     m_settingsPage = new SettingsPage(m_ros2Bridge,
                                       m_nodeLifecycleMonitor,
-                                      m_eventLogPanel,
+                                      m_drawer->eventLog(),
                                       m_contentStack);
     m_contentStack->addWidget(m_settingsPage);
     connect(m_settingsPage, &SettingsPage::historyRequested, this, &MainWindow::showHistoryPage);
@@ -531,41 +551,119 @@ void MainWindow::buildMainView()
             [this](const QString &level, const QString &message) {
                 appendEventLog(level, message);
             });
+    connect(m_settingsPage, &SettingsPage::startNodesRequested, this, &MainWindow::startNodes);
+    connect(m_settingsPage, &SettingsPage::stopNodesRequested, this, &MainWindow::stopNodes);
+    if (m_nodeLifecycleMonitor) {
+        connect(m_nodeLifecycleMonitor, &NodeLifecycleMonitor::nodesRunningChanged,
+                m_settingsPage, &SettingsPage::setNodesRunning);
+        m_settingsPage->setNodesRunning(m_nodeLifecycleMonitor->nodesRunning());
+    }
+
+    connect(m_navBar, &NavigationBar::pageRequested, this, &MainWindow::showPage);
+    connect(m_navBar, &NavigationBar::userRequested, this, &MainWindow::showUserMenu);
+    refreshUserIdentity();
+    m_navBar->setCurrentPage(NavigationBar::Detection);
+    m_contentStack->setCurrentWidget(m_monitorPage);
+    refreshCalibrationStatus();
+}
+
+void MainWindow::showPage(int page)
+{
+    if (!m_contentStack || !m_navBar) {
+        return;
+    }
+    const bool leavingSettings = m_settingsPage && m_contentStack->currentWidget() == m_settingsPage
+                                 && page != NavigationBar::Settings;
+    if (leavingSettings && !m_settingsPage->confirmLeave()) {
+        m_navBar->setCurrentPage(NavigationBar::Settings);
+        return;
+    }
+
+    QWidget *target = nullptr;
+    QString logText;
+    switch (page) {
+    case NavigationBar::Detection:
+        target = m_monitorPage;
+        logText = QStringLiteral("用户切换到「检测与修磨」");
+        break;
+    case NavigationBar::History:
+        if (!m_historyDialog) {
+            m_historyDialog = new HistoryDialog(m_contentStack);
+            m_contentStack->addWidget(m_historyDialog);
+        }
+        m_historyDialog->reloadRecords();
+        target = m_historyDialog;
+        logText = QStringLiteral("用户切换到「历史查询」");
+        break;
+    case NavigationBar::Report:
+        if (m_reportPage && m_contentStack->indexOf(m_reportPage) < 0) {
+            m_contentStack->addWidget(m_reportPage);
+        }
+        if (m_reportPage) {
+            m_reportPage->reload();
+        }
+        target = m_reportPage;
+        logText = QStringLiteral("用户切换到「报表统计」");
+        break;
+    case NavigationBar::Settings:
+        target = m_settingsPage;
+        logText = QStringLiteral("用户切换到「系统设置」");
+        break;
+    default:
+        break;
+    }
+    if (!target) {
+        return;
+    }
+    const bool changed = m_contentStack->currentWidget() != target;
+    m_contentStack->setCurrentWidget(target);
+    m_navBar->setCurrentPage(page);
+    if (changed) {
+        appendEventLog(QStringLiteral("INFO"), logText);
+    }
+}
+
+void MainWindow::updateDrawerDockArea()
+{
+    if (!m_drawer || !m_contentStack || !centralWidget()) {
+        return;
+    }
+    // 抽屉贴着内容区右缘，纵向覆盖整个内容区高度。
+    const QRect stackRect(m_contentStack->mapTo(centralWidget(), QPoint(0, 0)), m_contentStack->size());
+    m_drawer->setDockArea(stackRect);
+}
+
+void MainWindow::refreshCalibrationStatus()
+{
+    if (!m_deviceStatusPanel) {
+        return;
+    }
+    const QString path = backendParamsIniPath();
+    const bool calibrated = !path.isEmpty() && QFileInfo::exists(path);
+    m_deviceStatusPanel->setCalibrationStatus(
+        calibrated,
+        calibrated ? QStringLiteral("标定参数：%1").arg(QDir::toNativeSeparators(path))
+                   : QStringLiteral("未找到后端标定参数文件"));
+}
+
+void MainWindow::resizeEvent(QResizeEvent *event)
+{
+    QMainWindow::resizeEvent(event);
+    updateDrawerDockArea();
 }
 
 void MainWindow::connectTitleBar()
 {
-    connect(m_titleBar, &TitleBar::settingsRequested, this, [this]() {
-        if (!m_contentStack || !m_settingsPage) {
-            return;
-        }
-
-        const bool pageChanged = m_contentStack->currentWidget() != m_settingsPage;
-        m_contentStack->setCurrentWidget(m_settingsPage);
-        m_titleBar->setWorkspacePage(TitleBar::WorkspacePage::Settings);
-        if (pageChanged) {
-            appendEventLog("INFO", "用户打开了设置页面");
-        }
-    });
-    connect(m_titleBar, &TitleBar::homeRequested, this, [this]() {
-        if (!m_contentStack || !m_monitorPage) {
-            return;
-        }
-        if (m_contentStack->currentWidget() == m_settingsPage && m_settingsPage
-            && !m_settingsPage->confirmLeave()) {
-            m_titleBar->setWorkspacePage(TitleBar::WorkspacePage::Settings);
-            return;
-        }
-
-        const bool pageChanged = m_contentStack->currentWidget() != m_monitorPage;
-        m_contentStack->setCurrentWidget(m_monitorPage);
-        m_titleBar->setWorkspacePage(TitleBar::WorkspacePage::Home);
-        if (pageChanged) {
-            appendEventLog("INFO", "用户返回了首页");
-        }
-    });
-    connect(m_titleBar, &TitleBar::historyRequested, this, &MainWindow::showHistoryPage);
     connect(m_titleBar, &TitleBar::userRequested, this, &MainWindow::showUserMenu);
+    connect(m_titleBar, &TitleBar::notificationsRequested, this, [this]() {
+        if (!m_drawer) {
+            return;
+        }
+        updateDrawerDockArea();
+        m_drawer->toggle();
+    });
+    connect(m_drawer, &NotificationDrawer::unreadChanged,
+            m_titleBar, &TitleBar::setNotificationCount);
     AuthService &auth = AuthService::instance();
     connect(&auth, &AuthService::sessionChanged, this, &MainWindow::refreshUserIdentity);
     connect(&auth, &AuthService::sessionExpired, this, [this]() {
@@ -579,17 +677,6 @@ void MainWindow::connectTitleBar()
         appendEventLog(QStringLiteral("WARN"), message);
     });
     refreshUserIdentity();
-    connect(m_titleBar, &TitleBar::startNodesRequested, this, &MainWindow::startNodes);
-    connect(m_titleBar, &TitleBar::stopNodesRequested, this, &MainWindow::stopNodes);
-    connect(m_titleBar, &TitleBar::emergencyStopRequested, this, [this]() {
-        ElaMessageBar::error(
-            ElaMessageBarType::BottomRight,
-            "急停请求已触发",
-            "请立即确认设备与 PLC 状态。",
-            3500,
-            this);
-        appendEventLog("ERROR", "操作员双击触发急停请求");
-    });
     connect(m_titleBar, &TitleBar::minimizeRequested, this, &QWidget::showMinimized);
     connect(m_titleBar, &TitleBar::maximizeRestoreRequested, this, &MainWindow::toggleMaximized);
     connect(m_titleBar, &TitleBar::closeRequested, this, &QWidget::close);
@@ -641,6 +728,9 @@ void MainWindow::refreshUserIdentity()
     if (m_titleBar) {
         m_titleBar->setUserIdentity(auth.currentUsername(), auth.currentRole());
     }
+    if (m_navBar) {
+        m_navBar->setUserIdentity(auth.currentUsername(), auth.currentRole());
+    }
     if (identity != m_lastIdentity) {
         if (!m_lastIdentity.isEmpty()) {
             appendEventLog(QStringLiteral("INFO"), QStringLiteral("当前身份：%1").arg(identity));
@@ -661,32 +751,7 @@ QString MainWindow::resolveLauncherScript(const QString &key) const
 
 void MainWindow::showHistoryPage()
 {
-    if (!m_contentStack || !m_monitorPage) {
-        return;
-    }
-    if (m_settingsPage && m_contentStack->currentWidget() == m_settingsPage
-        && !m_settingsPage->confirmLeave()) {
-        if (m_titleBar) {
-            m_titleBar->setWorkspacePage(TitleBar::WorkspacePage::Settings);
-        }
-        return;
-    }
-
-    const bool historyVisible = m_historyDialog
-                                && m_contentStack->currentWidget() == m_historyDialog;
-    if (historyVisible) {
-        m_titleBar->setWorkspacePage(TitleBar::WorkspacePage::History);
-        return;
-    }
-
-    if (!m_historyDialog) {
-        m_historyDialog = new HistoryDialog(m_contentStack);
-        m_contentStack->addWidget(m_historyDialog);
-    }
-    m_historyDialog->reloadRecords();
-    m_contentStack->setCurrentWidget(m_historyDialog);
-    m_titleBar->setWorkspacePage(TitleBar::WorkspacePage::History);
-    appendEventLog("INFO", "用户打开了历史记录");
+    showPage(NavigationBar::History);
 }
 
 QString MainWindow::resolveStartAllScript() const
@@ -769,6 +834,9 @@ void MainWindow::runNodeLauncherScript(bool start)
                     if (m_titleBar) {
                         m_titleBar->setStartNodesBusy(false);
                     }
+                    if (m_settingsPage) {
+                        m_settingsPage->setNodesBusy(false);
+                    }
                     if (m_nodeLifecycleMonitor) {
                         m_nodeLifecycleMonitor->pollNow();
                     }
@@ -801,6 +869,9 @@ void MainWindow::runNodeLauncherScript(bool start)
             if (m_titleBar) {
                 m_titleBar->setStartNodesBusy(false);
             }
+            if (m_settingsPage) {
+                m_settingsPage->setNodesBusy(false);
+            }
             const bool starting = m_startAllProcess
                                   && m_startAllProcess->property("mzStart").toBool();
             appendEventLog("ERROR",
@@ -814,6 +885,9 @@ void MainWindow::runNodeLauncherScript(bool start)
     m_startAllProcess->setProperty("mzStart", start);
     if (m_titleBar) {
         m_titleBar->setStartNodesBusy(true);
+    }
+    if (m_settingsPage) {
+        m_settingsPage->setNodesBusy(true);
     }
     appendEventLog("INFO",
                    QStringLiteral("%1节点: %2")
@@ -879,6 +953,12 @@ void MainWindow::startRos2Bridge()
                             .arg(frame.height)
                             .arg(m_imagePanel->currentViewModeName()));
                 }
+                if (m_particlePanel) {
+                    m_particlePanel->setPointCloudFrame(frame);
+                }
+                if (m_queuePanel) {
+                    m_queuePanel->setMetricFrame(frame);
+                }
 
                 // 帧落库：消息没带 task_id 时回退到当前任务（MillingPaths 记录的任务号）
                 const quint64 effectiveTaskId = frame.taskId != 0
@@ -901,6 +981,9 @@ void MainWindow::startRos2Bridge()
     connect(m_ros2Bridge, &Ros2Bridge::backendStateReceived, this,
             [this](const QString &state) {
                 appendEventLog("INFO", QString("后端状态: %1").arg(state));
+                if (m_deviceStatusPanel) {
+                    m_deviceStatusPanel->setBackendState(state);
+                }
             });
     connect(m_ros2Bridge, &Ros2Bridge::cameraStatusReceived, this,
             [this](bool connected, const QString &cameraId, const QString &message) {
@@ -924,31 +1007,30 @@ void MainWindow::startRos2Bridge()
                 if (taskId != 0) {
                     persistTaskRecord(taskId);
                 }
+                m_activePaths = paths;
+                m_activePathTotal = pathTotal;
+                m_activeCompletedPath = 0;
+                m_activeBoardGrade = particleBoardGrade.trimmed();
                 if (m_imagePanel) {
                     m_imagePanel->setMillingPaths(paths);
                     m_imagePanel->setAlgorithmImagePath(drawimagePath);
+                    m_imagePanel->setTaskId(taskId);
+                    m_imagePanel->setProgressSummary(0, pathTotal, 0.0f);
                 }
-                if (m_taskFlowPanel) {
-                    m_taskFlowPanel->setMillingPaths(paths);
+                if (m_particlePanel) {
+                    m_particlePanel->setMillingPaths(paths);
+                    m_particlePanel->setTaskInfo(maxParticleHeight, particleBoardGrade);
                 }
-                if (m_runDataPanel) {
-                    m_runDataPanel->setMillingTask(taskId, pathTotal);
-                    m_runDataPanel->setMaxParticleHeight(maxParticleHeight);
-                    m_runDataPanel->setParticleBoardGrade(particleBoardGrade);
-                    int cutCount = 0;
-                    int emptyCount = 0;
-                    for (const MillingPathVM &path : paths) {
-                        if (path.doCut) {
-                            ++cutCount;
-                        } else {
-                            ++emptyCount;
-                        }
-                    }
-                    m_runDataPanel->setCutEmptyPathCounts(cutCount, emptyCount);
+                if (m_queuePanel) {
+                    m_queuePanel->setMillingPaths(paths);
                 }
-                if (m_statusPanel) {
-                    m_statusPanel->setTaskProgress(0.0f);
+                if (m_machinePanel) {
+                    m_machinePanel->setTask(taskId, pathTotal);
                 }
+                if (m_particlePanel) {
+                    m_particlePanel->setTaskProgress(0.0f);
+                }
+                updateKpis();
                 appendEventLog("INFO",
                                QString("任务 #%1 开始，共 %2 条路径，等级 %3")
                                    .arg(taskId)
@@ -980,8 +1062,8 @@ void MainWindow::startRos2Bridge()
 
     connect(m_ros2Bridge, &Ros2Bridge::plcFeedbackReceived, this,
             [this](const PlcFeedbackVM &feedback) {
-                if (m_statusPanel) {
-                    m_statusPanel->setPlcFeedback(feedback);
+                if (m_machinePanel) {
+                    m_machinePanel->setPlcFeedback(feedback);
                 }
                 // Waveform timer already drives the plot in debug simulation;
                 // appending PLC samples too paints dense sawtooth bands.
@@ -996,12 +1078,22 @@ void MainWindow::startRos2Bridge()
                     m_deviceStatusPanel->setPlcStatus(feedback.statusWord,
                                                      feedback.faultCode);
                 }
-                if (m_runDataPanel) {
-                    m_runDataPanel->setPlcPathCounts(int(feedback.completedPath),
-                                                    int(feedback.currentPath));
+                if (m_particlePanel) {
+                    m_particlePanel->setPathProgress(int(feedback.completedPath),
+                                                     int(feedback.currentPath));
                 }
-                if (m_taskFlowPanel) {
-                    m_taskFlowPanel->setActivePath(int(feedback.currentPath));
+                if (m_queuePanel) {
+                    m_queuePanel->setPathProgress(int(feedback.completedPath),
+                                                  int(feedback.currentPath));
+                }
+                if (m_activeCompletedPath != int(feedback.completedPath)) {
+                    m_activeCompletedPath = int(feedback.completedPath);
+                    updateKpis();
+                    if (m_imagePanel) {
+                        m_imagePanel->setProgressSummary(m_activeCompletedPath,
+                                                         m_activePathTotal,
+                                                         m_lastMillingProgress);
+                    }
                 }
                 if (m_imagePanel && !m_debugFakeActive) {
                     // Live tool tip on 2D view: same metric space as setMetricFrame hover.
@@ -1021,7 +1113,49 @@ void MainWindow::startRos2Bridge()
     // 第一次按：加载相机保存的本地图像 + 示例任务数据。
     // 再按一次：清掉假图，任务条复位为"待命"。
     auto *fakeShortcut = new QShortcut(QKeySequence("Ctrl+T"), this);
-    connect(fakeShortcut, &QShortcut::activated, this, [this]() {
+    connect(fakeShortcut, &QShortcut::activated, this, &MainWindow::toggleDemoMode);
+
+    // 调试快捷键 Ctrl+Shift+T：结束假任务（success）。
+    auto *fakeFinishShortcut = new QShortcut(QKeySequence("Ctrl+Shift+T"), this);
+    connect(fakeFinishShortcut, &QShortcut::activated, this, [this]() {
+        if (!m_debugFakeActive) {
+            return;
+        }
+        m_simulationProgress = 100.0f;
+        setSimulationRunning(false);
+        emit m_ros2Bridge->millingProgressReceived(
+            9001, 100.0f, /*finished*/ true, /*success*/ true,
+            QStringLiteral("调试模式：模拟完成"));
+    });
+}
+
+void MainWindow::updateKpis()
+{
+    if (!m_kpiPanel) {
+        return;
+    }
+    if (m_activePaths.isEmpty()) {
+        m_kpiPanel->clear();
+        return;
+    }
+    int detected = 0;
+    int completed = 0;
+    for (int i = 0; i < m_activePaths.size(); ++i) {
+        if (!m_activePaths.at(i).doCut) {
+            continue;
+        }
+        ++detected;
+        if (i < m_activeCompletedPath) {
+            ++completed;
+        }
+    }
+    m_kpiPanel->setCounts(detected, detected - completed, completed);
+    m_kpiPanel->setBoardGrade(m_activeBoardGrade);
+}
+
+void MainWindow::toggleDemoMode()
+{
+    {
         if (!m_debugFakeActive) {
             QString loadError;
             QString rangePath;
@@ -1066,6 +1200,12 @@ void MainWindow::startRos2Bridge()
                 m_imagePanel->clearGrindLayer();
                 m_imagePanel->updateScanFrame(frame);
                 m_imagePanel->show2D(); // grind demo is 2D-only
+            }
+            if (m_particlePanel) {
+                m_particlePanel->setPointCloudFrame(frame);
+            }
+            if (m_queuePanel) {
+                m_queuePanel->setMetricFrame(frame);
             }
 
             // Build a serpentine cut/rapids pattern across the real TestImage.
@@ -1124,38 +1264,29 @@ void MainWindow::startRos2Bridge()
                 m_imagePanel->clearMillingPaths();
                 m_imagePanel->clearAlgorithmImage();
                 m_imagePanel->updateScanFrame(PointCloudFrame());
+                m_imagePanel->clearTask();
             }
-            if (m_runDataPanel) {
-                m_runDataPanel->clearMetrics();
-                m_runDataPanel->clearMillingTask();
+            if (m_particlePanel) {
+                m_particlePanel->clear();
             }
-            if (m_statusPanel) {
-                m_statusPanel->clearPlcFeedback();
-                m_statusPanel->clearTaskProgress();
+            if (m_queuePanel) {
+                m_queuePanel->clear();
+            }
+            if (m_machinePanel) {
+                m_machinePanel->clear();
             }
             if (m_deviceStatusPanel) {
                 m_deviceStatusPanel->clearBackendAndPlcStatus();
             }
-            if (m_taskFlowPanel) {
-                m_taskFlowPanel->clearCommands();
-            }
+            m_activePaths.clear();
+            m_activePathTotal = 0;
+            m_activeCompletedPath = 0;
+            m_activeBoardGrade.clear();
+            updateKpis();
             m_debugFakeActive = false;
             appendEventLog("INFO", "已退出调试演示模式");
         }
-    });
-
-    // 调试快捷键 Ctrl+Shift+T：结束假任务（success）。
-    auto *fakeFinishShortcut = new QShortcut(QKeySequence("Ctrl+Shift+T"), this);
-    connect(fakeFinishShortcut, &QShortcut::activated, this, [this]() {
-        if (!m_debugFakeActive) {
-            return;
-        }
-        m_simulationProgress = 100.0f;
-        setSimulationRunning(false);
-        emit m_ros2Bridge->millingProgressReceived(
-            9001, 100.0f, /*finished*/ true, /*success*/ true,
-            QStringLiteral("调试模式：模拟完成"));
-    });
+    }
 }
 
 void MainWindow::setDatabaseReady(bool ready)
@@ -1271,8 +1402,8 @@ void MainWindow::flushPendingDatabaseWrites()
 
 void MainWindow::appendEventLog(const QString &level, const QString &message)
 {
-    if (m_eventLogPanel) {
-        m_eventLogPanel->appendEvent(level, message);
+    if (m_drawer) {
+        m_drawer->appendEvent(level, message);
     }
 
     const QByteArray levelBytes = level.toUtf8();
@@ -1336,13 +1467,16 @@ void MainWindow::applyMillingProgress(quint64 taskId,
         return;
     }
 
-    if (m_runDataPanel) {
-        m_runDataPanel->setMillingStatus(finished, success);
+    if (m_machinePanel) {
+        m_machinePanel->setTaskProgress(progress);
     }
-    if (m_statusPanel) {
-        m_statusPanel->setTaskProgress(progress);
+    if (m_particlePanel) {
+        m_particlePanel->setTaskProgress(progress);
     }
     m_lastMillingProgress = progress;
+    if (m_imagePanel) {
+        m_imagePanel->setProgressSummary(m_activeCompletedPath, m_activePathTotal, progress);
+    }
 
     if (!finished) {
         return;
@@ -1350,6 +1484,26 @@ void MainWindow::applyMillingProgress(quint64 taskId,
 
     m_activeTaskFinished = true;
     m_activeBackendTaskId = 0;
+    if (m_machinePanel) {
+        m_machinePanel->setTaskFinished(success);
+    }
+    if (success && m_particlePanel) {
+        m_particlePanel->setTaskProgress(100.0f);
+    }
+    if (success && !m_activePaths.isEmpty()) {
+        // 任务成功结束：所有路径记为完成，KPI 与队列状态收口
+        m_activeCompletedPath = m_activePaths.size();
+        updateKpis();
+        if (m_queuePanel) {
+            m_queuePanel->setPathProgress(m_activeCompletedPath, 0);
+        }
+        if (m_particlePanel) {
+            m_particlePanel->setPathProgress(m_activeCompletedPath, 0);
+        }
+        if (m_imagePanel) {
+            m_imagePanel->setProgressSummary(m_activeCompletedPath, m_activePathTotal, progress);
+        }
+    }
     if (m_imagePanel) {
         m_imagePanel->clearToolPose(); // drop bit disc + trail when task ends
     }
@@ -1406,9 +1560,6 @@ void MainWindow::onWaveformUpdate()
 
 void MainWindow::appendTelemetrySample(double speed, double torque)
 {
-    if (m_statusPanel) {
-        m_statusPanel->appendSample(m_currentT, speed, torque);
-    }
     if (m_dataStatisticsPanel) {
         m_dataStatisticsPanel->appendSpindleSample(speed, torque);
     }

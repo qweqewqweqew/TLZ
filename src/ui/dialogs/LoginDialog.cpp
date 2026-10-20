@@ -1,4 +1,4 @@
-﻿#include "ui/dialogs/LoginDialog.h"
+#include "ui/dialogs/LoginDialog.h"
 
 #include "ElaMessageBar.h"
 #include "ElaPushButton.h"
@@ -193,7 +193,7 @@ QWidget *LoginDialog::buildHeader()
     auto *texts = new QVBoxLayout();
     texts->setContentsMargins(0, 0, 0, 0);
     texts->setSpacing(2);
-    auto *system = makeLabel(QStringLiteral("阴级铜表面粒子智能修整系统"));
+    auto *system = makeLabel(QStringLiteral("阴极铜板粒子检测及修磨系统"));
     system->setParent(header);
     system->setStyleSheet(QStringLiteral("color:%1;font-size:16px;font-weight:600;"
                                          "border:none;background:transparent;")
@@ -308,7 +308,7 @@ QWidget *LoginDialog::buildLoginPage()
     });
     layout->addWidget(m_showPassword);
     layout->addWidget(settingsHint(
-        QStringLiteral("连续输错 %1 次锁定 %2 分钟。监视画面、急停、启停节点不需要登录。")
+        QStringLiteral("连续输错 %1 次锁定 %2 分钟。监视画面、启停节点不需要登录。")
             .arg(AuthService::kMaxFailedAttempts)
             .arg(AuthService::kLockoutMinutes),
         page));

@@ -12,8 +12,16 @@
 #include <QDate>
 #include <QDateEdit>
 #include <QDateTime>
+#include <QDialog>
 #include <QEvent>
+#include <QFile>
+#include <QFileDialog>
 #include <QFrame>
+#include <QLineEdit>
+#include <QPainter>
+#include <QPixmap>
+#include <QPushButton>
+#include <QTextStream>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -33,26 +41,128 @@
 // 头文件里 forward declare 的汇总结构体：只在本 .cpp 内使用
 struct HistorySummary
 {
-    int    taskCount      = 0;
+    int    taskCount = 0;
     qint64 totalParticles = 0;
-    qint64 totalCleared   = 0;
-    double maxHeight      = 0.0;
+    int    particleBoards = 0;
+    int    completedBoards = 0;
+    int    pendingBoards = 0;
 };
 
 namespace {
 
-enum RangeIndex {
-    RangeAll     = 0,
-    RangeToday   = 1,
-    Range7Days   = 2,
-    Range30Days  = 3,
-    RangeCustom  = 4,
+// 铜板编号 / 检测时间 / 面 / 粒子数 / 最大高度 / 已修磨 / 结果 / 操作
+constexpr int kColumnCount = 8;
+constexpr int kPageSize = 8;
+constexpr int kMainTableColumnWeights[kColumnCount] = { 16, 16, 6, 8, 12, 8, 10, 8 };
+constexpr int kMainTableColumnWeightTotal = 84;
+
+enum class BoardResult {
+    NoNeed,
+    Completed,
+    Running
 };
 
-// 主表列宽权重（编号 / 配方 / 创建时间 / 检测结束 / 颗粒 / 已清 / 峰高）。
-// 所有列按权重共享可用宽度，不再让最后一列独占剩余空间。
-constexpr int kMainTableColumnWeights[7] = { 8, 14, 18, 18, 8, 8, 12 };
-constexpr int kMainTableColumnWeightTotal = 86;
+BoardResult boardResult(const InspectionRecordRow &row)
+{
+    if (row.particleCount <= 0) {
+        return BoardResult::NoNeed;
+    }
+    if (row.clearedCount >= row.particleCount) {
+        return BoardResult::Completed;
+    }
+    return BoardResult::Running;
+}
+
+QString resultText(BoardResult result)
+{
+    switch (result) {
+    case BoardResult::Completed:
+        return QStringLiteral("已复核");
+    case BoardResult::Running:
+        return QStringLiteral("待复核");
+    case BoardResult::NoNeed:
+        return QStringLiteral("无需修磨");
+    }
+    return QString();
+}
+
+QColor resultColor(BoardResult result)
+{
+    switch (result) {
+    case BoardResult::Completed:
+        return QColor(Theme::kStateSuccess);
+    case BoardResult::Running:
+        return QColor(Theme::kStateError);
+    case BoardResult::NoNeed:
+        return QColor(Theme::kTextMuted);
+    }
+    return QColor(Theme::kTextMuted);
+}
+
+const char *resultBackground(BoardResult result)
+{
+    switch (result) {
+    case BoardResult::Completed:
+        return Theme::kSuccessBg;
+    case BoardResult::Running:
+        return Theme::kErrorBg;
+    case BoardResult::NoNeed:
+        return Theme::kControlBg;
+    }
+    return Theme::kControlBg;
+}
+
+QIcon downloadIcon()
+{
+    QPixmap pixmap(16, 16);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen(QColor(Theme::kTextPrimary), 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    painter.setPen(pen);
+    painter.drawLine(QPointF(8, 2), QPointF(8, 10));
+    painter.drawLine(QPointF(4.5, 7), QPointF(8, 10.5));
+    painter.drawLine(QPointF(11.5, 7), QPointF(8, 10.5));
+    painter.drawLine(QPointF(3, 13.5), QPointF(13, 13.5));
+    painter.end();
+    return QIcon(pixmap);
+}
+
+QWidget *makeResultPill(BoardResult result, QWidget *parent)
+{
+    auto *host = new QWidget(parent);
+    auto *layout = new QHBoxLayout(host);
+    layout->setContentsMargins(4, 2, 4, 2);
+    layout->addStretch(1);
+    auto *pill = new QLabel(resultText(result), host);
+    pill->setAlignment(Qt::AlignCenter);
+    const QColor color = resultColor(result);
+    pill->setStyleSheet(QStringLiteral(
+        "color:%1;background:%2;border:1px solid %1;border-radius:4px;"
+        "font-size:12px;font-weight:600;padding:1px 8px;")
+                            .arg(color.name(), QLatin1String(resultBackground(result))));
+    pill->setFixedHeight(22);
+    layout->addWidget(pill);
+    layout->addStretch(1);
+    return host;
+}
+
+QString plateNumber(const InspectionRecordRow &row)
+{
+    if (row.backendTaskId != 0) {
+        return QString::number(row.backendTaskId);
+    }
+    return QString::number(row.id);
+}
+
+QString durationSeconds(const QDateTime &from, const QDateTime &to)
+{
+    if (!from.isValid() || !to.isValid()) {
+        return QStringLiteral("--");
+    }
+    const qint64 seconds = qAbs(from.secsTo(to));
+    return QStringLiteral("%1 s").arg(seconds);
+}
 
 QString formatDateTime(const QDateTime &dt)
 {
@@ -91,9 +201,9 @@ QString historyDialogExtraStyle()
         "  border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px;"
         "}"
         "QTabBar::tab:selected { background: __CTRL__; color: __TEXT__; }"
-        "QDateEdit {"
+        "QDateEdit, QLineEdit {"
         "  background: __WIN__; color: __TEXT__; border: 1px solid __BORDER__;"
-        "  border-radius: 5px; padding: 2px 6px; min-height: 26px;"
+        "  border-radius: 5px; padding: 2px 8px; min-height: 26px;"
         "}"
         "QDateEdit:disabled { color: __MUTED__; background: __HOVER__; border: 1px solid __HOVER__; }"
         "QDateEdit::drop-down {"
@@ -218,20 +328,92 @@ HistoryDialog::HistoryDialog(QWidget *parent)
 
     if (m_refreshButton) {
         connect(m_refreshButton, &ElaPushButton::clicked, this, [this]() {
-            populateRecipeCombo();
+            m_page = 0;
             reloadRecords();
         });
     }
+    if (m_resetButton) {
+        connect(m_resetButton, &ElaPushButton::clicked, this, [this]() {
+            const QDate today = QDate::currentDate();
+            if (m_from) {
+                m_from->setDate(today.addDays(-14));
+            }
+            if (m_to) {
+                m_to->setDate(today);
+            }
+            if (m_plateEdit) {
+                m_plateEdit->clear();
+            }
+            if (m_statusCombo) {
+                m_statusCombo->setCurrentIndex(0);
+            }
+            if (m_shiftCombo) {
+                m_shiftCombo->setCurrentIndex(0);
+            }
+            m_page = 0;
+            reloadRecords();
+        });
+    }
+    if (m_exportButton) {
+        connect(m_exportButton, &QPushButton::clicked, this, &HistoryDialog::exportCurrentList);
+    }
+    if (m_prevPage) {
+        connect(m_prevPage, &ElaPushButton::clicked, this, [this]() {
+            if (m_page > 0) {
+                --m_page;
+                renderPage();
+            }
+        });
+    }
+    if (m_nextPage) {
+        connect(m_nextPage, &ElaPushButton::clicked, this, [this]() {
+            const int pages = qMax(1, (m_filtered.size() + kPageSize - 1) / kPageSize);
+            if (m_page + 1 < pages) {
+                ++m_page;
+                renderPage();
+            }
+        });
+    }
 
-    populateRecipeCombo();
-    updateCustomRangeEnabled();
     reloadRecords();
+    Theme::watch(this, [this]() {
+        setStyleSheet(mainWindowStyleSheet() + historyDialogExtraStyle());
+        if (m_tileTaskCount) {
+            m_tileTaskCount->setStyleSheet(QStringLiteral("color:%1;font-size:28px;font-weight:700;border:none;background:transparent;")
+                                               .arg(Theme::kAccent));
+        }
+        if (m_tileParticles) {
+            m_tileParticles->setStyleSheet(QStringLiteral("color:%1;font-size:28px;font-weight:700;border:none;background:transparent;")
+                                               .arg(Theme::kStateWarning));
+        }
+        if (m_tileClearRate) {
+            m_tileClearRate->setStyleSheet(QStringLiteral("color:%1;font-size:28px;font-weight:700;border:none;background:transparent;")
+                                               .arg(Theme::kStateSuccess));
+        }
+        if (m_tilePending) {
+            m_tilePending->setStyleSheet(QStringLiteral("color:%1;font-size:28px;font-weight:700;border:none;background:transparent;")
+                                             .arg(Theme::kStateError));
+        }
+        renderPage();
+        if (m_selectedRecordId > 0) {
+            showDetailForRecord(m_selectedRecordId);
+        }
+    });
 }
 
 bool HistoryDialog::eventFilter(QObject *watched, QEvent *event)
 {
     if (m_table && watched == m_table->viewport() && event->type() == QEvent::Resize) {
         updateMainTableColumnWidths();
+    }
+    if (m_splitter && watched == m_splitter && event->type() == QEvent::Resize && !m_splitterSized) {
+        const int width = m_splitter->width();
+        if (width > 400) {
+            m_splitterSized = true;
+            const int detail = qBound(460, int(width * 0.42), 620);
+            m_splitter->setSizes({qMax(360, width - detail - m_splitter->handleWidth()), detail});
+            updateMainTableColumnWidths();
+        }
     }
 
     return QDialog::eventFilter(watched, event);
@@ -248,20 +430,19 @@ void HistoryDialog::updateMainTableColumnWidths()
         return;
     }
 
-    int widths[7] = {};
-    int remainders[7] = {};
+    int widths[kColumnCount] = {};
+    int remainders[kColumnCount] = {};
     int assignedWidth = 0;
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < kColumnCount; ++i) {
         const int weightedWidth = availableWidth * kMainTableColumnWeights[i];
         widths[i] = weightedWidth / kMainTableColumnWeightTotal;
         remainders[i] = weightedWidth % kMainTableColumnWeightTotal;
         assignedWidth += widths[i];
     }
 
-    // Distribute rounding pixels to the largest fractional columns.
     for (int extra = availableWidth - assignedWidth; extra > 0; --extra) {
         int bestIndex = 0;
-        for (int i = 1; i < 7; ++i) {
+        for (int i = 1; i < kColumnCount; ++i) {
             if (remainders[i] > remainders[bestIndex]) {
                 bestIndex = i;
             }
@@ -270,7 +451,7 @@ void HistoryDialog::updateMainTableColumnWidths()
         remainders[bestIndex] = -1;
     }
 
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < kColumnCount; ++i) {
         m_table->setColumnWidth(i, widths[i]);
     }
 }
@@ -286,78 +467,55 @@ QWidget *HistoryDialog::buildFilterBar()
 
     auto *layout = new QHBoxLayout(bar);
     layout->setContentsMargins(12, 8, 12, 8);
-    layout->setSpacing(10);
-
-    auto *rangeLabel = makeLabel("时间范围", "sectionHint");
-    m_rangeCombo = new ElaComboBox(bar);
-    m_rangeCombo->addItem("全部时间");
-    m_rangeCombo->addItem("今天");
-    m_rangeCombo->addItem("最近 7 天");
-    m_rangeCombo->addItem("最近 30 天");
-    m_rangeCombo->addItem("自定义");
-    m_rangeCombo->setCurrentIndex(RangeAll);
-    m_rangeCombo->setMinimumWidth(140);
+    layout->setSpacing(8);
 
     const QDate today = QDate::currentDate();
-    m_customFrom = new QDateEdit(today.addDays(-7), bar);
-    m_customFrom->setCalendarPopup(true);
-    m_customFrom->setDisplayFormat("yyyy-MM-dd");
-    m_customFrom->setFixedWidth(130);
+    layout->addWidget(makeLabel(QStringLiteral("时间范围"), QStringLiteral("sectionHint")));
+    m_from = new QDateEdit(today.addDays(-14), bar);
+    m_from->setCalendarPopup(true);
+    m_from->setDisplayFormat(QStringLiteral("yyyy/MM/dd"));
+    m_from->setFixedWidth(128);
+    layout->addWidget(m_from);
+    layout->addWidget(makeLabel(QStringLiteral("至"), QStringLiteral("sectionHint")));
+    m_to = new QDateEdit(today, bar);
+    m_to->setCalendarPopup(true);
+    m_to->setDisplayFormat(QStringLiteral("yyyy/MM/dd"));
+    m_to->setFixedWidth(128);
+    layout->addWidget(m_to);
 
-    m_customDash = makeLabel("—", "sectionHint");
-
-    m_customTo = new QDateEdit(today, bar);
-    m_customTo->setCalendarPopup(true);
-    m_customTo->setDisplayFormat("yyyy-MM-dd");
-    m_customTo->setFixedWidth(130);
-
-    auto *recipeLabel = makeLabel("配方", "sectionHint");
-    m_recipeCombo = new ElaComboBox(bar);
-    m_recipeCombo->setMinimumWidth(200);
-
-    m_refreshButton = new ElaPushButton(QStringLiteral("查询"), bar);
-    m_refreshButton->setFixedSize(96, 32);
-    applyPrimaryButtonStyle(m_refreshButton);
-
-    layout->addWidget(rangeLabel);
-    layout->addWidget(m_rangeCombo);
-    layout->addWidget(m_customFrom);
-    layout->addWidget(m_customDash);
-    layout->addWidget(m_customTo);
     layout->addSpacing(8);
-    layout->addWidget(recipeLabel);
-    layout->addWidget(m_recipeCombo);
-    layout->addStretch();
+    layout->addWidget(makeLabel(QStringLiteral("铜板编号"), QStringLiteral("sectionHint")));
+    m_plateEdit = new QLineEdit(bar);
+    m_plateEdit->setPlaceholderText(QStringLiteral("输入铜板编号"));
+    m_plateEdit->setClearButtonEnabled(true);
+    m_plateEdit->setFixedWidth(160);
+    layout->addWidget(m_plateEdit);
+
+    layout->addWidget(makeLabel(QStringLiteral("班次"), QStringLiteral("sectionHint")));
+    m_shiftCombo = new ElaComboBox(bar);
+    m_shiftCombo->addItem(QStringLiteral("全部"));
+    m_shiftCombo->setMinimumWidth(100);
+    m_shiftCombo->setToolTip(QStringLiteral("后端尚未提供班次，目前只能查看全部"));
+    layout->addWidget(m_shiftCombo);
+
+    layout->addWidget(makeLabel(QStringLiteral("任务状态"), QStringLiteral("sectionHint")));
+    m_statusCombo = new ElaComboBox(bar);
+    m_statusCombo->addItems({QStringLiteral("全部"),
+                             QStringLiteral("已复核"),
+                             QStringLiteral("待复核"),
+                             QStringLiteral("无需修磨")});
+    m_statusCombo->setMinimumWidth(120);
+    layout->addWidget(m_statusCombo);
+
+    layout->addStretch(1);
+    m_refreshButton = new ElaPushButton(QStringLiteral("查询"), bar);
+    m_refreshButton->setFixedSize(88, 32);
+    applyPrimaryButtonStyle(m_refreshButton);
     layout->addWidget(m_refreshButton);
-
-    connect(m_rangeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this](int) {
-                updateCustomRangeEnabled();
-                if (!m_reloading && m_statusLabel) {
-                    m_statusLabel->setText(QStringLiteral("筛选条件已变化，点击查询更新结果"));
-                }
-            });
-    connect(m_recipeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this](int) {
-                if (!m_reloading && m_statusLabel) {
-                    m_statusLabel->setText(QStringLiteral("筛选条件已变化，点击查询更新结果"));
-                }
-            });
-    connect(m_customFrom, &QDateEdit::dateChanged, this, [this](const QDate &) {
-        if (m_rangeCombo && m_rangeCombo->currentIndex() == RangeCustom && !m_reloading) {
-            if (m_statusLabel) {
-                m_statusLabel->setText(QStringLiteral("筛选条件已变化，点击查询更新结果"));
-            }
-        }
-    });
-    connect(m_customTo, &QDateEdit::dateChanged, this, [this](const QDate &) {
-        if (m_rangeCombo && m_rangeCombo->currentIndex() == RangeCustom && !m_reloading) {
-            if (m_statusLabel) {
-                m_statusLabel->setText(QStringLiteral("筛选条件已变化，点击查询更新结果"));
-            }
-        }
-    });
-
+    m_resetButton = new ElaPushButton(QStringLiteral("重置"), bar);
+    m_resetButton->setFixedSize(88, 32);
+    applySecondaryButtonStyle(m_resetButton);
+    layout->addWidget(m_resetButton);
     return bar;
 }
 
@@ -368,10 +526,14 @@ QWidget *HistoryDialog::buildSummaryRow()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(10);
 
-    layout->addWidget(makeTile("任务数",   "次",  m_tileTaskCount));
-    layout->addWidget(makeTile("颗粒总数", "颗",  m_tileParticles));
-    layout->addWidget(makeTile("清除率",   "%",   m_tileClearRate));
-    layout->addWidget(makeTile("峰值高度", "mm",  m_tileMaxHeight));
+    layout->addWidget(makeTile(QStringLiteral("当前范围铜板数"), QStringLiteral("张"),
+                               QString::fromLatin1(Theme::kAccent), m_tileTaskCount));
+    layout->addWidget(makeTile(QStringLiteral("检测粒子"), QStringLiteral("个"),
+                               QString::fromLatin1(Theme::kStateWarning), m_tileParticles));
+    layout->addWidget(makeTile(QStringLiteral("修磨完成率"), QStringLiteral("%"),
+                               QString::fromLatin1(Theme::kStateSuccess), m_tileClearRate));
+    layout->addWidget(makeTile(QStringLiteral("待复核"), QStringLiteral("张"),
+                               QString::fromLatin1(Theme::kStateError), m_tilePending));
 
     return host;
 }
@@ -387,21 +549,39 @@ QWidget *HistoryDialog::buildTableCard()
     m_splitter->setChildrenCollapsible(false);
     m_splitter->setHandleWidth(8);
 
-    auto *listPanel = createPanel(QStringLiteral("检测任务列表"), nullptr, m_splitter);
+    m_exportButton = new QPushButton(QStringLiteral("导出当前列表"), this);
+    m_exportButton->setIcon(downloadIcon());
+    m_exportButton->setIconSize(QSize(14, 14));
+    m_exportButton->setCursor(Qt::PointingHandCursor);
+    m_exportButton->setFixedHeight(32);
+    m_exportButton->setStyleSheet(QStringLiteral(
+        "QPushButton {"
+        "  color:%1; background:%2; border:1px solid %3; border-radius:6px;"
+        "  padding:0 14px; font-size:13px;"
+        "}"
+        "QPushButton:hover { background:%4; }"
+        "QPushButton:pressed { background:%5; }")
+                                      .arg(Theme::kTextPrimary,
+                                           Theme::kPanelBg,
+                                           Theme::kBorder,
+                                           Theme::kHoverBg,
+                                           Theme::kPressedBg));
+    auto *listPanel = createPanel(QStringLiteral("检测修磨记录"), m_exportButton, m_splitter);
     auto *listLayout = qobject_cast<QVBoxLayout *>(listPanel->layout());
 
     m_tableStack = new QStackedWidget(listPanel);
 
     m_table = new QTableWidget(m_tableStack);
-    m_table->setColumnCount(7);
+    m_table->setColumnCount(kColumnCount);
     m_table->setHorizontalHeaderLabels({
-        QStringLiteral("编号"),
-        QStringLiteral("配方"),
-        QStringLiteral("创建时间"),
-        QStringLiteral("检测结束"),
-        QStringLiteral("颗粒"),
-        QStringLiteral("已清"),
-        QStringLiteral("峰高(mm)")
+        QStringLiteral("铜板编号"),
+        QStringLiteral("检测时间"),
+        QStringLiteral("面"),
+        QStringLiteral("粒子数"),
+        QStringLiteral("最大高度(mm)"),
+        QStringLiteral("已修磨"),
+        QStringLiteral("结果"),
+        QStringLiteral("操作")
     });
     setupCompactTable(m_table);
     m_table->setMouseTracking(true);
@@ -413,7 +593,7 @@ QWidget *HistoryDialog::buildTableCard()
     header->setSectionsClickable(false);
 
     // 默认行高
-    m_table->verticalHeader()->setDefaultSectionSize(32);
+    m_table->verticalHeader()->setDefaultSectionSize(40);
 
     auto *empty = new QWidget(m_tableStack);
     auto *emptyLayout = new QVBoxLayout(empty);
@@ -427,8 +607,26 @@ QWidget *HistoryDialog::buildTableCard()
     m_tableStack->addWidget(empty);     // index 1
     m_tableStack->setCurrentIndex(0);
 
+    auto *pager = new QWidget(listPanel);
+    auto *pagerLayout = new QHBoxLayout(pager);
+    pagerLayout->setContentsMargins(0, 4, 0, 0);
+    m_totalLabel = makeLabel(QStringLiteral("共 0 条 · 每页 8 条"), QStringLiteral("sectionHint"));
+    pagerLayout->addWidget(m_totalLabel);
+    pagerLayout->addStretch(1);
+    m_prevPage = new ElaPushButton(QStringLiteral("上一页"), pager);
+    m_prevPage->setFixedSize(72, 28);
+    applySecondaryButtonStyle(m_prevPage);
+    m_pageLabel = makeLabel(QStringLiteral("1 / 1"), QStringLiteral("sectionHint"));
+    m_nextPage = new ElaPushButton(QStringLiteral("下一页"), pager);
+    m_nextPage->setFixedSize(72, 28);
+    applySecondaryButtonStyle(m_nextPage);
+    pagerLayout->addWidget(m_prevPage);
+    pagerLayout->addWidget(m_pageLabel);
+    pagerLayout->addWidget(m_nextPage);
+
     if (listLayout) {
         listLayout->addWidget(m_tableStack, 1);
+        listLayout->addWidget(pager, 0);
     }
 
     auto *detailPanel = createPanel(QStringLiteral("记录详情"), nullptr, m_splitter);
@@ -459,11 +657,13 @@ QWidget *HistoryDialog::buildTableCard()
         detailLayout->addWidget(m_detailStack, 1);
     }
 
+    detailPanel->setMinimumWidth(460);
+    listPanel->setMinimumWidth(520);
     m_splitter->addWidget(listPanel);
     m_splitter->addWidget(detailPanel);
-    m_splitter->setStretchFactor(0, 1);
-    m_splitter->setStretchFactor(1, 1);
-    m_splitter->setSizes({1, 1});
+    m_splitter->setStretchFactor(0, 3);
+    m_splitter->setStretchFactor(1, 2);
+    m_splitter->installEventFilter(this);
     connect(m_splitter, &QSplitter::splitterMoved, this,
             [this](int, int) { updateMainTableColumnWidths(); });
     hostLayout->addWidget(m_splitter, 1);
@@ -484,7 +684,8 @@ QLabel *HistoryDialog::makeTileValue(QWidget *tile)
     return tile ? tile->findChild<QLabel *>("tileValue") : nullptr;
 }
 
-QWidget *HistoryDialog::makeTile(const QString &title, const QString &suffix, QLabel *&valueLabelOut)
+QWidget *HistoryDialog::makeTile(const QString &title, const QString &suffix, const QString &valueColor,
+                                 QLabel *&valueLabelOut)
 {
     auto *tile = new QFrame(this);
     tile->setObjectName("panel");
@@ -500,8 +701,14 @@ QWidget *HistoryDialog::makeTile(const QString &title, const QString &suffix, QL
     valueRow->setSpacing(4);
     valueRow->setAlignment(Qt::AlignLeft | Qt::AlignBottom);
 
-    auto *valueLabel = makeLabel("--", "largeValue");
+    auto *valueLabel = makeLabel(QStringLiteral("--"));
     valueLabel->setObjectName("tileValue");
+    QFont valueFont = valueLabel->font();
+    valueFont.setPixelSize(28);
+    valueFont.setBold(true);
+    valueLabel->setFont(valueFont);
+    valueLabel->setStyleSheet(QStringLiteral("color:%1;font-size:28px;font-weight:700;border:none;background:transparent;")
+                                  .arg(valueColor));
     auto *suffixLabel = makeLabel(suffix, "sectionHint");
 
     valueRow->addWidget(valueLabel);
@@ -518,14 +725,6 @@ QWidget *HistoryDialog::makeTile(const QString &title, const QString &suffix, QL
 // -----------------------------------------------------------------
 // 数据装填
 // -----------------------------------------------------------------
-
-void HistoryDialog::updateCustomRangeEnabled()
-{
-    const bool custom = (m_rangeCombo && m_rangeCombo->currentIndex() == RangeCustom);
-    if (m_customFrom) m_customFrom->setVisible(custom);
-    if (m_customTo)   m_customTo->setVisible(custom);
-    if (m_customDash) m_customDash->setVisible(custom);
-}
 
 void HistoryDialog::showDetailPlaceholder(const QString &message)
 {
@@ -571,35 +770,6 @@ void HistoryDialog::showDetailForRecord(int recordId)
     m_detailStack->setCurrentIndex(1);
 }
 
-void HistoryDialog::populateRecipeCombo()
-{
-    if (!m_recipeCombo) {
-        return;
-    }
-    const bool prev = m_reloading;
-    m_reloading = true;
-
-    const QString kept = m_recipeCombo->currentText();
-
-    QString err;
-    const QStringList names = InspectionRepository::loadRecipeNames(&err);
-
-    m_recipeCombo->clear();
-    m_recipeCombo->addItem("全部配方");
-    for (const auto &n : names) {
-        m_recipeCombo->addItem(n);
-    }
-
-    int idx = m_recipeCombo->findText(kept);
-    m_recipeCombo->setCurrentIndex(idx >= 0 ? idx : 0);
-
-    m_reloading = prev;
-
-    if (!err.isEmpty() && m_statusLabel) {
-        m_statusLabel->setText(QStringLiteral("配方列表加载失败：%1").arg(err));
-    }
-}
-
 void HistoryDialog::reloadRecords()
 {
     if (m_reloading) {
@@ -617,58 +787,25 @@ void HistoryDialog::reloadRecords()
             }
         }
     }
-    const int savedScroll =
-        (m_table && m_table->verticalScrollBar())
-            ? m_table->verticalScrollBar()->value()
-            : 0;
-
-    if (m_table) m_table->clearSpans();
+    if (m_table) {
+        m_table->clearSpans();
+    }
     showDetailPlaceholder(QStringLiteral("正在查询历史记录..."));
     if (m_statusLabel) {
+        m_statusLabel->setVisible(true);
         m_statusLabel->setText(QStringLiteral("正在查询历史记录..."));
     }
 
     InspectionQuery q;
-    q.limit = 200;
-    if (m_recipeCombo && m_recipeCombo->currentIndex() > 0) {
-        q.recipe = m_recipeCombo->currentText();
+    q.limit = 5000;
+    const QDate today = QDate::currentDate();
+    QDate fromDate = m_from ? m_from->date() : today.addDays(-14);
+    QDate toDate = m_to ? m_to->date() : today;
+    if (fromDate > toDate) {
+        std::swap(fromDate, toDate);
     }
-
-    // 时间范围口径统一：都按本地自然日 [from 0:00, to 0:00) 的半开区间。
-    // "今天" = [今天 0:00, 明天 0:00)
-    // "最近 N 天" = [今天-(N-1) 0:00, 明天 0:00)
-    // "自定义" = [from 0:00, to+1 0:00)，from > to 时自动交换。
-    // createdTo 现在作为“不含”上界（Repository 已改为 CreatedAt < ?）。
-    if (m_rangeCombo) {
-        const QDate today = QDate::currentDate();
-        const QDateTime tomorrowStart(today.addDays(1), QTime(0, 0));
-        switch (m_rangeCombo->currentIndex()) {
-        case RangeToday:
-            q.createdFrom = QDateTime(today, QTime(0, 0)).toUTC();
-            q.createdTo   = tomorrowStart.toUTC();
-            break;
-        case Range7Days:
-            q.createdFrom = QDateTime(today.addDays(-6), QTime(0, 0)).toUTC();
-            q.createdTo   = tomorrowStart.toUTC();
-            break;
-        case Range30Days:
-            q.createdFrom = QDateTime(today.addDays(-29), QTime(0, 0)).toUTC();
-            q.createdTo   = tomorrowStart.toUTC();
-            break;
-        case RangeCustom: {
-            QDate fromDate = m_customFrom ? m_customFrom->date() : today;
-            QDate toDate   = m_customTo   ? m_customTo->date()   : today;
-            if (fromDate > toDate) {
-                std::swap(fromDate, toDate);
-            }
-            q.createdFrom = QDateTime(fromDate, QTime(0, 0)).toUTC();
-            q.createdTo   = QDateTime(toDate.addDays(1), QTime(0, 0)).toUTC();
-            break;
-        }
-        default:
-            break;
-        }
-    }
+    q.createdFrom = QDateTime(fromDate, QTime(0, 0)).toUTC();
+    q.createdTo = QDateTime(toDate.addDays(1), QTime(0, 0)).toUTC();
 
     QString err;
     const QList<InspectionRecordRow> rows = InspectionRepository::loadFiltered(q, &err);
@@ -684,52 +821,131 @@ void HistoryDialog::reloadRecords()
         if (m_statusLabel) {
             m_statusLabel->setText(QStringLiteral("加载失败：%1").arg(err));
         }
+        m_filtered.clear();
+        renderPage();
         m_reloading = false;
         return;
     }
 
-    populateTable(rows);
+    const QString plate = m_plateEdit ? m_plateEdit->text().trimmed() : QString();
+    const int statusIndex = m_statusCombo ? m_statusCombo->currentIndex() : 0;
+    m_filtered.clear();
+    for (const InspectionRecordRow &row : rows) {
+        if (!plate.isEmpty() && !plateNumber(row).contains(plate)) {
+            continue;
+        }
+        const BoardResult result = boardResult(row);
+        if (statusIndex == 1 && result != BoardResult::Completed) {
+            continue;
+        }
+        if (statusIndex == 2 && result != BoardResult::Running) {
+            continue;
+        }
+        if (statusIndex == 3 && result != BoardResult::NoNeed) {
+            continue;
+        }
+        m_filtered.append(row);
+    }
 
     HistorySummary sum;
-    sum.taskCount = rows.size();
-    for (const auto &r : rows) {
-        sum.totalParticles += r.particleCount;
-        sum.totalCleared   += r.clearedCount;
-        if (r.maxParticleHeight > sum.maxHeight) {
-            sum.maxHeight = r.maxParticleHeight;
+    sum.taskCount = m_filtered.size();
+    for (const InspectionRecordRow &row : m_filtered) {
+        sum.totalParticles += row.particleCount;
+        if (row.particleCount > 0) {
+            ++sum.particleBoards;
+            if (boardResult(row) == BoardResult::Completed) {
+                ++sum.completedBoards;
+            } else {
+                ++sum.pendingBoards;
+            }
         }
     }
     updateSummary(sum);
-
-    if (m_tableStack) {
-        m_tableStack->setCurrentIndex(rows.isEmpty() ? 1 : 0);
-    }
     if (m_statusLabel) {
-        m_statusLabel->setText(rows.isEmpty()
-                                   ? QStringLiteral("暂无符合条件的历史记录")
-                                   : QStringLiteral("共 %1 条记录，选择左侧行查看详情").arg(rows.size()));
+        m_statusLabel->setVisible(false);
     }
-
-    // 恢复选中和滚动条位置（按 recordId 找回；找不到就退回滚动位置）
-    if (m_table) {
-        int restoreRow = (savedSelectedId > 0) ? findRowByRecordId(savedSelectedId) : -1;
-        if (restoreRow < 0 && m_table->rowCount() > 0) {
-            restoreRow = 0;
-        }
-        if (restoreRow >= 0) {
-            m_table->selectRow(restoreRow);
-            if (auto *it = m_table->item(restoreRow, 0)) {
-                showDetailForRecord(it->data(Qt::UserRole).toInt());
+    const int pages = qMax(1, (m_filtered.size() + kPageSize - 1) / kPageSize);
+    if (savedSelectedId > 0) {
+        int index = -1;
+        for (int i = 0; i < m_filtered.size(); ++i) {
+            if (m_filtered.at(i).id == savedSelectedId) {
+                index = i;
+                break;
             }
-        } else {
-            showDetailPlaceholder(QStringLiteral("请选择左侧记录查看详情"));
         }
-        if (auto *bar = m_table->verticalScrollBar()) {
-            bar->setValue(qBound(bar->minimum(), savedScroll, bar->maximum()));
-        }
+        m_page = index >= 0 ? index / kPageSize : 0;
     }
-
+    if (m_page >= pages) {
+        m_page = pages - 1;
+    }
+    renderPage();
     m_reloading = false;
+}
+
+void HistoryDialog::renderPage()
+{
+    const int pages = qMax(1, (m_filtered.size() + kPageSize - 1) / kPageSize);
+    if (m_page < 0) {
+        m_page = 0;
+    }
+    if (m_page >= pages) {
+        m_page = pages - 1;
+    }
+    const int begin = m_page * kPageSize;
+    populateTable(m_filtered.mid(begin, kPageSize));
+    if (m_tableStack) {
+        m_tableStack->setCurrentIndex(m_filtered.isEmpty() ? 1 : 0);
+    }
+    if (m_totalLabel) {
+        m_totalLabel->setText(QStringLiteral("共 %1 条 · 每页 %2 条").arg(m_filtered.size()).arg(kPageSize));
+    }
+    if (m_pageLabel) {
+        m_pageLabel->setText(QStringLiteral("%1 / %2").arg(m_filtered.isEmpty() ? 0 : m_page + 1).arg(m_filtered.isEmpty() ? 0 : pages));
+    }
+    if (m_prevPage) {
+        m_prevPage->setEnabled(m_page > 0);
+    }
+    if (m_nextPage) {
+        m_nextPage->setEnabled(m_page + 1 < pages);
+    }
+    if (m_table && m_table->rowCount() > 0) {
+        m_table->selectRow(0);
+        if (auto *item = m_table->item(0, 0)) {
+            showDetailForRecord(item->data(Qt::UserRole).toInt());
+        }
+    } else {
+        showDetailPlaceholder(QStringLiteral("请选择左侧记录查看详情"));
+    }
+}
+
+void HistoryDialog::exportCurrentList()
+{
+    if (m_filtered.isEmpty()) {
+        return;
+    }
+    const QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("导出当前列表"), QStringLiteral("历史记录.csv"), QStringLiteral("CSV (*.csv)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return;
+    }
+    QTextStream out(&file);
+    out.setCodec("UTF-8");
+    out << QChar(0xFEFF);
+    out << QStringLiteral("铜板编号,检测时间,粒子数,最大高度(mm),已修磨,结果,配方,备注\n");
+    for (const InspectionRecordRow &row : m_filtered) {
+        out << plateNumber(row) << ','
+            << formatDateTime(row.createdAt) << ','
+            << row.particleCount << ','
+            << QString::number(row.maxParticleHeight, 'f', 3) << ','
+            << row.clearedCount << ','
+            << resultText(boardResult(row)) << ','
+            << row.recipeName << ','
+            << QString(row.remark).replace(',', QStringLiteral("，")) << '\n';
+    }
 }
 
 void HistoryDialog::populateTable(const QList<InspectionRecordRow> &rows)
@@ -737,17 +953,45 @@ void HistoryDialog::populateTable(const QList<InspectionRecordRow> &rows)
     m_table->clearSpans();
     m_table->setRowCount(rows.size());
     for (int i = 0; i < rows.size(); ++i) {
-        const auto &r = rows.at(i);
+        const InspectionRecordRow &row = rows.at(i);
+        const BoardResult result = boardResult(row);
         int col = 0;
-        auto *idItem = new QTableWidgetItem(QString::number(r.id));
-        idItem->setData(Qt::UserRole, r.id);
+        auto *idItem = new QTableWidgetItem(plateNumber(row));
+        idItem->setData(Qt::UserRole, row.id);
         m_table->setItem(i, col++, idItem);
-        m_table->setItem(i, col++, new QTableWidgetItem(r.recipeName));
-        m_table->setItem(i, col++, new QTableWidgetItem(formatDateTime(r.createdAt)));
-        m_table->setItem(i, col++, new QTableWidgetItem(formatDateTime(r.inspectEndAt)));
-        m_table->setItem(i, col++, new QTableWidgetItem(QString::number(r.particleCount)));
-        m_table->setItem(i, col++, new QTableWidgetItem(QString::number(r.clearedCount)));
-        m_table->setItem(i, col++, new QTableWidgetItem(QString::number(r.maxParticleHeight, 'f', 3)));
+        m_table->setItem(i, col++, new QTableWidgetItem(
+            row.createdAt.isValid() ? row.createdAt.toString(QStringLiteral("yyyy-MM-dd HH:mm"))
+                                    : QStringLiteral("--")));
+        m_table->setItem(i, col++, new QTableWidgetItem(QStringLiteral("--")));
+        m_table->setItem(i, col++, new QTableWidgetItem(QString::number(row.particleCount)));
+        m_table->setItem(i, col++, new QTableWidgetItem(QString::number(row.maxParticleHeight, 'f', 1)));
+        m_table->setItem(i, col++, new QTableWidgetItem(QString::number(row.clearedCount)));
+        m_table->setCellWidget(i, col++, makeResultPill(result, m_table));
+
+        auto *viewButton = new QPushButton(QStringLiteral("查看"), m_table);
+        viewButton->setCursor(Qt::PointingHandCursor);
+        viewButton->setFlat(true);
+        viewButton->setStyleSheet(QStringLiteral(
+            "QPushButton { color:%1; background:transparent; border:none; font-size:13px; }"
+            "QPushButton:hover { color:%2; }")
+                                      .arg(QLatin1String(Theme::kAccent),
+                                           QLatin1String(Theme::kTextPrimary)));
+        const int recordId = row.id;
+        connect(viewButton, &QPushButton::clicked, this, [this, recordId]() {
+            const int tableRow = findRowByRecordId(recordId);
+            if (tableRow >= 0 && m_table) {
+                m_table->selectRow(tableRow);
+            }
+            showDetailForRecord(recordId);
+            openReviewPage(recordId);
+        });
+        auto *viewHost = new QWidget(m_table);
+        auto *viewLayout = new QHBoxLayout(viewHost);
+        viewLayout->setContentsMargins(0, 0, 0, 0);
+        viewLayout->addStretch(1);
+        viewLayout->addWidget(viewButton);
+        viewLayout->addStretch(1);
+        m_table->setCellWidget(i, col++, viewHost);
     }
     centerTableCells(m_table);
 }
@@ -761,23 +1005,82 @@ void HistoryDialog::updateSummary(const HistorySummary &s)
         m_tileParticles->setText(QString::number(s.totalParticles));
     }
     if (m_tileClearRate) {
-        if (s.totalParticles <= 0) {
-            m_tileClearRate->setText("--");
+        if (s.particleBoards <= 0) {
+            m_tileClearRate->setText(QStringLiteral("--"));
         } else {
-            const double rate = 100.0 * double(s.totalCleared) / double(s.totalParticles);
+            const double rate = 100.0 * double(s.completedBoards) / double(s.particleBoards);
             m_tileClearRate->setText(QString::number(rate, 'f', 1));
         }
     }
-    if (m_tileMaxHeight) {
-        m_tileMaxHeight->setText(s.taskCount > 0
-                                     ? QString::number(s.maxHeight, 'f', 3)
-                                     : QStringLiteral("--"));
+    if (m_tilePending) {
+        m_tilePending->setText(QString::number(s.pendingBoards));
     }
 }
 
 // -----------------------------------------------------------------
 // Master-detail selection
 // -----------------------------------------------------------------
+
+void HistoryDialog::openReviewPage(int recordId)
+{
+    if (recordId <= 0) {
+        return;
+    }
+
+    QString plate = QString::number(recordId);
+    for (const InspectionRecordRow &row : m_filtered) {
+        if (row.id == recordId) {
+            plate = plateNumber(row);
+            break;
+        }
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("复核"));
+    dialog.setModal(true);
+    dialog.resize(720, 480);
+    dialog.setStyleSheet(QStringLiteral(
+        "QDialog { background:%1; }"
+        "QLabel#reviewTitle { color:%2; font-size:16px; font-weight:700; border:none; background:transparent; }"
+        "QLabel#reviewPlate { color:%3; font-size:13px; border:none; background:transparent; }")
+                             .arg(QLatin1String(Theme::kPanelBg),
+                                  QLatin1String(Theme::kTextPrimary),
+                                  QLatin1String(Theme::kTextSecondary)));
+
+    auto *layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(20, 16, 20, 16);
+    layout->setSpacing(8);
+
+    auto *title = new QLabel(QStringLiteral("复核"), &dialog);
+    title->setObjectName(QStringLiteral("reviewTitle"));
+    auto *plateLabel = new QLabel(QStringLiteral("铜板编号：%1").arg(plate), &dialog);
+    plateLabel->setObjectName(QStringLiteral("reviewPlate"));
+
+    auto *body = new QWidget(&dialog);
+    body->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+    auto *closeButton = new QPushButton(QStringLiteral("关闭"), &dialog);
+    closeButton->setCursor(Qt::PointingHandCursor);
+    closeButton->setFixedHeight(32);
+    closeButton->setStyleSheet(QStringLiteral(
+        "QPushButton { color:%1; background:%2; border:1px solid %3; border-radius:6px; padding:0 16px; }"
+        "QPushButton:hover { background:%4; }")
+                                   .arg(QLatin1String(Theme::kTextPrimary),
+                                        QLatin1String(Theme::kPanelBg),
+                                        QLatin1String(Theme::kBorder),
+                                        QLatin1String(Theme::kHoverBg)));
+    connect(closeButton, &QPushButton::clicked, &dialog, &QDialog::accept);
+
+    auto *footer = new QHBoxLayout();
+    footer->addStretch(1);
+    footer->addWidget(closeButton);
+
+    layout->addWidget(title);
+    layout->addWidget(plateLabel);
+    layout->addWidget(body, 1);
+    layout->addLayout(footer);
+    dialog.exec();
+}
 
 void HistoryDialog::onRowClicked(int row, int /*column*/)
 {
@@ -818,132 +1121,153 @@ QWidget *HistoryDialog::createDetailWidget(int recordId)
     auto *host = new QWidget();
     host->setAutoFillBackground(true);
     host->setStyleSheet(QStringLiteral("background:%1;").arg(QLatin1String(Theme::kWindowBg)));
-
     auto *hostLayout = new QVBoxLayout(host);
-    hostLayout->setContentsMargins(10, 6, 10, 10);
-    hostLayout->setSpacing(3);
+    hostLayout->setContentsMargins(8, 4, 8, 8);
+    hostLayout->setSpacing(8);
 
     if (!detail.loaded) {
-        auto *msg = makeLabel(err.isEmpty() ? QStringLiteral("详情加载失败")
-                                            : QStringLiteral("详情加载失败：%1").arg(err),
-                              "sectionHint");
-        hostLayout->addWidget(msg);
-        hostLayout->addStretch();
+        hostLayout->addWidget(makeLabel(err.isEmpty() ? QStringLiteral("详情加载失败")
+                                                      : QStringLiteral("详情加载失败：%1").arg(err),
+                                         QStringLiteral("sectionHint")));
+        hostLayout->addStretch(1);
         return host;
     }
 
-    const auto &h = detail.head;
-    auto compactDetailText = [](QLabel *label) {
-        if (!label) {
-            return;
-        }
-        label->setWordWrap(false);
-        label->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-        label->setFixedHeight(label->sizeHint().height());
-    };
+    const InspectionRecordRow &head = detail.head;
+    const BoardResult result = boardResult(head);
+    auto *title = makeLabel(QStringLiteral("铜板编号：%1").arg(plateNumber(head)), QStringLiteral("panelTitle"));
+    hostLayout->addWidget(title);
 
-    auto *title = makeLabel(QStringLiteral("任务 #%1 · %2")
-                                .arg(h.id)
-                                .arg(h.recipeName.isEmpty() ? QStringLiteral("未命名配方")
-                                                            : h.recipeName),
-                            "panelTitle");
-    hostLayout->addWidget(title, 0, Qt::AlignTop);
-    compactDetailText(title);
-
-    auto *meta = makeLabel(QStringLiteral("创建时间：%1  |  加工：%2 — %3  |  检测：%4 — %5")
-                               .arg(formatDateTime(h.createdAt))
-                               .arg(formatDateTime(h.processStartAt))
-                               .arg(formatDateTime(h.processEndAt))
-                               .arg(formatDateTime(h.inspectStartAt))
-                               .arg(formatDateTime(h.inspectEndAt)),
-                           "sectionHint");
-    hostLayout->addWidget(meta, 0, Qt::AlignTop);
-    compactDetailText(meta);
-
-    const double rate = (h.particleCount > 0)
-                            ? 100.0 * double(h.clearedCount) / double(h.particleCount)
-                            : 0.0;
-    auto *kpi = makeLabel(QStringLiteral("颗粒数 %1  ·  已清除 %2  ·  清除率 %3%%  ·  峰值高度 %4 mm")
-                              .arg(h.particleCount)
-                              .arg(h.clearedCount)
-                              .arg(QString::number(rate, 'f', 1))
-                              .arg(QString::number(h.maxParticleHeight, 'f', 3)),
-                          "metricValue");
-    hostLayout->addWidget(kpi, 0, Qt::AlignTop);
-    compactDetailText(kpi);
-
-    QStringList overviewParts;
-    if (!h.remark.isEmpty()) {
-        overviewParts << QStringLiteral("备注：%1").arg(h.remark);
+    auto *top = new QHBoxLayout();
+    top->setSpacing(12);
+    auto *image = new QLabel(host);
+    image->setFixedSize(220, 160);
+    image->setAlignment(Qt::AlignCenter);
+    image->setStyleSheet(QStringLiteral("background:%1;border:1px solid %2;border-radius:4px;")
+                             .arg(Theme::kCanvasBg, Theme::kBorder));
+    QPixmap pixmap(head.overviewImagePath);
+    if (!pixmap.isNull()) {
+        image->setPixmap(pixmap.scaled(image->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    } else {
+        image->setText(QStringLiteral("无总览图"));
+        image->setStyleSheet(image->styleSheet() + QStringLiteral("color:%1;").arg(Theme::kTextMuted));
     }
-    overviewParts << QStringLiteral("总览图：%1")
-                         .arg(h.overviewImagePath.isEmpty() ? QStringLiteral("无")
-                                                            : h.overviewImagePath);
-    auto *overview = makeLabel(overviewParts.join(QStringLiteral("    ")), "sectionHint");
-    hostLayout->addWidget(overview, 0, Qt::AlignTop);
-    compactDetailText(overview);
+    top->addWidget(image, 0, Qt::AlignTop);
 
-    auto *tabs = new QTabWidget(host);
-    tabs->setDocumentMode(true);
+    auto *fields = new QVBoxLayout();
+    fields->setSpacing(4);
+    const auto addField = [&](const QString &name, const QString &value) {
+        auto *row = new QHBoxLayout();
+        auto *nameLabel = makeLabel(name, QStringLiteral("sectionHint"));
+        nameLabel->setFixedWidth(72);
+        auto *valueLabel = makeLabel(value);
+        valueLabel->setStyleSheet(QStringLiteral("color:%1;font-size:13px;font-weight:600;border:none;background:transparent;")
+                                      .arg(Theme::kTextPrimary));
+        row->addWidget(nameLabel);
+        row->addWidget(valueLabel, 1);
+        fields->addLayout(row);
+    };
+    addField(QStringLiteral("操作员"), QStringLiteral("--"));
+    addField(QStringLiteral("开始时间"),
+             head.processStartAt.isValid() ? head.processStartAt.toString(QStringLiteral("HH:mm:ss"))
+                                           : QStringLiteral("--"));
+    addField(QStringLiteral("检测用时"), durationSeconds(head.inspectStartAt, head.inspectEndAt));
+    addField(QStringLiteral("修磨用时"), durationSeconds(head.processStartAt, head.processEndAt));
+    addField(QStringLiteral("最大高度"), QStringLiteral("%1 mm").arg(head.maxParticleHeight, 0, 'f', 1));
+    auto *statusName = makeLabel(QStringLiteral("任务状态"), QStringLiteral("sectionHint"));
+    statusName->setFixedWidth(72);
+    auto *statusValue = makeLabel(resultText(result));
+    statusValue->setStyleSheet(QStringLiteral("color:%1;font-size:13px;font-weight:700;border:none;background:transparent;")
+                                   .arg(resultColor(result).name()));
+    auto *statusRow = new QHBoxLayout();
+    statusRow->addWidget(statusName);
+    statusRow->addWidget(statusValue, 1);
+    fields->addLayout(statusRow);
+    if (!head.remark.isEmpty()) {
+        addField(QStringLiteral("备注"), head.remark);
+    }
+    fields->addStretch(1);
+    top->addLayout(fields, 1);
+    hostLayout->addLayout(top);
 
-    // 颗粒明细
-    auto *particleTable = new QTableWidget(tabs);
-    particleTable->setColumnCount(8);
+    hostLayout->addWidget(makeLabel(QStringLiteral("任务进度"), QStringLiteral("panelTitle")));
+    auto *steps = new QHBoxLayout();
+    const QStringList stepNames{QStringLiteral("扫描完成"), QStringLiteral("任务下发"), resultText(result)};
+    for (int i = 0; i < stepNames.size(); ++i) {
+        const bool current = (result == BoardResult::Running && i == stepNames.size() - 1);
+        auto *step = makeLabel(stepNames.at(i));
+        step->setStyleSheet(QStringLiteral("color:%1;font-size:13px;font-weight:600;border:none;background:transparent;")
+                                .arg(current ? Theme::kAccent : Theme::kStateSuccess));
+        steps->addWidget(step);
+        if (i + 1 < stepNames.size()) {
+            auto *line = new QFrame(host);
+            line->setFixedHeight(1);
+            line->setMinimumWidth(24);
+            line->setStyleSheet(QStringLiteral("background:%1;border:none;").arg(Theme::kBorder));
+            steps->addWidget(line, 1);
+        }
+    }
+    hostLayout->addLayout(steps);
+    hostLayout->addWidget(makeLabel(QStringLiteral("已处理 %1 / %2 个粒子")
+                                        .arg(head.clearedCount)
+                                        .arg(head.particleCount),
+                                    QStringLiteral("sectionHint")),
+                          0, Qt::AlignRight);
+
+    auto *stack = new QStackedWidget(host);
+    auto *particleTable = new QTableWidget(stack);
+    particleTable->setColumnCount(6);
     particleTable->setHorizontalHeaderLabels({
-        "序号", "X", "Y", "Z", "高度(mm)", "已清除", "检测时间", "清除时间"
+        QStringLiteral("序号"), QStringLiteral("X"), QStringLiteral("Y"),
+        QStringLiteral("Z"), QStringLiteral("高度(mm)"), QStringLiteral("已修磨")
     });
     setupDetailTable(particleTable);
     particleTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     particleTable->setRowCount(detail.particles.size());
     for (int i = 0; i < detail.particles.size(); ++i) {
-        const auto &p = detail.particles.at(i);
+        const ParticleDetectionRow &particle = detail.particles.at(i);
         int col = 0;
-        particleTable->setItem(i, col++, new QTableWidgetItem(QString::number(p.particleIndex)));
-        particleTable->setItem(i, col++, new QTableWidgetItem(QString::number(p.positionX, 'f', 2)));
-        particleTable->setItem(i, col++, new QTableWidgetItem(QString::number(p.positionY, 'f', 2)));
-        particleTable->setItem(i, col++, new QTableWidgetItem(QString::number(p.positionZ, 'f', 2)));
-        particleTable->setItem(i, col++, new QTableWidgetItem(QString::number(p.height, 'f', 3)));
-        particleTable->setItem(i, col++, new QTableWidgetItem(p.isCleared ? QStringLiteral("是")
-                                                                          : QStringLiteral("否")));
-        particleTable->setItem(i, col++, new QTableWidgetItem(formatDateTime(p.detectedAt)));
-        particleTable->setItem(i, col++, new QTableWidgetItem(formatDateTime(p.clearedAt)));
+        particleTable->setItem(i, col++, new QTableWidgetItem(QString::number(particle.particleIndex)));
+        particleTable->setItem(i, col++, new QTableWidgetItem(QString::number(particle.positionX, 'f', 1)));
+        particleTable->setItem(i, col++, new QTableWidgetItem(QString::number(particle.positionY, 'f', 1)));
+        particleTable->setItem(i, col++, new QTableWidgetItem(QString::number(particle.positionZ, 'f', 1)));
+        particleTable->setItem(i, col++, new QTableWidgetItem(QString::number(particle.height, 'f', 2)));
+        particleTable->setItem(i, col++, new QTableWidgetItem(particle.isCleared ? QStringLiteral("是")
+                                                                                : QStringLiteral("否")));
     }
     centerTableCells(particleTable);
-    particleTable->resizeRowsToContents();
 
-    // 工艺快照
-    auto *processTable = new QTableWidget(tabs);
-    processTable->setColumnCount(11);
-    processTable->setHorizontalHeaderLabels({
-        "路径", "峰高(mm)", "TargetX", "TargetY", "TargetZ",
-        "进给速度", "进给量", "主轴转速", "切次", "单切量", "快照时间"
-    });
-    setupDetailTable(processTable);
-    processTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    processTable->setRowCount(detail.processHistory.size());
-    for (int i = 0; i < detail.processHistory.size(); ++i) {
-        const auto &p = detail.processHistory.at(i);
-        int col = 0;
-        processTable->setItem(i, col++, new QTableWidgetItem(QString::number(p.pathIndex)));
-        processTable->setItem(i, col++, new QTableWidgetItem(QString::number(p.maxParticleHeight, 'f', 3)));
-        processTable->setItem(i, col++, new QTableWidgetItem(QString::number(p.targetX, 'f', 3)));
-        processTable->setItem(i, col++, new QTableWidgetItem(QString::number(p.targetY, 'f', 3)));
-        processTable->setItem(i, col++, new QTableWidgetItem(QString::number(p.targetZ, 'f', 3)));
-        processTable->setItem(i, col++, new QTableWidgetItem(QString::number(p.feedSpeed, 'f', 2)));
-        processTable->setItem(i, col++, new QTableWidgetItem(QString::number(p.feedAmount, 'f', 3)));
-        processTable->setItem(i, col++, new QTableWidgetItem(QString::number(p.spindleSpeed, 'f', 1)));
-        processTable->setItem(i, col++, new QTableWidgetItem(QString::number(p.cutCount)));
-        processTable->setItem(i, col++, new QTableWidgetItem(QString::number(p.singleCutAmount, 'f', 3)));
-        processTable->setItem(i, col++, new QTableWidgetItem(formatDateTime(p.snapshotAt)));
-    }
-    centerTableCells(processTable);
-    processTable->resizeRowsToContents();
+    auto *resultPage = new QWidget(stack);
+    auto *resultLayout = new QVBoxLayout(resultPage);
+    resultLayout->setContentsMargins(8, 8, 8, 8);
+    resultLayout->addWidget(makeLabel(QStringLiteral("配方：%1").arg(head.recipeName.isEmpty()
+                                                                      ? QStringLiteral("--")
+                                                                      : head.recipeName)));
+    resultLayout->addWidget(makeLabel(QStringLiteral("结果：%1").arg(resultText(result))));
+    resultLayout->addWidget(makeLabel(QStringLiteral("粒子 %1 个，已修磨 %2 个")
+                                          .arg(head.particleCount)
+                                          .arg(head.clearedCount)));
+    resultLayout->addWidget(makeLabel(head.remark.isEmpty() ? QStringLiteral("备注：无")
+                                                            : QStringLiteral("备注：%1").arg(head.remark),
+                                      QStringLiteral("sectionHint")));
+    resultLayout->addStretch(1);
 
-    tabs->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    stack->addWidget(particleTable);
+    stack->addWidget(resultPage);
+    stack->setCurrentIndex(0);
+    hostLayout->addWidget(stack, 1);
 
-    tabs->addTab(particleTable, QStringLiteral("颗粒明细 (%1)").arg(detail.particles.size()));
-    tabs->addTab(processTable,  QStringLiteral("工艺快照 (%1)").arg(detail.processHistory.size()));
-    hostLayout->addWidget(tabs, 1);
-
+    auto *buttons = new QHBoxLayout();
+    auto *particleButton = new ElaPushButton(QStringLiteral("查看粒子明细"), host);
+    auto *resultButton = new ElaPushButton(QStringLiteral("查看检测结果"), host);
+    particleButton->setFixedHeight(34);
+    resultButton->setFixedHeight(34);
+    applyPrimaryButtonStyle(particleButton);
+    applySecondaryButtonStyle(resultButton);
+    buttons->addWidget(particleButton, 1);
+    buttons->addWidget(resultButton, 1);
+    hostLayout->addLayout(buttons);
+    connect(particleButton, &ElaPushButton::clicked, stack, [stack]() { stack->setCurrentIndex(0); });
+    connect(resultButton, &ElaPushButton::clicked, stack, [stack]() { stack->setCurrentIndex(1); });
     return host;
 }

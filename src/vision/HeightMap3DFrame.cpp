@@ -4,15 +4,27 @@
 #include "app/Theme.h"
 
 #include <QColor>
+#include <QMatrix4x4>
+#include <QOpenGLBuffer>
+#include <QOpenGLFunctions>
+#include <QVector>
+#include <QVector3D>
+#include <QExposeEvent>
+#include <QFont>
 #include <QLinearGradient>
 #include <QMouseEvent>
 #include <QOpenGLShaderProgram>
+#include <QOpenGLWindow>
 #include <QPainter>
+#include <QPalette>
 #include <QSettings>
-#include <QShowEvent>
+#include <QSizePolicy>
 #include <QSurfaceFormat>
+#include <QVBoxLayout>
 #include <QVector4D>
 #include <QWheelEvent>
+
+#include <memory>
 
 #include <algorithm>
 #include <cmath>
@@ -22,7 +34,7 @@
 
 namespace {
 
-constexpr int kMaxDisplayPoints = 300000;
+constexpr int kMaxDisplayPoints = 48000;
 constexpr float kMinPitch = -1.45f;
 constexpr float kMaxPitch = 1.45f;
 constexpr float kHeightColorSpanMm = 8.0f;
@@ -72,24 +84,88 @@ QVector3D unproject(const QPointF &position,
 
 } // namespace
 
-HeightMap3DFrame::HeightMap3DFrame(QWidget *parent)
-    : QOpenGLWidget(parent)
+class HeightMap3DFrame::Window : public QOpenGLWindow, protected QOpenGLFunctions
+{
+public:
+    Window();
+    ~Window() override;
+
+    void setPointCloudFrame(const PointCloudFrame &frame);
+    void clearPointCloud();
+
+protected:
+    void initializeGL() override;
+    void resizeGL(int width, int height) override;
+    void paintGL() override;
+    void exposeEvent(QExposeEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
+
+private:
+    struct Vertex
+    {
+        float x{0.0f};
+        float y{0.0f};
+        float z{0.0f};
+        float heightNorm{0.0f};
+    };
+
+    QRect viewRect() const;
+    void rebuildVertices();
+    void uploadVertices();
+    void resetView();
+    float fittedDistance() const;
+    QMatrix4x4 currentViewProjection() const;
+    QVector3D cameraPosition() const;
+    QVector3D cursorAnchor(const QPointF &position);
+    QVector3D targetPlaneAnchor(const QPointF &position) const;
+
+    PointCloudFrame m_frame;
+    QVector<Vertex> m_vertices;
+    QOpenGLBuffer m_vertexBuffer{QOpenGLBuffer::VertexBuffer};
+    std::unique_ptr<QOpenGLShaderProgram> m_program;
+    QMatrix4x4 m_lastViewProjection;
+    QVector3D m_boundsMin;
+    QVector3D m_boundsMax;
+    QVector3D m_target;
+    quint64 m_validPointCount{0};
+    float m_sceneDiagonal{1.0f};
+    float m_distance{1.0f};
+    float m_yaw{-0.78f};
+    float m_pitch{0.62f};
+    QPoint m_lastMousePosition;
+    QString m_renderError;
+    bool m_dragging{false};
+    bool m_userAdjustedView{false};
+    bool m_glReady{false};
+    bool m_uploadPending{false};
+    bool m_flipX{false};
+    int m_cropLeftColumns{0};
+    int m_cropRightColumns{0};
+};
+
+HeightMap3DFrame::Window::Window()
+    : QOpenGLWindow(QOpenGLWindow::NoPartialUpdate)
 {
     QSurfaceFormat format;
     format.setDepthBufferSize(24);
-    format.setSamples(4);
+    format.setStencilBufferSize(0);
+    format.setSamples(0);
+    format.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
+    format.setSwapInterval(0);
+    format.setRenderableType(QSurfaceFormat::OpenGL);
     setFormat(format);
-    setUpdateBehavior(QOpenGLWidget::PartialUpdate);
     const HeightMapDisplayConfig displayConfig = loadHeightMapDisplayConfig();
     m_flipX = displayConfig.flipX;
     m_cropLeftColumns = displayConfig.cropLeftColumns;
     m_cropRightColumns = displayConfig.cropRightColumns;
-    setMouseTracking(true);
-    setFocusPolicy(Qt::StrongFocus);
+    Theme::watch(this, [this]() { requestUpdate(); });
     setCursor(Qt::ArrowCursor);
 }
 
-HeightMap3DFrame::~HeightMap3DFrame()
+HeightMap3DFrame::Window::~Window()
 {
     if (m_glReady) {
         makeCurrent();
@@ -99,7 +175,7 @@ HeightMap3DFrame::~HeightMap3DFrame()
     }
 }
 
-void HeightMap3DFrame::setPointCloudFrame(const PointCloudFrame &frame)
+void HeightMap3DFrame::Window::setPointCloudFrame(const PointCloudFrame &frame)
 {
     m_frame = frame;
     rebuildVertices();
@@ -115,12 +191,12 @@ void HeightMap3DFrame::setPointCloudFrame(const PointCloudFrame &frame)
     update();
 }
 
-void HeightMap3DFrame::clearPointCloud()
+void HeightMap3DFrame::Window::clearPointCloud()
 {
     setPointCloudFrame(PointCloudFrame());
 }
 
-void HeightMap3DFrame::initializeGL()
+void HeightMap3DFrame::Window::initializeGL()
 {
     initializeOpenGLFunctions();
     m_glReady = true;
@@ -140,7 +216,7 @@ void HeightMap3DFrame::initializeGL()
         void main()
         {
             gl_Position = uMvp * vec4(aPosition, 1.0);
-            gl_PointSize = 2.8;
+            gl_PointSize = 2.0;
             vHeight = aHeight;
         }
     )";
@@ -187,19 +263,32 @@ void HeightMap3DFrame::initializeGL()
     }
 }
 
-void HeightMap3DFrame::resizeGL(int, int)
+void HeightMap3DFrame::Window::resizeGL(int, int)
 {
+    if (!m_userAdjustedView && m_validPointCount > 0) {
+        m_distance = fittedDistance();
+    }
 }
 
-void HeightMap3DFrame::paintGL()
+void HeightMap3DFrame::Window::paintGL()
 {
     if (m_uploadPending && m_vertexBuffer.isCreated()) {
         uploadVertices();
     }
 
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    const bool light = Theme::current() == Theme::Id::Light;
+    const QColor backdrop(light ? QStringLiteral("#E4E9EF") : QStringLiteral("#000000"));
+    const bool hasCloud = m_program && m_vertexBuffer.isCreated() && !m_vertices.isEmpty();
 
-    if (m_program && m_vertexBuffer.isCreated() && !m_vertices.isEmpty()) {
+    auto drawCloud = [this]() {
+        if (!m_program || !m_vertexBuffer.isCreated() || m_vertices.isEmpty()) {
+            return;
+        }
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glEnable(GL_DEPTH_TEST);
+#ifdef GL_PROGRAM_POINT_SIZE
+        glEnable(GL_PROGRAM_POINT_SIZE);
+#endif
         m_lastViewProjection = currentViewProjection();
         m_program->bind();
         m_program->setUniformValue("uMvp", m_lastViewProjection);
@@ -212,13 +301,13 @@ void HeightMap3DFrame::paintGL()
                                       GL_FLOAT,
                                       int(offsetof(Vertex, x)),
                                       3,
-                                      sizeof(Vertex));
+                                      int(sizeof(Vertex)));
         m_program->enableAttributeArray(heightLocation);
         m_program->setAttributeBuffer(heightLocation,
                                       GL_FLOAT,
                                       int(offsetof(Vertex, heightNorm)),
                                       1,
-                                      sizeof(Vertex));
+                                      int(sizeof(Vertex)));
 
         glDrawArrays(GL_POINTS, 0, m_vertices.size());
 
@@ -226,29 +315,61 @@ void HeightMap3DFrame::paintGL()
         m_program->disableAttributeArray(heightLocation);
         m_vertexBuffer.release();
         m_program->release();
-    }
+    };
 
-    // 无点云时与 2D 空状态保持一致，只显示背景画布。
-    if (m_vertices.isEmpty() && m_renderError.isEmpty()) {
+    if (m_dragging && hasCloud) {
+        glClearColor(backdrop.redF(), backdrop.greenF(), backdrop.blueF(), 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        drawCloud();
         return;
     }
 
     QPainter painter(this);
-    painter.setRenderHint(QPainter::TextAntialiasing, true);
-    painter.setPen(QColor(Theme::kTextPrimary));
-    painter.drawText(rect().adjusted(12, 10, -12, -10),
-                     Qt::AlignLeft | Qt::AlignTop,
-                     QStringLiteral("3D 标定点云"));
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.fillRect(viewRect(), backdrop);
+    if (light) {
+        const QRect area = viewRect().adjusted(1, 1, -2, -2);
+        painter.setPen(QPen(QColor(QStringLiteral("#D3DAE4")), 1));
+        constexpr int gridSize = 32;
+        for (int x = area.left() + gridSize; x < area.right(); x += gridSize) {
+            painter.drawLine(x, area.top(), x, area.bottom());
+        }
+        for (int y = area.top() + gridSize; y < area.bottom(); y += gridSize) {
+            painter.drawLine(area.left(), y, area.right(), y);
+        }
+    }
+    painter.setPen(QPen(light ? QColor(QStringLiteral("#C5CED9")) : QColor(QStringLiteral("#3A4456")), 1));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRect(viewRect().adjusted(0, 0, -1, -1));
 
+    if (hasCloud) {
+        painter.beginNativePainting();
+        drawCloud();
+        painter.endNativePainting();
+    }
+
+    if (!hasCloud && m_renderError.isEmpty()) {
+        painter.setRenderHint(QPainter::TextAntialiasing, true);
+        QFont font = painter.font();
+        font.setPixelSize(13);
+        painter.setFont(font);
+        painter.setPen(light ? QColor(QStringLiteral("#64748B")) : QColor(QStringLiteral("#8B98A8")));
+        painter.drawText(viewRect().adjusted(12, 12, -12, -12),
+                         Qt::AlignCenter | Qt::TextWordWrap,
+                         QStringLiteral("暂未选中粒子 / 暂无点云数据"));
+        return;
+    }
+
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
     if (!m_renderError.isEmpty()) {
         painter.setPen(QColor(Theme::kTextMuted));
-        painter.drawText(rect().adjusted(20, 20, -20, -20),
+        painter.drawText(viewRect().adjusted(20, 20, -20, -20),
                          Qt::AlignCenter | Qt::TextWordWrap,
                          m_renderError);
         return;
     }
 
-    const QRect barRect(rect().right() - 28, rect().bottom() - 132, 10, 96);
+    const QRect barRect(12, viewRect().bottom() - 116, 10, 96);
     QLinearGradient gradient(barRect.bottomLeft(), barRect.topLeft());
     gradient.setColorAt(0.00, QColor(26, 71, 158));
     gradient.setColorAt(0.25, QColor(0, 199, 209));
@@ -260,7 +381,7 @@ void HeightMap3DFrame::paintGL()
     painter.drawRect(barRect.adjusted(0, 0, -1, -1));
 }
 
-void HeightMap3DFrame::rebuildVertices()
+void HeightMap3DFrame::Window::rebuildVertices()
 {
     m_vertices.clear();
     m_validPointCount = 0;
@@ -380,7 +501,7 @@ void HeightMap3DFrame::rebuildVertices()
     m_uploadPending = true;
 }
 
-void HeightMap3DFrame::uploadVertices()
+void HeightMap3DFrame::Window::uploadVertices()
 {
     if (!m_vertexBuffer.isCreated()) {
         m_uploadPending = true;
@@ -392,12 +513,23 @@ void HeightMap3DFrame::uploadVertices()
     m_uploadPending = false;
 }
 
-void HeightMap3DFrame::resetView()
+float HeightMap3DFrame::Window::fittedDistance() const
+{
+    const float radius = std::max(1.0f, m_sceneDiagonal * 0.5f);
+    const float aspect = float(std::max(1, width())) / float(std::max(1, height()));
+    constexpr float kHalfFovY = 42.0f * 0.5f * 3.14159265f / 180.0f;
+    const float halfX = std::atan(std::tan(kHalfFovY) * std::max(0.25f, aspect));
+    const float limiting = std::min(kHalfFovY, halfX);
+    return radius / std::sin(limiting) * 1.28f;
+}
+
+void HeightMap3DFrame::Window::resetView()
 {
     m_target = m_validPointCount == 0
         ? QVector3D()
         : (m_boundsMin + m_boundsMax) * 0.5f;
-    m_distance = m_sceneDiagonal * 1.35f;
+    m_userAdjustedView = false;
+    m_distance = fittedDistance();
     m_yaw = -0.78f;
     m_pitch = 0.62f;
     m_dragging = false;
@@ -405,7 +537,7 @@ void HeightMap3DFrame::resetView()
     update();
 }
 
-QVector3D HeightMap3DFrame::cameraPosition() const
+QVector3D HeightMap3DFrame::Window::cameraPosition() const
 {
     const float horizontal = std::cos(m_pitch);
     const QVector3D direction(horizontal * std::cos(m_yaw),
@@ -414,7 +546,7 @@ QVector3D HeightMap3DFrame::cameraPosition() const
     return m_target + direction * m_distance;
 }
 
-QMatrix4x4 HeightMap3DFrame::currentViewProjection() const
+QMatrix4x4 HeightMap3DFrame::Window::currentViewProjection() const
 {
     QMatrix4x4 projection;
     projection.perspective(42.0f,
@@ -427,14 +559,14 @@ QMatrix4x4 HeightMap3DFrame::currentViewProjection() const
     return projection * view;
 }
 
-QVector3D HeightMap3DFrame::cursorAnchor(const QPointF &position)
+QVector3D HeightMap3DFrame::Window::cursorAnchor(const QPointF &position)
 {
     if (!m_glReady || m_vertices.isEmpty()) {
         return targetPlaneAnchor(position);
     }
 
     float depth = 1.0f;
-    const qreal ratio = devicePixelRatioF();
+    const qreal ratio = devicePixelRatio();
     const int framebufferWidth = std::max(1, int(std::round(width() * ratio)));
     const int framebufferHeight = std::max(1, int(std::round(height() * ratio)));
     const int pixelX = std::clamp(int(std::round(position.x() * ratio)),
@@ -462,7 +594,7 @@ QVector3D HeightMap3DFrame::cursorAnchor(const QPointF &position)
     return targetPlaneAnchor(position);
 }
 
-QVector3D HeightMap3DFrame::targetPlaneAnchor(const QPointF &position) const
+QVector3D HeightMap3DFrame::Window::targetPlaneAnchor(const QPointF &position) const
 {
     bool invertible = false;
     const QMatrix4x4 inverse = currentViewProjection().inverted(&invertible);
@@ -482,18 +614,23 @@ QVector3D HeightMap3DFrame::targetPlaneAnchor(const QPointF &position) const
     return nearPoint + ray * distance;
 }
 
-void HeightMap3DFrame::showEvent(QShowEvent *event)
+QRect HeightMap3DFrame::Window::viewRect() const
 {
-    QOpenGLWidget::showEvent(event);
-    if (m_uploadPending && m_glReady) {
+    return QRect(0, 0, std::max(1, width()), std::max(1, height()));
+}
+
+void HeightMap3DFrame::Window::exposeEvent(QExposeEvent *event)
+{
+    QOpenGLWindow::exposeEvent(event);
+    if (isExposed() && m_uploadPending && m_glReady) {
         makeCurrent();
         uploadVertices();
         doneCurrent();
+        requestUpdate();
     }
-    update();
 }
 
-void HeightMap3DFrame::mousePressEvent(QMouseEvent *event)
+void HeightMap3DFrame::Window::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::RightButton) {
         resetView();
@@ -507,43 +644,46 @@ void HeightMap3DFrame::mousePressEvent(QMouseEvent *event)
         event->accept();
         return;
     }
-    QOpenGLWidget::mousePressEvent(event);
+        QWindow::mousePressEvent(event);
 }
 
-void HeightMap3DFrame::mouseMoveEvent(QMouseEvent *event)
+void HeightMap3DFrame::Window::mouseMoveEvent(QMouseEvent *event)
 {
     if (m_dragging && (event->buttons() & Qt::LeftButton)) {
         const QPoint delta = event->pos() - m_lastMousePosition;
+        m_userAdjustedView = true;
         m_yaw -= float(delta.x()) * 0.010f;
         m_pitch = std::clamp(m_pitch + float(delta.y()) * 0.010f,
                              kMinPitch,
                              kMaxPitch);
         m_lastMousePosition = event->pos();
-        update();
+        requestUpdate();
         event->accept();
         return;
     }
-    QOpenGLWidget::mouseMoveEvent(event);
+    QWindow::mouseMoveEvent(event);
 }
 
-void HeightMap3DFrame::mouseReleaseEvent(QMouseEvent *event)
+void HeightMap3DFrame::Window::mouseReleaseEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton && m_dragging) {
         m_dragging = false;
         setCursor(m_vertices.isEmpty() ? Qt::ArrowCursor : Qt::OpenHandCursor);
+        update();
         event->accept();
         return;
     }
-    QOpenGLWidget::mouseReleaseEvent(event);
+        QWindow::mouseReleaseEvent(event);
 }
 
-void HeightMap3DFrame::wheelEvent(QWheelEvent *event)
+void HeightMap3DFrame::Window::wheelEvent(QWheelEvent *event)
 {
     if (m_vertices.isEmpty() || event->angleDelta().y() == 0) {
-        QOpenGLWidget::wheelEvent(event);
+        QWindow::wheelEvent(event);
         return;
     }
 
+    m_userAdjustedView = true;
     const QVector3D anchor = cursorAnchor(event->posF());
     const float steps = float(event->angleDelta().y()) / 120.0f;
     const float requestedFactor = std::pow(0.82f, steps);
@@ -555,4 +695,36 @@ void HeightMap3DFrame::wheelEvent(QWheelEvent *event)
     m_distance = newDistance;
     update();
     event->accept();
+}
+
+HeightMap3DFrame::HeightMap3DFrame(QWidget *parent)
+    : QWidget(parent)
+{
+    m_window = new Window();
+    QWidget *container = QWidget::createWindowContainer(m_window, this);
+    container->setFocusPolicy(Qt::StrongFocus);
+    container->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    auto *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout->addWidget(container);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setAutoFillBackground(true);
+    Theme::watch(this, [this]() {
+        const bool light = Theme::current() == Theme::Id::Light;
+        QPalette pal = palette();
+        pal.setColor(QPalette::Window,
+                     QColor(light ? QStringLiteral("#E4E9EF") : QStringLiteral("#000000")));
+        setPalette(pal);
+    });
+}
+
+void HeightMap3DFrame::setPointCloudFrame(const PointCloudFrame &frame)
+{
+    m_window->setPointCloudFrame(frame);
+}
+
+void HeightMap3DFrame::clearPointCloud()
+{
+    m_window->clearPointCloud();
 }

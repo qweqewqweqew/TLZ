@@ -1,53 +1,87 @@
 #ifndef THEME_H
 #define THEME_H
 
-// 语义色 token 表 —— 集中管理所有颜色，避免散落在各文件的裸 hex。
-//
-// 设计原则：
-// 1. 蓝色统一表示交互、选中或运行中；其余状态使用独立语义色。
-// 2. 文本层级收敛为 3 档：primary / secondary / muted。
-// 3. 所有面板统一从这里取色，后续改动只改这一处。
+#include <QString>
+
+#include <functional>
+
+// 语义色。深色 / 浅色两套配色共用这一套名字，切换时改指针指向的色值。
+// 调用处每次读取都会拿到当前主题，已经写进样式表的颜色要在主题信号里重刷。
+
+class QObject;
+class QWidget;
 
 namespace Theme {
 
-// ---- surface 层级 ----
-constexpr const char *kWindowBg   = "#0B1014";
-constexpr const char *kPanelBg    = "#171D22";
-constexpr const char *kControlBg  = "#20272D";
-constexpr const char *kCardBg     = kControlBg;
-constexpr const char *kCanvasBg   = "#080D11";
-constexpr const char *kLogBg      = "#0E1418";
-constexpr const char *kStatusBarBg = "#0D1216";
+enum class Id {
+    Dark = 0,
+    Light,
+};
 
-// ---- 结构层级 ----
-constexpr const char *kBorder  = "#303A42";
-constexpr const char *kDivider = "#283138";
-constexpr const char *kHoverBg = "#273038";
-constexpr const char *kPressedBg = "#1D252B";
-constexpr const char *kSelectionBg = "#1C4960";
+// 功能说明里的目标画布。屏幕放得下时按这个尺寸打开，放不下就铺满当前屏幕。
+constexpr int kDesignWidth = 2556;
+constexpr int kDesignHeight = 1440;
 
-// ---- text 层级（对比度已按 WCAG AA ≥4.5:1 校准）----
-constexpr const char *kTextPrimary   = "#E8ECEF";
-constexpr const char *kTextSecondary = "#A7B0B7";
-constexpr const char *kTextMuted     = "#74828C";
-constexpr const char *kTextField     = kTextSecondary;
+extern const char *kWindowBg;
+extern const char *kPanelBg;
+extern const char *kControlBg;
+extern const char *kCardBg;
+extern const char *kCanvasBg;
+extern const char *kLogBg;
+extern const char *kStatusBarBg;
 
-// ---- 交互/运行强调色与实时数据色 ----
-constexpr const char *kAccent   = "#2697D4";
-constexpr const char *kRealtime = "#F4C542";
+extern const char *kBorder;
+extern const char *kDivider;
+extern const char *kHoverBg;
+extern const char *kPressedBg;
+extern const char *kSelectionBg;
 
-// ---- 语义状态色 ----
-constexpr const char *kStateSuccess = "#26B96B";   // 在线/完成/就绪/正向
-constexpr const char *kStateRunning = kAccent;      // 选中/运行中
-constexpr const char *kStateWarning = "#F0A020";   // 警告/负向
-constexpr const char *kStateError   = "#E34D4D";   // 故障/离线
-constexpr const char *kStateUnknown = "#6F7A82";   // 未知/停止
+extern const char *kTextPrimary;
+extern const char *kTextSecondary;
+extern const char *kTextMuted;
+extern const char *kTextField;
+extern const char *kOnAccent;
+extern const char *kTitle;
+extern const char *kSelectionText;
 
-// ---- 克制的状态容器色 ----
-constexpr const char *kSuccessBg = "#13261C";
-constexpr const char *kRunningBg = "#112631";
-constexpr const char *kWarningBg = "#2B2113";
-constexpr const char *kErrorBg   = "#2A1718";
+extern const char *kAccent;
+extern const char *kAccentFill;
+extern const char *kOnAccentFill;
+extern const char *kRealtime;
+
+extern const char *kStateSuccess;
+extern const char *kStateRunning;
+extern const char *kStateWarning;
+extern const char *kStateError;
+extern const char *kStateUnknown;
+
+extern const char *kSuccessBg;
+extern const char *kRunningBg;
+extern const char *kWarningBg;
+extern const char *kErrorBg;
+
+Id current();
+void setCurrent(Id id);
+
+// 重复出现的标注。麦肯锡页上的亮蓝只留给一处重点数字，标注改用藏蓝。
+inline const char *markColor()
+{
+    return current() == Id::Light ? kTitle : kAccent;
+}
+
+// 实时读数。科技蓝用金色，麦肯锡不用亮蓝铺满每个数字。
+inline const char *liveColor()
+{
+    return current() == Id::Light ? kTitle : kRealtime;
+}
+void load();
+
+QString displayName(Id id);
+
+// 主题切换后调用 apply。context 销毁时自动断开。
+void watch(QObject *context, const std::function<void()> &apply);
+// 立刻套上样式，并在之后每次切换主题时重套。
+void bindStyle(QWidget *widget, const std::function<QString()> &sheet);
 
 } // namespace Theme
 

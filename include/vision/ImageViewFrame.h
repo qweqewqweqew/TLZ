@@ -6,6 +6,7 @@
 
 #include <QFrame>
 #include <QImage>
+#include <QPixmap>
 #include <QPoint>
 #include <QPainterPath>
 #include <QPointF>
@@ -14,12 +15,17 @@
 #include <QString>
 #include <QVector>
 
+class DynamicLayer;
 class QMouseEvent;
+class QPainter;
+class QResizeEvent;
+class QTimer;
 class QWheelEvent;
 
 class ImageViewFrame : public QFrame
 {
     Q_OBJECT
+    friend class DynamicLayer;
 
 public:
     explicit ImageViewFrame(QWidget *parent = nullptr);
@@ -46,12 +52,18 @@ public:
     void setPathProgress(int completedPath, int currentPath);
     void clearToolPose();
 
+    // 工具栏缩放：以当前视图中心为锚点；fitToView 回到整图适配。
+    void zoomIn();
+    void zoomOut();
+    void fitToView();
+
 signals:
     // 单击叠加路径线：0-based 下标。
     void millingPathClicked(int pathIndex);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
@@ -63,21 +75,29 @@ private:
     QSizeF fittedImageSize() const;
     QRectF currentImageRect() const;
     void resetView();
+    void applyZoom(double newZoom, const QPointF &anchorHint);
     void clampPanOffset();
     QPointF mapImageToWidget(int u, int v) const;
     QPoint mapWidgetToImage(const QPointF &widgetPos) const;
     void updateHoverCoordinate(const QPointF &widgetPos);
+    QRect hoverBoxRect(const QPointF &anchor, const QString &text, const QRect &area) const;
     QString coordinateTextAt(int column, int row) const;
     int hitTestPath(const QPointF &widgetPos) const;
     QString tooltipForPath(const MillingPathVM &path, int indexOneBased) const;
     bool mapMetricToImage(double xMm, double yMm, double *uOut, double *vOut) const;
     void recomputeToolPoseMapping();
     void requestPoseUpdate();
-    void ensureGrindLayer();
     void strokeGrindToImageUv(double u, double v);
     void breakGrindStroke();
-    void rebuildGrindLayer();
-    void drawIncrementalStroke(const QPointF &from, const QPointF &to);
+    void ensureBasePixmap(const QSize &pixelSize);
+    void noteInteraction();
+    void drawGrindPaths(QPainter &painter, const QRectF &dstRect, const QRect &clip) const;
+    void paintDynamic(QPainter &painter);
+    void refreshDynamic();
+    void invalidateDynamic(const QRect &rect);
+    void ensureViewCache();
+    QRect toolPoseDirtyRect() const;
+    QRect pathSegmentRect(int index) const;
 
 private:
     QImage m_image;
@@ -115,11 +135,20 @@ private:
     int m_toolTrailCount{0};
     int m_toolTrailNext{0}; // next write index in ring
     QVector<QPointF> m_toolTrail; // widget-space scratch for paint
-    QImage m_grindLayer; // translucent cut stroke layer in image pixels
+    // 适配视口的底图。缩放和平移只裁这块，不再每次重采样整幅扫描图。
+    QPixmap m_basePixmap;
+    QPixmap m_viewCache;
+    bool m_viewCacheDirty{true};
+    QRect m_lastDynamicDirty;
+    qint64 m_baseImageKey{0};
+    QSize m_basePixelSize;
+    QTimer *m_interactionTimer{nullptr};
+    bool m_interacting{false};
     bool m_leaveGrindTrace{false};
     bool m_hasActiveGrindPath{false};
     QPainterPath m_activeGrindPath; // current doCut segment
     QVector<QPainterPath> m_grindPaths; // finished doCut segments
+    DynamicLayer *m_dynamic{nullptr};
 };
 
 #endif // IMAGEVIEWFRAME_H

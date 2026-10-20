@@ -1,7 +1,6 @@
 #include "ui/panels/ImageDisplayPanel.h"
 
 #include "ElaPushButton.h"
-#include "vision/HeightMap3DFrame.h"
 #include "camera/HikLiveView.h"
 #include "vision/ImageViewFrame.h"
 #include "app/Theme.h"
@@ -11,139 +10,234 @@
 #include <QDateTime>
 #include <QFileInfo>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QImageReader>
 #include <QLabel>
 #include <QSizePolicy>
 #include <QStackedWidget>
+#include <QToolButton>
 #include <QVBoxLayout>
+
+#include <cmath>
+
+namespace {
+
+// 与 ImageViewFrame 里路径叠加的颜色保持一致
+constexpr const char *kCutColor = "#D9A800";
+constexpr const char *kMoveColor = "#27AE60";
+
+const char *distributionCanvas()
+{
+    return Theme::current() == Theme::Id::Light ? "#F8FAFC" : Theme::kCanvasBg;
+}
+
+QLabel *legendItem(const QString &text, const QString &color, QWidget *parent)
+{
+    auto *label = new QLabel(QStringLiteral("● %1").arg(text), parent);
+    label->setStyleSheet(QStringLiteral("color:%1;font-size:12px;background:transparent;border:none;").arg(color));
+    label->setToolTip(text);
+    return label;
+}
+
+} // namespace
 
 ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
     : QFrame(parent)
 {
-    auto *viewToolbar = new QWidget(this);
-    auto *viewToolbarLayout = new QHBoxLayout(viewToolbar);
-    viewToolbarLayout->setContentsMargins(0, 0, 0, 0);
-    viewToolbarLayout->setSpacing(6);
+    // ---- 卡头右侧：板号 + 图例 ----
+    auto *header = new QWidget(this);
+    auto *headerLayout = new QHBoxLayout(header);
+    headerLayout->setContentsMargins(0, 0, 0, 0);
+    headerLayout->setSpacing(14);
+    m_boardLabel = new QLabel(header);
+    m_boardLabel->setStyleSheet(QStringLiteral("color:%1;font-size:13px;background:%2;border:1px solid %3;"
+                                               "border-radius:4px;padding:2px 10px;")
+                                    .arg(Theme::kTextSecondary, Theme::kControlBg, Theme::kBorder));
+    headerLayout->addWidget(m_boardLabel);
+    headerLayout->addWidget(legendItem(QStringLiteral("切削路径"), kCutColor, header));
+    headerLayout->addWidget(legendItem(QStringLiteral("空移"), kMoveColor, header));
 
-    // 2D 优先显示 Intensity；3D 使用 Range 生成高度曲面。
-    m_view2dButton = new ElaPushButton("2D", viewToolbar);
-    m_view2dButton->setFixedSize(66, 28);
-    applyPrimaryButtonStyle(m_view2dButton);
-
-    m_view3dButton = new ElaPushButton("3D", viewToolbar);
-    m_view3dButton->setFixedSize(66, 28);
-    applySecondaryButtonStyle(m_view3dButton);
-
-    m_liveViewButton = new ElaPushButton(QStringLiteral("实时画面"), viewToolbar);
-    m_liveViewButton->setFixedSize(90, 28);
-    applySecondaryButtonStyle(m_liveViewButton);
-
-    m_algorithmImageButton = new ElaPushButton(QStringLiteral("算法图像"), viewToolbar);
-    m_algorithmImageButton->setFixedSize(90, 28);
-    applySecondaryButtonStyle(m_algorithmImageButton);
-
-    auto *viewModeGroup = new QButtonGroup(this);
-    viewModeGroup->setExclusive(true);
-    m_view2dButton->setCheckable(true);
-    m_view3dButton->setCheckable(true);
-    m_liveViewButton->setCheckable(true);
-    m_algorithmImageButton->setCheckable(true);
-    viewModeGroup->addButton(m_view2dButton);
-    viewModeGroup->addButton(m_view3dButton);
-    viewModeGroup->addButton(m_liveViewButton);
-    viewModeGroup->addButton(m_algorithmImageButton);
-    m_view2dButton->setChecked(true);
-
-    viewToolbarLayout->addWidget(m_view2dButton);
-    viewToolbarLayout->addWidget(m_view3dButton);
-    viewToolbarLayout->addWidget(m_liveViewButton);
-    viewToolbarLayout->addWidget(m_algorithmImageButton);
-
-    auto *panel = createPanel("图像显示", viewToolbar, this);
-    panel->setFixedWidth(780);
-
+    auto *panel = createPanel(QStringLiteral("铜板粒子分布"), header, this);
     auto *rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
     rootLayout->addWidget(panel);
-
     auto *panelLayout = qobject_cast<QVBoxLayout *>(panel->layout());
+
+    // ---- 工具栏：视图切换 | 演示 | 缩放 ----
+    auto *toolbar = new QWidget(panel);
+    auto *toolbarLayout = new QHBoxLayout(toolbar);
+    toolbarLayout->setContentsMargins(0, 0, 0, 0);
+    toolbarLayout->setSpacing(6);
+
+    m_view2dButton = new ElaPushButton(QStringLiteral("粒子分布"), toolbar);
+    m_liveViewButton = new ElaPushButton(QStringLiteral("实时画面"), toolbar);
+    m_algorithmImageButton = new ElaPushButton(QStringLiteral("算法图像"), toolbar);
+    auto *viewModeGroup = new QButtonGroup(this);
+    viewModeGroup->setExclusive(true);
+    for (ElaPushButton *button : {m_view2dButton, m_liveViewButton, m_algorithmImageButton}) {
+        button->setFixedSize(84, 28);
+        button->setCheckable(true);
+        viewModeGroup->addButton(button);
+        toolbarLayout->addWidget(button);
+    }
+    m_view2dButton->setChecked(true);
+
+    toolbarLayout->addSpacing(10);
+    m_demoButton = new ElaPushButton(QStringLiteral("修磨演示"), toolbar);
+    m_demoButton->setFixedSize(96, 28);
+    applySecondaryButtonStyle(m_demoButton);
+    m_demoButton->setToolTip(QStringLiteral("加载 TestImage 并播放路径修磨演示（Ctrl+T）"));
+    toolbarLayout->addWidget(m_demoButton);
+    toolbarLayout->addStretch(1);
+
+    auto *zoomIn = makeToolButton(QStringLiteral(":/img/zoom_in.svg"), QStringLiteral("放大"), toolbar);
+    auto *zoomOut = makeToolButton(QStringLiteral(":/img/zoom_out.svg"), QStringLiteral("缩小"), toolbar);
+    auto *fitView = makeToolButton(QStringLiteral(":/img/fit_view.svg"), QStringLiteral("适应窗口"), toolbar);
+    toolbarLayout->addWidget(zoomIn);
+    toolbarLayout->addWidget(zoomOut);
+    toolbarLayout->addWidget(fitView);
+    panelLayout->addWidget(toolbar);
+
+    // ---- 视图区 ----
     m_viewStack = new QStackedWidget(panel);
-    m_viewStack->setFixedSize(720, 600);
-    m_viewStack->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    m_viewStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    m_viewStack->setMinimumSize(480, 320);
 
     m_imageArea = new ImageViewFrame(m_viewStack);
     m_imageArea->setObjectName("imageArea");
-    m_imageArea->setFixedSize(720, 600);
-    m_imageArea->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     m_imageArea->setStyleSheet(QString(R"(
         QFrame#imageArea {
             background: %1;
             border: 1px solid %2;
             border-radius: 6px;
         }
-    )").arg(Theme::kCanvasBg, Theme::kBorder));
-
+    )").arg(distributionCanvas(), Theme::kBorder));
     m_viewStack->addWidget(m_imageArea);
 
-    m_heightMapArea = new HeightMap3DFrame(m_viewStack);
-    m_heightMapArea->setObjectName("heightMap3dArea");
-    m_heightMapArea->setFixedSize(720, 600);
-    m_heightMapArea->setStyleSheet(QString(R"(
-        QOpenGLWidget#heightMap3dArea {
-            background: %1;
-            border: 1px solid %2;
-            border-radius: 6px;
-        }
-    )").arg(Theme::kCanvasBg, Theme::kBorder));
-    m_viewStack->addWidget(m_heightMapArea);
-
     m_liveViewArea = new HikLiveView(m_viewStack);
-    m_liveViewArea->setFixedSize(720, 600);
-    m_liveViewArea->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     m_viewStack->addWidget(m_liveViewArea);
 
     m_algorithmImageArea = new ImageViewFrame(m_viewStack);
     m_algorithmImageArea->setObjectName("algorithmImageArea");
-    m_algorithmImageArea->setFixedSize(720, 600);
-    m_algorithmImageArea->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     m_algorithmImageArea->setStyleSheet(QString(R"(
         QFrame#algorithmImageArea {
             background: %1;
             border: 1px solid %2;
             border-radius: 6px;
         }
-    )").arg(Theme::kCanvasBg, Theme::kBorder));
+    )").arg(distributionCanvas(), Theme::kBorder));
     m_viewStack->addWidget(m_algorithmImageArea);
-    panelLayout->addWidget(m_viewStack, 0, Qt::AlignHCenter);
+    panelLayout->addWidget(m_viewStack, 1);
 
-    connect(m_view2dButton, &ElaPushButton::clicked, this, [this]() {
-        setViewMode(ViewMode::View2D);
+    // ---- 页脚：任务摘要 ----
+    auto *footer = new QWidget(panel);
+    auto *footerLayout = new QHBoxLayout(footer);
+    footerLayout->setContentsMargins(2, 0, 2, 0);
+    footerLayout->setSpacing(8);
+    m_footerLeft = new QLabel(footer);
+    m_footerRight = new QLabel(footer);
+    for (QLabel *label : {m_footerLeft, m_footerRight}) {
+        label->setStyleSheet(QStringLiteral("color:%1;font-size:12px;background:transparent;border:none;")
+                                 .arg(Theme::kTextSecondary));
+    }
+    footerLayout->addWidget(m_footerLeft);
+    footerLayout->addStretch(1);
+    footerLayout->addWidget(m_footerRight);
+    panelLayout->addWidget(footer);
+
+    connect(m_view2dButton, &ElaPushButton::clicked, this, [this]() { setViewMode(ViewMode::View2D); });
+    connect(m_liveViewButton, &ElaPushButton::clicked, this, [this]() { setViewMode(ViewMode::LiveVideo); });
+    connect(m_algorithmImageButton, &ElaPushButton::clicked, this, [this]() { setViewMode(ViewMode::AlgorithmImage); });
+    connect(m_demoButton, &ElaPushButton::clicked, this, &ImageDisplayPanel::demoToggleRequested);
+    connect(zoomIn, &QToolButton::clicked, this, [this]() {
+        if (m_mode == ViewMode::View2D) m_imageArea->zoomIn();
+        else if (m_mode == ViewMode::AlgorithmImage) m_algorithmImageArea->zoomIn();
     });
-    connect(m_view3dButton, &ElaPushButton::clicked, this, [this]() {
-        setViewMode(ViewMode::Height3D);
+    connect(zoomOut, &QToolButton::clicked, this, [this]() {
+        if (m_mode == ViewMode::View2D) m_imageArea->zoomOut();
+        else if (m_mode == ViewMode::AlgorithmImage) m_algorithmImageArea->zoomOut();
     });
-    connect(m_liveViewButton, &ElaPushButton::clicked, this, [this]() {
-        setViewMode(ViewMode::LiveVideo);
-    });
-    connect(m_algorithmImageButton, &ElaPushButton::clicked, this, [this]() {
-        setViewMode(ViewMode::AlgorithmImage);
+    connect(fitView, &QToolButton::clicked, this, [this]() {
+        if (m_mode == ViewMode::View2D) m_imageArea->fitToView();
+        else if (m_mode == ViewMode::AlgorithmImage) m_algorithmImageArea->fitToView();
     });
     connect(m_imageArea, &ImageViewFrame::millingPathClicked,
             this, &ImageDisplayPanel::millingPathClicked);
+
+    applyViewButtonStyles();
+    clearTask();
+    Theme::watch(this, [this]() {
+        if (m_boardLabel) {
+            m_boardLabel->setStyleSheet(QStringLiteral("color:%1;font-size:13px;background:%2;border:1px solid %3;"
+                                                       "border-radius:4px;padding:2px 10px;")
+                                            .arg(Theme::kTextSecondary, Theme::kControlBg, Theme::kBorder));
+        }
+        const auto paintFrame = [](QFrame *frame, const char *name) {
+            if (!frame) {
+                return;
+            }
+            frame->setStyleSheet(QStringLiteral("QFrame#%1 { background:%2; border:1px solid %3; border-radius:6px; }")
+                                     .arg(QLatin1String(name), QLatin1String(distributionCanvas()), QLatin1String(Theme::kBorder)));
+        };
+        paintFrame(m_imageArea, "imageArea");
+        paintFrame(m_algorithmImageArea, "algorithmImageArea");
+        for (QLabel *label : {m_footerLeft, m_footerRight}) {
+            if (label) {
+                label->setStyleSheet(QStringLiteral("color:%1;font-size:12px;background:transparent;border:none;")
+                                         .arg(Theme::kTextSecondary));
+            }
+        }
+        for (QToolButton *button : findChildren<QToolButton *>()) {
+            const QString resource = button->property("iconResource").toString();
+            if (!resource.isEmpty()) {
+                button->setIcon(QIcon(tintedIcon(resource, QColor(Theme::kTextSecondary), 16, devicePixelRatioF())));
+            }
+            button->setStyleSheet(QStringLiteral(
+                                      "QToolButton { background:%1; border:1px solid %2; border-radius:6px; }"
+                                      "QToolButton:hover { background:%3; }"
+                                      "QToolButton:pressed { background:%4; }")
+                                      .arg(Theme::kControlBg, Theme::kBorder, Theme::kHoverBg, Theme::kPressedBg));
+        }
+        if (m_demoButton) {
+            applySecondaryButtonStyle(m_demoButton);
+        }
+        applyViewButtonStyles();
+    });
+}
+
+QToolButton *ImageDisplayPanel::makeToolButton(const QString &iconResource, const QString &tooltip, QWidget *parent)
+{
+    auto *button = new QToolButton(parent);
+    button->setFixedSize(28, 28);
+    button->setCursor(Qt::PointingHandCursor);
+    button->setToolTip(tooltip);
+    button->setProperty("iconResource", iconResource);
+    button->setIcon(QIcon(tintedIcon(iconResource, QColor(Theme::kTextSecondary), 16, devicePixelRatioF())));
+    button->setIconSize(QSize(16, 16));
+    button->setStyleSheet(QStringLiteral(
+                              "QToolButton { background:%1; border:1px solid %2; border-radius:6px; }"
+                              "QToolButton:hover { background:%3; }"
+                              "QToolButton:pressed { background:%4; }")
+                              .arg(Theme::kControlBg, Theme::kBorder, Theme::kHoverBg, Theme::kPressedBg));
+    return button;
 }
 
 void ImageDisplayPanel::setMillingPaths(const QVector<MillingPathVM> &paths)
 {
+    m_paths = paths;
     if (m_imageArea) {
         m_imageArea->setMillingPaths(paths);
     }
+    refreshPathSummary();
 }
 
 void ImageDisplayPanel::clearMillingPaths()
 {
+    m_paths.clear();
     if (m_imageArea) {
         m_imageArea->clearMillingPaths();
     }
+    refreshPathSummary();
 }
 
 void ImageDisplayPanel::setToolPose(double xMm, double yMm, double zMm, bool valid,
@@ -202,13 +296,67 @@ void ImageDisplayPanel::clearAlgorithmImage()
     setAlgorithmImagePath(QString());
 }
 
+void ImageDisplayPanel::setTaskId(quint64 taskId)
+{
+    m_taskId = taskId;
+    m_boardLabel->setText(taskId == 0 ? QStringLiteral("板号：--")
+                                      : QStringLiteral("板号：#%1").arg(taskId));
+    refreshPathSummary();
+}
+
+void ImageDisplayPanel::setProgressSummary(int completedPath, int pathTotal, float progressPercent)
+{
+    if (pathTotal <= 0 && completedPath <= 0 && progressPercent < 0.0f) {
+        m_footerLeft->setText(QStringLiteral("等待任务"));
+        return;
+    }
+    QString text = m_taskId == 0 ? QStringLiteral("任务") : QStringLiteral("任务 #%1").arg(m_taskId);
+    if (pathTotal > 0) {
+        text += QStringLiteral(" · 已完成 %1/%2 条路径").arg(qBound(0, completedPath, pathTotal)).arg(pathTotal);
+    }
+    if (progressPercent >= 0.0f) {
+        text += QStringLiteral(" · 进度 %1%").arg(int(std::lround(progressPercent)));
+    }
+    m_footerLeft->setText(text);
+}
+
+void ImageDisplayPanel::clearTask()
+{
+    m_taskId = 0;
+    m_boardLabel->setText(QStringLiteral("板号：--"));
+    m_footerLeft->setText(QStringLiteral("等待任务"));
+    refreshPathSummary();
+}
+
+void ImageDisplayPanel::refreshPathSummary()
+{
+    if (m_paths.isEmpty()) {
+        m_footerRight->setText(QString());
+        return;
+    }
+    int cut = 0;
+    int rapid = 0;
+    double lengthPx = 0.0;
+    for (const MillingPathVM &path : m_paths) {
+        (path.doCut ? cut : rapid) += 1;
+        lengthPx += std::hypot(double(path.uEnd - path.uStart), double(path.vEnd - path.vStart));
+    }
+    QString text = QStringLiteral("切削 %1 条 · 空移 %2 条").arg(cut).arg(rapid);
+    if (m_pointCloudFrame.hasMetricGeometry) {
+        // 像素步距按 X / Y 比例取均值估算路径长度
+        const double scale = (std::abs(m_pointCloudFrame.xScaleMm) + std::abs(m_pointCloudFrame.yScaleMm)) / 2.0;
+        const double lengthMm = lengthPx * scale;
+        text += lengthMm >= 1000.0 ? QStringLiteral(" · 路径 %1 m").arg(lengthMm / 1000.0, 0, 'f', 2)
+                                   : QStringLiteral(" · 路径 %1 mm").arg(lengthMm, 0, 'f', 0);
+    }
+    m_footerRight->setText(text);
+}
+
 QString ImageDisplayPanel::currentViewModeName() const
 {
     switch (m_mode) {
     case ViewMode::View2D:
-        return QStringLiteral("2D");
-    case ViewMode::Height3D:
-        return QStringLiteral("3D");
+        return QStringLiteral("粒子分布");
     case ViewMode::LiveVideo:
         return QStringLiteral("实时画面");
     case ViewMode::AlgorithmImage:
@@ -219,7 +367,6 @@ QString ImageDisplayPanel::currentViewModeName() const
 
 void ImageDisplayPanel::updateScanFrame(const PointCloudFrame &frame)
 {
-    // 先清空上一帧，再显示新的相机图像。
     m_pointCloudFrame = PointCloudFrame();
     m_rangeImage = QImage();
     m_intensityImage = QImage();
@@ -235,30 +382,14 @@ void ImageDisplayPanel::updateScanFrame(const PointCloudFrame &frame)
     m_intensityImage = frame.intensity;
     m_lastFrameId = frame.frameId;
     m_lastTimestampNs = frame.timestampNs;
-    // 3D 一次写入即可（内部会清旧点再建），避免隐藏控件时先清后写导致 GPU 缓冲卡住。
-    if (m_heightMapArea) {
-        m_heightMapArea->setPointCloudFrame(frame);
-    }
+    refreshPathSummary();
 
-    // 新扫图到达时，若停在实时/算法页，自动切回 2D，避免“有帧但看不见”。
-    if (m_mode == ViewMode::LiveVideo || m_mode == ViewMode::AlgorithmImage) {
-        if (!m_rangeImage.isNull() || !m_intensityImage.isNull()) {
-            setViewMode(ViewMode::View2D);
-            return;
-        }
-    }
-
-    // 3D 依赖 Range；仅有 Intensity 时回到可显示的 2D 模式。
-    if (m_mode == ViewMode::Height3D && m_rangeImage.isNull() && !m_intensityImage.isNull()) {
+    // 新扫图到达时，若停在实时/算法页，自动切回粒子分布，避免“有帧但看不见”。
+    if (m_mode != ViewMode::View2D && (!m_rangeImage.isNull() || !m_intensityImage.isNull())) {
         setViewMode(ViewMode::View2D);
         return;
     }
     refreshView();
-}
-
-void ImageDisplayPanel::showHeight3D()
-{
-    setViewMode(ViewMode::Height3D);
 }
 
 void ImageDisplayPanel::show2D()
@@ -295,28 +426,15 @@ void ImageDisplayPanel::setViewMode(ViewMode mode)
 
 void ImageDisplayPanel::applyViewButtonStyles()
 {
-    const bool show2D = m_mode == ViewMode::View2D;
-    const bool show3D = m_mode == ViewMode::Height3D;
-    const bool showLive = m_mode == ViewMode::LiveVideo;
-    const bool showAlgorithm = m_mode == ViewMode::AlgorithmImage;
-    m_view2dButton->setChecked(show2D);
-    m_view3dButton->setChecked(show3D);
-    m_liveViewButton->setChecked(showLive);
-    m_algorithmImageButton->setChecked(showAlgorithm);
-
-    show2D ? applyPrimaryButtonStyle(m_view2dButton)
-           : applySecondaryButtonStyle(m_view2dButton);
-    show3D ? applyPrimaryButtonStyle(m_view3dButton)
-           : applySecondaryButtonStyle(m_view3dButton);
-    showLive ? applyPrimaryButtonStyle(m_liveViewButton)
-             : applySecondaryButtonStyle(m_liveViewButton);
-    showAlgorithm ? applyPrimaryButtonStyle(m_algorithmImageButton)
-                  : applySecondaryButtonStyle(m_algorithmImageButton);
-    // ElaPushButton 的颜色属性变化不会自动请求重绘，需显式刷新外观。
-    m_view2dButton->update();
-    m_view3dButton->update();
-    m_liveViewButton->update();
-    m_algorithmImageButton->update();
+    const auto style = [](ElaPushButton *button, bool active) {
+        button->setChecked(active);
+        active ? applyPrimaryButtonStyle(button) : applySecondaryButtonStyle(button);
+        // ElaPushButton 的颜色属性变化不会自动请求重绘，需显式刷新外观。
+        button->update();
+    };
+    style(m_view2dButton, m_mode == ViewMode::View2D);
+    style(m_liveViewButton, m_mode == ViewMode::LiveVideo);
+    style(m_algorithmImageButton, m_mode == ViewMode::AlgorithmImage);
 }
 
 void ImageDisplayPanel::refreshView()
@@ -324,14 +442,6 @@ void ImageDisplayPanel::refreshView()
     if (m_mode == ViewMode::LiveVideo) {
         if (m_viewStack && m_liveViewArea) {
             m_viewStack->setCurrentWidget(m_liveViewArea);
-        }
-        return;
-    }
-    if (m_mode == ViewMode::Height3D) {
-        if (m_viewStack && m_heightMapArea) {
-            m_viewStack->setCurrentWidget(m_heightMapArea);
-            // 切回 3D 时强制重绘；若上次在后台更新失败，paintGL 会补上传。
-            m_heightMapArea->update();
         }
         return;
     }

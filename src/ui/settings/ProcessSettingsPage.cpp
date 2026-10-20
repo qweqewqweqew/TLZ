@@ -8,67 +8,88 @@
 #include "ui/settings/SettingsFormWidgets.h"
 
 #include <QHBoxLayout>
-#include <QTabWidget>
 #include <QVBoxLayout>
 
 ProcessSettingsPage::ProcessSettingsPage(Ros2Bridge *bridge, QWidget *parent)
     : SettingsSubPage(parent)
     , m_bridge(bridge)
 {
-    auto *root = new QVBoxLayout(this);
+    auto *root = new QHBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(0);
-    auto *tabs = settingsTabs(this);
-    root->addWidget(tabs);
+    root->setSpacing(12);
 
-    QVBoxLayout *offsetTab = addSettingsTab(tabs, QStringLiteral("坐标补偿与下发"));
+    auto *coordinatePanel = settingsGroupPanel(QStringLiteral("坐标与示教"),
+                                                QStringLiteral(":/img/kpi_target.svg"), this);
+    root->addWidget(coordinatePanel, 1);
+    auto *coordinateLayout = qobject_cast<QVBoxLayout *>(coordinatePanel->layout());
     m_params = new BackendParamsDialog(bridge, this);
+    m_params->setParent(coordinatePanel);
     auto *offsetRow = new QHBoxLayout();
     offsetRow->setContentsMargins(0, 0, 0, 0);
     offsetRow->addWidget(m_params, 0, Qt::AlignTop);
     offsetRow->addStretch(1);
-    offsetTab->addLayout(offsetRow);
-    offsetTab->addWidget(settingsHint(
+    coordinateLayout->addLayout(offsetRow);
+    coordinateLayout->addWidget(settingsHint(
         QStringLiteral("技术员及以上可修改。卡片内「应用」与页底「保存」相同，都会校验权限并写入操作审计。"),
-        this));
-    offsetTab->addStretch(1);
-    offsetTab->addWidget(settingsSourceBanner(
-        QStringLiteral("数据来源：%1 的 [BackendParams]。保存时写入该文件，并经 ROS 发布 "
-                       "plc/coordinate_offset、plc/dispatch_paths_to_plc。")
-            .arg(backendParamsIniPath()),
-        this));
-
-    QVBoxLayout *teachTab = addSettingsTab(tabs, QStringLiteral("示教取坐标"));
+        coordinatePanel));
+    auto *teachPanel = createPanel(QStringLiteral("示教取坐标"), nullptr, coordinatePanel);
+    auto *teachPanelLayout = qobject_cast<QVBoxLayout *>(teachPanel->layout());
     m_teaching = new TeachingDialog(bridge, this);
     auto *teachRow = new QHBoxLayout();
     teachRow->setContentsMargins(0, 0, 0, 0);
     teachRow->addWidget(m_teaching, 0, Qt::AlignTop);
     teachRow->addStretch(1);
-    teachTab->addLayout(teachRow);
-    teachTab->addWidget(settingsHint(QStringLiteral("技术员及以上可执行示教。"), this));
-    teachTab->addStretch(1);
-    teachTab->addWidget(settingsSourceBanner(
-        QStringLiteral("示教沿用现有示教模块，只发送 publishTeachRequest，不改任何配置文件。"),
-        this));
+    teachPanelLayout->addLayout(teachRow);
+    coordinateLayout->addWidget(teachPanel);
+    coordinateLayout->addWidget(settingsHint(QStringLiteral("技术员及以上可修改补偿并执行示教。"), coordinatePanel));
+    coordinateLayout->addStretch(1);
+    coordinateLayout->addWidget(settingsSourceBanner(
+        QStringLiteral("坐标参数来源：%1 的 [BackendParams]；下发 ROS 坐标补偿 / 路径请求。"
+                       "示教只发送 publishTeachRequest，不改配置文件。")
+            .arg(backendParamsIniPath()),
+        coordinatePanel));
 
-    QVBoxLayout *pendingTab = addSettingsTab(tabs, QStringLiteral("工艺参数"));
-    pendingTab->addWidget(settingsPendingBlock(
+    auto *processPanel = settingsGroupPanel(QStringLiteral("修磨参数"),
+                                             QStringLiteral(":/img/nav_settings.svg"), this);
+    root->addWidget(processPanel, 1);
+    auto *processLayout = qobject_cast<QVBoxLayout *>(processPanel->layout());
+    processLayout->addWidget(settingsPendingBlock(
+        QStringLiteral("目标残余高度"),
+        QStringLiteral("修磨后允收高度及单位需由现场工艺确认。"),
+        processPanel));
+    processLayout->addWidget(settingsPendingBlock(
+        QStringLiteral("单次切深"),
+        QStringLiteral("最大切深、分层规则及安全余量待机床能力确认。"),
+        processPanel));
+    processLayout->addWidget(settingsPendingBlock(
         QStringLiteral("进给"),
         QStringLiteral("工艺点表 / PLC 可写字段（backend_params.ini 无进给）。"),
-        this));
-    pendingTab->addWidget(settingsPendingBlock(
-        QStringLiteral("深度"),
-        QStringLiteral("工艺点表 / PLC 可写字段（backend_params.ini 无深度）。"),
-        this));
-    pendingTab->addWidget(settingsPendingBlock(
+        processPanel));
+    processLayout->addWidget(settingsPendingBlock(
         QStringLiteral("转速"),
         QStringLiteral("工艺点表 / PLC 可写字段（backend_params.ini 无转速）。"),
-        this));
-    pendingTab->addWidget(settingsPendingBlock(
-        QStringLiteral("板级策略"),
-        QStringLiteral("工艺点表（现网无板级策略配置键）。"),
-        this));
-    pendingTab->addStretch(1);
+        processPanel));
+    processLayout->addWidget(settingsHint(
+        QStringLiteral("后端参数接口补齐并经现场确认后，再开放这些参数的编辑和保存。"), processPanel));
+    processLayout->addStretch(1);
+
+    auto *strategyPanel = settingsGroupPanel(QStringLiteral("策略与复检"),
+                                              QStringLiteral(":/img/kpi_check.svg"), this);
+    root->addWidget(strategyPanel, 1);
+    auto *strategyLayout = qobject_cast<QVBoxLayout *>(strategyPanel->layout());
+    strategyLayout->addWidget(settingsPendingBlock(
+        QStringLiteral("分级修磨"),
+        QStringLiteral("标准修磨、重点分层修磨及人工复核规则待工艺确认。"),
+        strategyPanel));
+    strategyLayout->addWidget(settingsPendingBlock(
+        QStringLiteral("自动复检"),
+        QStringLiteral("复检触发、合格判定和未达标返修流程待后端接入。"),
+        strategyPanel));
+    strategyLayout->addWidget(settingsPendingBlock(
+        QStringLiteral("安全策略"),
+        QStringLiteral("抬刀、避障、加工顺序与急停恢复由机床控制方案定义。"),
+        strategyPanel));
+    strategyLayout->addStretch(1);
 
     connect(m_params, &BackendParamsDialog::dirtyChanged, this, &ProcessSettingsPage::dirtyChanged);
     connect(m_params, &BackendParamsDialog::applyRequested, this, &ProcessSettingsPage::saveRequested);
@@ -96,7 +117,7 @@ QString ProcessSettingsPage::pendingChangeSummary() const
 
 QString ProcessSettingsPage::bindingSummary() const
 {
-    return QStringLiteral("绑定 backend_params.ini + ROS 坐标补偿 / 路径下发。进给、深度、转速、板级策略待对接。");
+    return QStringLiteral("绑定 backend_params.ini 与 ROS 坐标补偿 / 路径下发；工艺参数和复检待确认。");
 }
 
 bool ProcessSettingsPage::isDirty() const

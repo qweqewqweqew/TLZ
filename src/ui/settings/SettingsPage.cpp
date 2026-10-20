@@ -5,10 +5,7 @@
 #include "app/Theme.h"
 #include "app/UiHelpers.h"
 #include "auth/AuthService.h"
-#include "ui/settings/AboutSettingsPage.h"
 #include "ui/settings/AccountSettingsPage.h"
-#include "ui/settings/AlarmSettingsPage.h"
-#include "ui/settings/DisplaySettingsPage.h"
 #include "ui/settings/NodeCommSettingsPage.h"
 #include "ui/settings/ProcessSettingsPage.h"
 #include "ui/settings/SettingsSubPage.h"
@@ -17,11 +14,17 @@
 #include <QAbstractItemView>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QListWidget>
+#include <QListView>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QResizeEvent>
+#include <QShowEvent>
+#include <QSizePolicy>
 #include <QStackedWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace {
@@ -42,61 +45,99 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
                            QWidget *parent)
     : QWidget(parent)
 {
+    Q_UNUSED(nodes);
+    Q_UNUSED(eventLog);
     setObjectName(QStringLiteral("settingsPage"));
     setStyleSheet(QStringLiteral(
                       "QWidget#settingsPage { background: %1; }"
                       "QListWidget#settingsNav {"
-                      "  background: %2;"
+                      "  background: transparent;"
                       "  color: %3;"
-                      "  border: 1px solid %4;"
-                      "  border-radius: 8px;"
+                      "  border: none;"
                       "  outline: none;"
-                      "  padding: 6px;"
+                      "  padding: 0;"
                       "  font-size: 15px;"
                       "}"
                       "QListWidget#settingsNav::item {"
-                      "  color: %3;"
-                      "  padding: 10px 12px;"
+                      "  background: %2; color: %3; border: 1px solid %4;"
+                      "  padding: 16px 18px;"
                       "  border-radius: 6px;"
                       "}"
                       "QListWidget#settingsNav::item:selected {"
-                      "  background: %5;"
-                      "  color: %6;"
+                      "  background: %5; color: %6; border-color: %6;"
                       "}"
                       "QListWidget#settingsNav::item:hover { background: %7; }")
                       .arg(Theme::kWindowBg,
                            Theme::kPanelBg,
                            Theme::kTextPrimary,
                            Theme::kBorder,
-                           Theme::kRunningBg,
-                           Theme::kAccent,
+                           Theme::kControlBg,
+                           Theme::markColor(),
                            Theme::kHoverBg));
+    Theme::watch(this, [this]() {
+        setStyleSheet(QStringLiteral(
+                          "QWidget#settingsPage { background: %1; }"
+                          "QListWidget#settingsNav {"
+                          "  background: transparent;"
+                          "  color: %3;"
+                          "  border: none;"
+                          "  outline: none;"
+                          "  padding: 0;"
+                          "  font-size: 15px;"
+                          "}"
+                          "QListWidget#settingsNav::item {"
+                          "  background: %2; color: %3; border: 1px solid %4;"
+                          "  padding: 16px 18px;"
+                          "  border-radius: 6px;"
+                          "}"
+                          "QListWidget#settingsNav::item:selected {"
+                          "  background: %5; color: %6; border-color: %6;"
+                          "}"
+                          "QListWidget#settingsNav::item:hover { background: %7; }")
+                          .arg(Theme::kWindowBg,
+                               Theme::kPanelBg,
+                               Theme::kTextPrimary,
+                               Theme::kBorder,
+                               Theme::kControlBg,
+                               Theme::markColor(),
+                               Theme::kHoverBg));
+        updateAccessBanner();
+        if (m_status && !m_status->text().isEmpty()) {
+            setStatus(m_status->text(), m_status->property("problem").toBool());
+        }
+    });
 
-    auto *root = new QHBoxLayout(this);
-    root->setContentsMargins(8, 8, 8, 8);
-    root->setSpacing(12);
+    auto *root = new QVBoxLayout(this);
+    root->setContentsMargins(6, 6, 6, 6);
+    root->setSpacing(8);
 
-    auto *navColumn = new QVBoxLayout();
-    navColumn->setContentsMargins(0, 0, 0, 0);
-    navColumn->setSpacing(8);
-    auto *navTitle = makeLabel(QStringLiteral("设置项"), QStringLiteral("panelTitle"));
-    navColumn->addWidget(navTitle);
     m_nav = new QListWidget(this);
     m_nav->setObjectName(QStringLiteral("settingsNav"));
-    m_nav->setFixedWidth(196);
-    m_nav->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_nav->setFixedHeight(88);
+    m_nav->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_nav->setIconSize(QSize(30, 30));
+    m_nav->setUniformItemSizes(true);
+    m_nav->setSpacing(8);
+    m_nav->setViewMode(QListView::IconMode);
+    m_nav->setLayoutMode(QListView::SinglePass);
+    m_nav->setFlow(QListView::LeftToRight);
+    m_nav->setWrapping(false);
+    m_nav->setResizeMode(QListView::Adjust);
+    m_nav->setMovement(QListView::Static);
+    m_nav->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_nav->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_nav->setSelectionMode(QAbstractItemView::SingleSelection);
-    navColumn->addWidget(m_nav, 1);
-    root->addLayout(navColumn);
+    root->addWidget(m_nav);
 
     auto *contentColumn = new QVBoxLayout();
     contentColumn->setContentsMargins(0, 0, 0, 0);
-    contentColumn->setSpacing(8);
+    contentColumn->setSpacing(6);
     m_pageTitle = makeLabel(QString(), QStringLiteral("panelTitle"));
+    m_pageTitle->setVisible(false);
     contentColumn->addWidget(m_pageTitle);
     m_accessBanner = makeLabel(QString(), QStringLiteral("sectionHint"));
     m_accessBanner->setWordWrap(true);
-    contentColumn->addWidget(m_accessBanner);
+    m_accessBanner->hide();
 
     // 各子页用页签分区、页签内自行滚动；外层不再包滚动区，否则栈会按最高的子页撑高，短页底部留白。
     m_stack = new QStackedWidget(this);
@@ -113,9 +154,9 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
     auto *saveButton = new ElaPushButton(QStringLiteral("保存"), this);
     auto *cancelButton = new ElaPushButton(QStringLiteral("取消"), this);
     auto *defaultButton = new ElaPushButton(QStringLiteral("恢复默认"), this);
-    saveButton->setMinimumSize(96, 36);
-    cancelButton->setMinimumSize(96, 36);
-    defaultButton->setMinimumSize(112, 36);
+    saveButton->setMinimumSize(84, 30);
+    cancelButton->setMinimumSize(84, 30);
+    defaultButton->setMinimumSize(100, 30);
     applyPrimaryButtonStyle(saveButton);
     applySecondaryButtonStyle(cancelButton);
     applySecondaryButtonStyle(defaultButton);
@@ -124,7 +165,7 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
     m_defaultButton = defaultButton;
     m_status = makeLabel(QString(), QStringLiteral("sectionHint"));
     m_status->setWordWrap(true);
-    m_status->setMinimumHeight(36);
+    m_status->setMinimumHeight(28);
     actionRow->addWidget(saveButton);
     actionRow->addWidget(cancelButton);
     actionRow->addWidget(defaultButton);
@@ -132,8 +173,9 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
     contentColumn->addLayout(actionRow);
     root->addLayout(contentColumn, 1);
 
-    const auto addPage = [this](const QString &title, SettingsSubPage *page) {
-        m_nav->addItem(title);
+    const auto addPage = [this](const QString &title, const QString &iconPath, SettingsSubPage *page) {
+        auto *item = new QListWidgetItem(QIcon(iconPath), title, m_nav);
+        item->setTextAlignment(Qt::AlignCenter);
         m_stack->addWidget(page);
         connect(page, &SettingsSubPage::dirtyChanged, this, [this, page](bool) {
             if (page == currentPage()) {
@@ -152,13 +194,19 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
             }
         });
     };
-    addPage(QStringLiteral("加工与工艺"), new ProcessSettingsPage(bridge, m_stack));
-    addPage(QStringLiteral("视觉与相机"), new VisionSettingsPage(m_stack));
-    addPage(QStringLiteral("显示与界面"), new DisplaySettingsPage(m_stack));
-    addPage(QStringLiteral("节点与通信"), new NodeCommSettingsPage(m_stack));
-    addPage(QStringLiteral("报警与诊断"), new AlarmSettingsPage(nodes, eventLog, m_stack));
-    addPage(QStringLiteral("权限与账户"), new AccountSettingsPage(m_stack));
-    addPage(QStringLiteral("关于"), new AboutSettingsPage(m_stack));
+    addPage(QStringLiteral("设备与通信"), QStringLiteral(":/img/nav_settings.svg"),
+            new NodeCommSettingsPage(m_stack));
+    addPage(QStringLiteral("检测与标定"), QStringLiteral(":/img/nav_detect.svg"),
+            new VisionSettingsPage(m_stack));
+    addPage(QStringLiteral("修磨工艺"), QStringLiteral(":/img/kpi_target.svg"),
+            new ProcessSettingsPage(bridge, m_stack));
+    addPage(QStringLiteral("安全与权限"), QStringLiteral(":/img/kpi_alert.svg"),
+            new AccountSettingsPage(m_stack));
+    m_nodeCommPage = qobject_cast<NodeCommSettingsPage *>(m_stack->widget(0));
+    connect(m_nodeCommPage, &NodeCommSettingsPage::startNodesRequested,
+            this, &SettingsPage::startNodesRequested);
+    connect(m_nodeCommPage, &NodeCommSettingsPage::stopNodesRequested,
+            this, &SettingsPage::stopNodesRequested);
 
     connect(m_nav, &QListWidget::currentRowChanged, this, [this](int row) {
         if (m_updatingNav || row < 0 || row == m_currentRow) {
@@ -200,6 +248,49 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
     m_currentRow = 0;
     refreshAccess();
     showPage(0);
+    updateNavCardSizes();
+}
+
+void SettingsPage::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    QTimer::singleShot(0, this, &SettingsPage::updateNavCardSizes);
+}
+
+void SettingsPage::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    QTimer::singleShot(0, this, &SettingsPage::updateNavCardSizes);
+}
+
+void SettingsPage::updateNavCardSizes()
+{
+    if (!m_nav || m_nav->count() <= 0) {
+        return;
+    }
+    // The list viewport is the actual drawable width after scrollbars and layout margins.
+    const int available = qMax(320, m_nav->viewport()->width());
+    const int cardWidth = qMax(120, (available - m_nav->spacing() * (m_nav->count() - 1)) / m_nav->count());
+    m_nav->setGridSize(QSize(cardWidth, 76));
+    for (int i = 0; i < m_nav->count(); ++i) {
+        if (auto *item = m_nav->item(i)) {
+            item->setSizeHint(QSize(cardWidth, 76));
+        }
+    }
+}
+
+void SettingsPage::setNodesRunning(bool running)
+{
+    if (m_nodeCommPage) {
+        m_nodeCommPage->setNodesRunning(running);
+    }
+}
+
+void SettingsPage::setNodesBusy(bool busy)
+{
+    if (m_nodeCommPage) {
+        m_nodeCommPage->setNodesBusy(busy);
+    }
 }
 
 bool SettingsPage::confirmLeave()
@@ -274,6 +365,7 @@ void SettingsPage::setStatus(const QString &text, bool problem)
     if (!m_status) {
         return;
     }
+    m_status->setProperty("problem", problem);
     m_status->setStyleSheet(QStringLiteral(
                                 "color:%1;font-size:12px;border:none;background:transparent;")
                                 .arg(problem ? Theme::kStateError : Theme::kTextSecondary));
@@ -375,37 +467,10 @@ void SettingsPage::refreshAccess()
 
 void SettingsPage::updateAccessBanner()
 {
-    if (!m_accessBanner) {
-        return;
-    }
-    auto *page = currentPage();
-    const std::optional<Permission> permission = page ? page->writePermission() : std::nullopt;
-    if (!permission) {
+    // 权限仍由页面控件和保存动作校验，这个状态提示不再占用设置页空间。
+    if (m_accessBanner) {
         m_accessBanner->hide();
-        return;
     }
-    AuthService &auth = AuthService::instance();
-    const Role needed = Auth::minimumRole(*permission);
-    QString text;
-    bool problem = false;
-    if (!auth.isAvailable()) {
-        text = QStringLiteral("数据库未就绪，账户功能不可用。本页的受控项暂时锁定。");
-        problem = true;
-    } else if (auth.can(*permission)) {
-        text = QStringLiteral("当前身份：%1，可以修改本页（需要「%2」及以上）。")
-                   .arg(auth.identityText(), Auth::roleDisplayName(needed));
-    } else {
-        text = QStringLiteral("只读：修改本页需要「%1」及以上权限，当前身份：%2。点标题栏的账户按钮登录。")
-                   .arg(Auth::roleDisplayName(needed), auth.identityText());
-        problem = true;
-    }
-    m_accessBanner->setStyleSheet(QStringLiteral(
-                                      "color:%1;font-size:13px;border:none;border-radius:6px;"
-                                      "padding:5px 10px;background:%2;")
-                                      .arg(problem ? Theme::kStateWarning : Theme::kTextSecondary,
-                                           problem ? Theme::kWarningBg : Theme::kPanelBg));
-    m_accessBanner->setText(text);
-    m_accessBanner->show();
 }
 
 QString SettingsPage::pageTitle(int row) const

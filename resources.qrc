@@ -6,6 +6,18 @@
         <file>img/mini.png</file>
         <file>img/minimize.png</file>
         <file>img/chevron_down.svg</file>
+        <file>img/nav_detect.svg</file>
+        <file>img/nav_history.svg</file>
+        <file>img/nav_report.svg</file>
+        <file>img/nav_settings.svg</file>
+        <file>img/bell.svg</file>
+        <file>img/kpi_target.svg</file>
+        <file>img/kpi_clock.svg</file>
+        <file>img/kpi_check.svg</file>
+        <file>img/kpi_alert.svg</file>
+        <file>img/zoom_in.svg</file>
+        <file>img/zoom_out.svg</file>
+        <file>img/fit_view.svg</file>
         <file>icon/app.ico</file>
     </qresource>
 </RCC>

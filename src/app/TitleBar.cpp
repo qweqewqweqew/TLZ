@@ -1,10 +1,10 @@
 #include "app/TitleBar.h"
 
-#include "ElaText.h"
 #include "app/Theme.h"
 #include "app/UiHelpers.h"
 
 #include <QColor>
+#include <QDateTime>
 #include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QKeySequence>
@@ -12,46 +12,14 @@
 #include <QMouseEvent>
 #include <QPixmap>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QShortcut>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace {
 
-QPushButton *createActionButton(const QString &text, int width, QWidget *parent)
-{
-    auto *button = new QPushButton(text, parent);
-    button->setFixedSize(width, 34);
-    button->setCursor(Qt::PointingHandCursor);
-    button->setObjectName("titleActionButton");
-    button->setStyleSheet(QStringLiteral(R"(
-        QPushButton#titleActionButton {
-            color: %1;
-            background: %2;
-            border: 1px solid %3;
-            border-radius: 6px;
-            font-size: 18px;
-            padding: 0 10px;
-        }
-        QPushButton#titleActionButton:hover {
-            background: %4;
-        }
-        QPushButton#titleActionButton:checked {
-            background: %4;
-            border-color: %4;
-        }
-        QPushButton#titleActionButton:pressed {
-            background: %5;
-        }
-        QPushButton#titleActionButton:focus {
-            border-color: %1;
-        }
-    )").arg(Theme::kTextPrimary,
-             Theme::kRunningBg,
-             Theme::kAccent,
-             Theme::kAccent,
-             Theme::kSelectionBg));
-    return button;
-}
+constexpr int kBarHeight = 58;
 
 } // namespace
 
@@ -59,91 +27,64 @@ TitleBar::TitleBar(QWidget *parent)
     : QFrame(parent)
 {
     setObjectName("titleBar");
-    setFixedHeight(58);
+    setFixedHeight(kBarHeight);
     installEventFilter(this);
 
     auto *titleLayout = new QHBoxLayout(this);
-    titleLayout->setContentsMargins(12, 0, 8, 0);
+    titleLayout->setContentsMargins(12, 0, 10, 0);
     titleLayout->setSpacing(10);
 
+    // ---- 左：Logo + 品牌 ----
     auto *logoLabel = new QLabel(this);
-    logoLabel->setFixedSize(46, 46);
-    logoLabel->setPixmap(QPixmap(":/img/logo.png").scaled(46, 46, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    logoLabel->setFixedSize(40, 40);
+    logoLabel->setPixmap(QPixmap(":/img/logo.png").scaled(40, 40, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     logoLabel->setStyleSheet("background:transparent;border:none;");
     titleLayout->addWidget(logoLabel);
 
-    auto *titleTextLayout = new QVBoxLayout();
-    titleTextLayout->setContentsMargins(0, 0, 0, 0);
-    titleTextLayout->setSpacing(0);
-    auto *systemTitle = makeLabel("阴级铜表面粒子智能修整系统", "systemTitle");
-    systemTitle->setWordWrap(false);
-    systemTitle->setMinimumWidth(systemTitle->sizeHint().width());
-    titleTextLayout->addWidget(systemTitle);
-    titleLayout->addLayout(titleTextLayout);
+    auto *brandColumn = new QVBoxLayout();
+    brandColumn->setContentsMargins(0, 0, 0, 0);
+    brandColumn->setSpacing(0);
+    m_brand = new QLabel(QStringLiteral("铭准"), this);
+    m_brandSub = new QLabel(QStringLiteral("MZ-VISION"), this);
+    brandColumn->addStretch(1);
+    brandColumn->addWidget(m_brand);
+    brandColumn->addWidget(m_brandSub);
+    brandColumn->addStretch(1);
+    titleLayout->addLayout(brandColumn);
+    titleLayout->addStretch(1);
 
-    m_emergencyStopButton = new QPushButton("急停", this);
-    m_emergencyStopButton->setObjectName("emergencyStopButton");
-    m_emergencyStopButton->setFixedSize(144, 46);
-    m_emergencyStopButton->setCursor(Qt::PointingHandCursor);
-    m_emergencyStopButton->setToolTip("双击触发急停请求");
-    m_emergencyStopButton->setAccessibleName("急停");
-    m_emergencyStopButton->setAccessibleDescription("双击触发急停请求");
-    const QColor emergencyColor(Theme::kStateError);
-    m_emergencyStopButton->setStyleSheet(QStringLiteral(R"(
-        QPushButton#emergencyStopButton {
-            color: #FFFFFF;
-            background: %1;
-            border: 2px solid %1;
-            border-radius: 6px;
-            font-size: 18px;
-            font-weight: 700;
-        }
-        QPushButton#emergencyStopButton:hover {
-            background: %2;
-            border-color: %2;
-        }
-        QPushButton#emergencyStopButton:pressed {
-            background: %3;
-            border-color: %3;
-        }
-        QPushButton#emergencyStopButton:focus {
-            border-color: #FFFFFF;
-        }
-    )")
-        .arg(emergencyColor.name(),
-             emergencyColor.lighter(112).name(),
-             emergencyColor.darker(118).name()));
-    m_emergencyStopButton->installEventFilter(this);
-    titleLayout->addStretch();
+    // ---- 中：系统名（不进布局，resizeEvent 里居中）----
+    m_systemTitle = makeLabel(QStringLiteral("阴极铜板粒子检测及修磨系统"), "systemTitle");
+    m_systemTitle->setParent(this);
+    m_systemTitle->setWordWrap(false);
+    m_systemTitle->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_systemTitle->adjustSize();
+
+    // ---- 右：设备状态、时间、铃铛、用户 ----
+    m_devicePill = new QLabel(this);
+    m_devicePill->setFixedHeight(26);
+    m_devicePill->setAlignment(Qt::AlignCenter);
+    titleLayout->addWidget(m_devicePill);
+
+    m_clock = new QLabel(this);
+    titleLayout->addWidget(m_clock);
+    m_clockTimer = new QTimer(this);
+    m_clockTimer->setInterval(1000);
+    connect(m_clockTimer, &QTimer::timeout, this, &TitleBar::updateClock);
+    updateClock();
+    m_clockTimer->start();
+
+    titleLayout->addSpacing(2);
+    titleLayout->addWidget(createBellButton());
 
     m_userButton = createUserChip();
-    m_settingsButton = createActionButton("设置", 108, this);
-    m_startNodesButton = createActionButton("启动", 108, this);
-    m_startNodesButton->setToolTip(QStringLiteral("启动算法、相机、后端节点"));
-    m_homeButton = createActionButton("首页", 108, this);
-    m_historyButton = createActionButton("历史记录", 108, this);
-    m_homeButton->setCheckable(true);
-    m_historyButton->setCheckable(true);
-    m_settingsButton->setCheckable(true);
-    m_homeButton->setAutoExclusive(true);
-    m_historyButton->setAutoExclusive(true);
-    m_settingsButton->setAutoExclusive(true);
-    m_homeButton->setChecked(true);
-
-    titleLayout->addWidget(m_homeButton);
-    titleLayout->addWidget(m_historyButton);
-    titleLayout->addWidget(m_settingsButton);
-    titleLayout->addWidget(m_startNodesButton);
-    titleLayout->addSpacing(8);
-    auto *divider = new QFrame(this);
-    divider->setFixedSize(1, 30);
-    divider->setStyleSheet(QStringLiteral("background:%1;border:none;").arg(Theme::kBorder));
-    titleLayout->addWidget(divider);
-    titleLayout->addSpacing(4);
     titleLayout->addWidget(m_userButton);
-    titleLayout->addSpacing(20);
-    titleLayout->addWidget(m_emergencyStopButton);
+
     setUserIdentity(QString(), Role::None);
+    updateDevicePill();
+    setNotificationCount(0);
+    applyTheme();
+    Theme::watch(this, [this]() { applyTheme(); });
 
     auto *minimizeShortcut = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Escape), this);
     auto *maximizeShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
@@ -155,38 +96,165 @@ TitleBar::TitleBar(QWidget *parent)
     connect(m_userButton, &QPushButton::clicked, this, [this]() {
         emit userRequested(m_userButton->mapToGlobal(QPoint(0, m_userButton->height() + 4)));
     });
-    connect(m_settingsButton, &QPushButton::clicked, this, &TitleBar::settingsRequested);
-    connect(m_startNodesButton, &QPushButton::clicked, this, [this]() {
-        if (m_nodesRunning) {
-            emit stopNodesRequested();
-        } else {
-            emit startNodesRequested();
-        }
-    });
-    connect(m_homeButton, &QPushButton::clicked, this, &TitleBar::homeRequested);
-    connect(m_historyButton, &QPushButton::clicked, this, &TitleBar::historyRequested);
     connect(minimizeShortcut, &QShortcut::activated, this, &TitleBar::minimizeRequested);
     connect(maximizeShortcut, &QShortcut::activated, this, &TitleBar::maximizeRestoreRequested);
     connect(closeShortcut, &QShortcut::activated, this, &TitleBar::closeRequested);
 }
 
-void TitleBar::setWorkspacePage(WorkspacePage page)
+void TitleBar::applyTheme()
 {
-    QPushButton *target = nullptr;
-    switch (page) {
-    case WorkspacePage::Home:
-        target = m_homeButton;
-        break;
-    case WorkspacePage::History:
-        target = m_historyButton;
-        break;
-    case WorkspacePage::Settings:
-        target = m_settingsButton;
-        break;
+    if (m_brand) {
+        m_brand->setStyleSheet(QStringLiteral("color:%1;font-size:18px;font-weight:700;background:transparent;border:none;")
+                                   .arg(Theme::kTitle));
     }
-    if (target) {
-        target->setChecked(true);
+    if (m_brandSub) {
+        m_brandSub->setStyleSheet(QStringLiteral("color:%1;font-size:10px;letter-spacing:1px;background:transparent;border:none;")
+                                      .arg(Theme::kTextMuted));
     }
+    if (m_clock) {
+        m_clock->setStyleSheet(QStringLiteral("color:%1;font-size:14px;background:transparent;border:none;")
+                                   .arg(Theme::kTextSecondary));
+    }
+    if (m_bellButton) {
+        m_bellButton->setIcon(QIcon(tintedIcon(QStringLiteral(":/img/bell.svg"),
+                                               QColor(Theme::kTextSecondary),
+                                               22,
+                                               devicePixelRatioF())));
+        m_bellButton->setStyleSheet(QStringLiteral(
+                                        "QPushButton#titleBell { background:transparent; border:1px solid transparent; border-radius:20px; }"
+                                        "QPushButton#titleBell:hover { background:%1; border-color:%2; }"
+                                        "QPushButton#titleBell:pressed { background:%3; }")
+                                        .arg(Theme::kHoverBg, Theme::kBorder, Theme::kPressedBg));
+    }
+    if (m_bellBadge) {
+        m_bellBadge->setStyleSheet(QStringLiteral("color:#FFFFFF;background:%1;border:none;border-radius:8px;"
+                                                  "font-size:10px;font-weight:700;padding:0 3px;")
+                                       .arg(Theme::kStateError));
+    }
+    if (m_userButton) {
+        m_userButton->setStyleSheet(QStringLiteral(R"(
+            QPushButton#titleUserChip {
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 21px;
+            }
+            QPushButton#titleUserChip:hover { background: %1; border-color: %2; }
+            QPushButton#titleUserChip:pressed { background: %3; }
+        )").arg(Theme::kHoverBg, Theme::kBorder, Theme::kPressedBg));
+    }
+    if (m_userName) {
+        m_userName->setStyleSheet(QStringLiteral("color:%1;font-size:14px;font-weight:600;background:transparent;border:none;")
+                                      .arg(Theme::kTextPrimary));
+    }
+    if (m_userArrow) {
+        m_userArrow->setStyleSheet(QStringLiteral("color:%1;font-size:14px;background:transparent;border:none;")
+                                      .arg(Theme::kTextMuted));
+    }
+    updateDevicePill();
+    setUserIdentity(m_username, m_role);
+}
+
+QWidget *TitleBar::createBellButton()
+{
+    auto *host = new QWidget(this);
+    host->setFixedSize(40, 40);
+    host->setStyleSheet("background:transparent;border:none;");
+
+    m_bellButton = new QPushButton(host);
+    m_bellButton->setObjectName(QStringLiteral("titleBell"));
+    m_bellButton->setGeometry(0, 0, 40, 40);
+    m_bellButton->setCursor(Qt::PointingHandCursor);
+    m_bellButton->setToolTip(QStringLiteral("报警与事件日志"));
+    m_bellButton->setIcon(QIcon(tintedIcon(QStringLiteral(":/img/bell.svg"),
+                                           QColor(Theme::kTextSecondary),
+                                           22,
+                                           devicePixelRatioF())));
+    m_bellButton->setIconSize(QSize(22, 22));
+    m_bellButton->setStyleSheet(QStringLiteral(
+                                    "QPushButton#titleBell { background:transparent; border:1px solid transparent; border-radius:20px; }"
+                                    "QPushButton#titleBell:hover { background:%1; border-color:%2; }"
+                                    "QPushButton#titleBell:pressed { background:%3; }")
+                                    .arg(Theme::kHoverBg, Theme::kBorder, Theme::kPressedBg));
+    connect(m_bellButton, &QPushButton::clicked, this, &TitleBar::notificationsRequested);
+
+    m_bellBadge = new QLabel(host);
+    m_bellBadge->setAlignment(Qt::AlignCenter);
+    m_bellBadge->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_bellBadge->setStyleSheet(QStringLiteral("color:#FFFFFF;background:%1;border:none;border-radius:8px;"
+                                              "font-size:10px;font-weight:700;padding:0 3px;")
+                                   .arg(Theme::kStateError));
+    m_bellBadge->hide();
+    return host;
+}
+
+void TitleBar::setNotificationCount(int count)
+{
+    if (!m_bellBadge) {
+        return;
+    }
+    if (count <= 0) {
+        m_bellBadge->hide();
+        return;
+    }
+    m_bellBadge->setText(count > 99 ? QStringLiteral("99+") : QString::number(count));
+    m_bellBadge->adjustSize();
+    const int w = qMax(16, m_bellBadge->width());
+    m_bellBadge->setGeometry(40 - w - 2, 4, w, 16);
+    m_bellBadge->show();
+    m_bellBadge->raise();
+}
+
+void TitleBar::updateClock()
+{
+    if (m_clock) {
+        m_clock->setText(QDateTime::currentDateTime().toString(QStringLiteral("yyyy/MM/dd HH:mm:ss")));
+    }
+}
+
+void TitleBar::updateDevicePill()
+{
+    if (!m_devicePill) {
+        return;
+    }
+    QString text;
+    QString color;
+    QString background;
+    if (m_startNodesBusy) {
+        text = QStringLiteral("● 节点切换中");
+        color = Theme::kStateWarning;
+        background = Theme::kWarningBg;
+    } else if (m_nodesRunning) {
+        text = QStringLiteral("● 设备在线");
+        color = Theme::kStateSuccess;
+        background = Theme::kSuccessBg;
+    } else {
+        text = QStringLiteral("● 设备离线");
+        color = Theme::kStateUnknown;
+        background = Theme::kControlBg;
+    }
+    m_devicePill->setText(text);
+    m_devicePill->setStyleSheet(QStringLiteral("color:%1;background:%2;border:1px solid %1;border-radius:13px;"
+                                               "padding:0 12px;font-size:13px;")
+                                    .arg(color, background));
+    m_devicePill->setToolTip(m_nodesRunning ? QStringLiteral("相机 / 算法 / 后端节点运行中")
+                                            : QStringLiteral("节点未运行。到 系统设置 → 设备与通信 启动"));
+}
+
+void TitleBar::centerTitle()
+{
+    if (!m_systemTitle) {
+        return;
+    }
+    m_systemTitle->adjustSize();
+    const int x = (width() - m_systemTitle->width()) / 2;
+    const int y = (height() - m_systemTitle->height()) / 2;
+    m_systemTitle->move(x, y);
+}
+
+void TitleBar::resizeEvent(QResizeEvent *event)
+{
+    QFrame::resizeEvent(event);
+    centerTitle();
 }
 
 void TitleBar::setMaximizedState(bool maximized)
@@ -200,7 +268,7 @@ void TitleBar::setNodesRunning(bool running)
         return;
     }
     m_nodesRunning = running;
-    updateStartNodesButton();
+    updateDevicePill();
 }
 
 void TitleBar::setStartNodesBusy(bool busy)
@@ -209,14 +277,14 @@ void TitleBar::setStartNodesBusy(bool busy)
         return;
     }
     m_startNodesBusy = busy;
-    updateStartNodesButton();
+    updateDevicePill();
 }
 
 QPushButton *TitleBar::createUserChip()
 {
     auto *chip = new QPushButton(this);
     chip->setObjectName(QStringLiteral("titleUserChip"));
-    chip->setFixedSize(188, 42);
+    chip->setFixedSize(176, 42);
     chip->setCursor(Qt::PointingHandCursor);
     chip->setStyleSheet(QStringLiteral(R"(
         QPushButton#titleUserChip {
@@ -246,7 +314,7 @@ QPushButton *TitleBar::createUserChip()
     texts->setContentsMargins(0, 0, 0, 0);
     texts->setSpacing(0);
     m_userName = new QLabel(chip);
-    m_userName->setStyleSheet(QStringLiteral("color:%1;font-size:15px;font-weight:600;"
+    m_userName->setStyleSheet(QStringLiteral("color:%1;font-size:14px;font-weight:600;"
                                              "background:transparent;border:none;")
                                   .arg(Theme::kTextPrimary));
     m_userRole = new QLabel(chip);
@@ -256,12 +324,10 @@ QPushButton *TitleBar::createUserChip()
     texts->addStretch(1);
     layout->addLayout(texts, 1);
 
-    auto *arrow = new QLabel(QStringLiteral("▾"), chip);
-    arrow->setStyleSheet(QStringLiteral("color:%1;font-size:14px;background:transparent;border:none;")
-                             .arg(Theme::kTextMuted));
-    layout->addWidget(arrow);
+    m_userArrow = new QLabel(QStringLiteral("▾"), chip);
+    layout->addWidget(m_userArrow);
 
-    for (QLabel *label : {m_userAvatar, m_userName, m_userRole, arrow}) {
+    for (QLabel *label : {m_userAvatar, m_userName, m_userRole, m_userArrow}) {
         label->setAttribute(Qt::WA_TransparentForMouseEvents);
     }
     return chip;
@@ -269,6 +335,8 @@ QPushButton *TitleBar::createUserChip()
 
 void TitleBar::setUserIdentity(const QString &username, Role role)
 {
+    m_username = username;
+    m_role = role;
     if (!m_userButton) {
         return;
     }
@@ -289,7 +357,7 @@ void TitleBar::setUserIdentity(const QString &username, Role role)
                                                                              : Theme::kPanelBg)));
 
     const QFontMetrics metrics(m_userName->font());
-    m_userName->setText(loggedIn ? metrics.elidedText(username, Qt::ElideRight, 110)
+    m_userName->setText(loggedIn ? metrics.elidedText(username, Qt::ElideRight, 100)
                                  : QStringLiteral("未登录"));
     m_userRole->setText(loggedIn ? Auth::roleDisplayName(role) : QStringLiteral("点击登录"));
     m_userRole->setStyleSheet(QStringLiteral("color:%1;font-size:12px;background:transparent;border:none;")
@@ -300,35 +368,8 @@ void TitleBar::setUserIdentity(const QString &username, Role role)
                                  : QStringLiteral("登录以修改受权限控制的设置"));
 }
 
-void TitleBar::updateStartNodesButton()
-{
-    if (!m_startNodesButton) {
-        return;
-    }
-
-    if (m_nodesRunning) {
-        m_startNodesButton->setText(QStringLiteral("停止"));
-        m_startNodesButton->setToolTip(QStringLiteral("停止算法、相机、后端节点"));
-    } else {
-        m_startNodesButton->setText(QStringLiteral("启动"));
-        m_startNodesButton->setToolTip(QStringLiteral("启动算法、相机、后端节点"));
-    }
-    m_startNodesButton->setEnabled(!m_startNodesBusy);
-}
-
 bool TitleBar::eventFilter(QObject *watched, QEvent *event)
 {
-    if (watched == m_emergencyStopButton) {
-        if (event->type() == QEvent::MouseButtonDblClick) {
-            auto *mouseEvent = static_cast<QMouseEvent *>(event);
-            if (mouseEvent->button() == Qt::LeftButton) {
-                emit emergencyStopRequested();
-                return true;
-            }
-        }
-        return QFrame::eventFilter(watched, event);
-    }
-
     if (watched != this) {
         return QFrame::eventFilter(watched, event);
     }

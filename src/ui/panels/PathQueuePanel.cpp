@@ -1,0 +1,320 @@
+#include "ui/panels/PathQueuePanel.h"
+
+#include "ElaPushButton.h"
+#include "app/Theme.h"
+#include "app/UiHelpers.h"
+#include "ui/panels/DataStatisticsPanel.h"
+
+#include <QEvent>
+#include <QFontMetrics>
+#include <QHBoxLayout>
+#include <QHeaderView>
+#include <QLabel>
+#include <QStackedWidget>
+#include <QTableWidget>
+#include <QVBoxLayout>
+
+#include <cmath>
+
+namespace {
+
+enum Column {
+    ColIndex = 0,
+    ColType,
+    ColStart,
+    ColEnd,
+    ColLength,
+    ColSpindle,
+    ColFeed,
+    ColStatus,
+    ColCount,
+};
+
+} // namespace
+
+PathQueuePanel::PathQueuePanel(QWidget *parent)
+    : QFrame(parent)
+{
+    auto *header = new QWidget(this);
+    auto *headerLayout = new QHBoxLayout(header);
+    headerLayout->setContentsMargins(0, 0, 0, 0);
+    headerLayout->setSpacing(6);
+    m_summary = new QLabel(header);
+    m_summary->setStyleSheet(QStringLiteral("color:%1;font-size:12px;background:transparent;border:none;")
+                                 .arg(Theme::kTextSecondary));
+    headerLayout->addWidget(m_summary);
+    headerLayout->addSpacing(10);
+    m_queueButton = new ElaPushButton(QStringLiteral("修磨队列"), header);
+    m_curveButton = new ElaPushButton(QStringLiteral("动态曲线"), header);
+    for (ElaPushButton *button : {m_queueButton, m_curveButton}) {
+        button->setFixedSize(84, 26);
+        button->setCheckable(true);
+        headerLayout->addWidget(button);
+    }
+
+    auto *panel = createPanel(QStringLiteral("粒子修磨队列"), header, this);
+    auto *rootLayout = new QVBoxLayout(this);
+    rootLayout->setContentsMargins(0, 0, 0, 0);
+    rootLayout->addWidget(panel);
+    auto *panelLayout = qobject_cast<QVBoxLayout *>(panel->layout());
+
+    m_stack = new QStackedWidget(panel);
+    panelLayout->addWidget(m_stack, 1);
+
+    m_table = new QTableWidget(0, ColCount, m_stack);
+    m_table->setObjectName(QStringLiteral("queueTable"));
+    m_table->setHorizontalHeaderLabels({QStringLiteral("编号"),
+                                        QStringLiteral("类型"),
+                                        QStringLiteral("起点 X,Y (mm)"),
+                                        QStringLiteral("终点 X,Y (mm)"),
+                                        QStringLiteral("长度 (mm)"),
+                                        QStringLiteral("主轴 (rpm)"),
+                                        QStringLiteral("进给 (mm/min)"),
+                                        QStringLiteral("状态")});
+    m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_table->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_table->setAlternatingRowColors(true);
+    m_table->setShowGrid(false);
+    m_table->setFrameShape(QFrame::NoFrame);
+    m_table->verticalHeader()->setVisible(false);
+    m_table->verticalHeader()->setDefaultSectionSize(30);
+    m_table->horizontalHeader()->setHighlightSections(false);
+    m_table->horizontalHeader()->setDefaultAlignment(Qt::AlignCenter);
+    m_table->horizontalHeader()->setTextElideMode(Qt::ElideNone);
+    m_table->horizontalHeader()->setStretchLastSection(false);
+    m_table->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+    m_table->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_table->viewport()->installEventFilter(this);
+    layoutQueueColumns();
+    m_table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    m_table->setStyleSheet(QStringLiteral(
+                               "QTableWidget#queueTable {"
+                               "  background:%1; color:%2; gridline-color:%3; border:none;"
+                               "  alternate-background-color:%4; selection-background-color:%5; selection-color:%2;"
+                               "}"
+                               "QTableWidget#queueTable::item { padding:2px 8px; }"
+                               "QHeaderView::section {"
+                               "  background:%1; color:%6; padding:6px 0px; border:none;"
+                               "  border-bottom:1px solid %3; font-weight:600;"
+                               "}")
+                               .arg(Theme::kPanelBg,
+                                    Theme::kTextPrimary,
+                                    Theme::kBorder,
+                                    Theme::kControlBg,
+                                    Theme::kSelectionBg,
+                                    Theme::kTextSecondary));
+    m_stack->addWidget(m_table);
+
+    m_telemetry = new DataStatisticsPanel(m_stack, /*framed=*/false);
+    m_stack->addWidget(m_telemetry);
+
+    connect(m_queueButton, &ElaPushButton::clicked, this, [this]() { showQueue(true); });
+    connect(m_curveButton, &ElaPushButton::clicked, this, [this]() { showQueue(false); });
+    connect(m_table, &QTableWidget::currentCellChanged, this, [this](int row, int, int, int) {
+        if (m_updatingSelection || row < 0 || row >= m_paths.size()) {
+            return;
+        }
+        emit pathSelected(row);
+    });
+
+    showQueue(true);
+    clear();
+    Theme::watch(this, [this]() {
+        if (m_summary) {
+            m_summary->setStyleSheet(QStringLiteral("color:%1;font-size:12px;background:transparent;border:none;")
+                                         .arg(Theme::kTextSecondary));
+        }
+        if (m_table) {
+            m_table->setStyleSheet(QStringLiteral(
+                                       "QTableWidget#queueTable {"
+                                       "  background:%1; color:%2; gridline-color:%3; border:none;"
+                                       "  alternate-background-color:%4; selection-background-color:%5; selection-color:%2;"
+                                       "}"
+                                       "QTableWidget#queueTable::item { padding:2px 8px; }"
+                                       "QHeaderView::section {"
+                                       "  background:%1; color:%6; padding:6px 0px; border:none;"
+                                       "  border-bottom:1px solid %3; font-weight:600;"
+                                       "}")
+                                       .arg(Theme::kPanelBg,
+                                            Theme::kTextPrimary,
+                                            Theme::kBorder,
+                                            Theme::kControlBg,
+                                            Theme::kSelectionBg,
+                                            Theme::kTextSecondary));
+        }
+        showQueue(m_stack && m_stack->currentWidget() == m_table);
+    });
+}
+
+void PathQueuePanel::layoutQueueColumns()
+{
+    if (!m_table || m_layingOutColumns) {
+        return;
+    }
+    m_layingOutColumns = true;
+
+    auto *header = m_table->horizontalHeader();
+    QFont font = header->font();
+    font.setBold(true);
+    const QFontMetrics metrics(font);
+    QVector<int> widths(ColCount);
+    int sum = 0;
+    for (int column = 0; column < ColCount; ++column) {
+        const QString text = m_table->model()->headerData(column, Qt::Horizontal).toString();
+        widths[column] = metrics.horizontalAdvance(text) + 28;
+        sum += widths[column];
+    }
+    const int available = m_table->viewport()->width();
+    if (available > sum) {
+        const int extra = available - sum;
+        widths[ColStart] += extra / 2;
+        widths[ColEnd] += extra - extra / 2;
+    }
+    header->setSectionResizeMode(QHeaderView::Fixed);
+    for (int column = 0; column < ColCount; ++column) {
+        m_table->setColumnWidth(column, widths[column]);
+    }
+    m_layingOutColumns = false;
+}
+
+bool PathQueuePanel::eventFilter(QObject *watched, QEvent *event)
+{
+    if (m_table && watched == m_table->viewport() && event->type() == QEvent::Resize) {
+        layoutQueueColumns();
+    }
+    return QFrame::eventFilter(watched, event);
+}
+
+void PathQueuePanel::showQueue(bool queue)
+{
+    m_stack->setCurrentWidget(queue ? static_cast<QWidget *>(m_table) : static_cast<QWidget *>(m_telemetry));
+    const auto style = [](ElaPushButton *button, bool active) {
+        button->setChecked(active);
+        active ? applyPrimaryButtonStyle(button) : applySecondaryButtonStyle(button);
+        button->update();
+    };
+    style(m_queueButton, queue);
+    style(m_curveButton, !queue);
+}
+
+QString PathQueuePanel::metricPoint(int u, int v) const
+{
+    if (!m_frame.hasMetricGeometry) {
+        return QStringLiteral("%1, %2 px").arg(u).arg(v);
+    }
+    const double x = m_frame.xOffsetMm + u * m_frame.xScaleMm;
+    const double y = m_frame.yOffsetMm + v * m_frame.yScaleMm;
+    return QStringLiteral("%1, %2").arg(x, 0, 'f', 1).arg(y, 0, 'f', 1);
+}
+
+void PathQueuePanel::setMillingPaths(const QVector<MillingPathVM> &paths)
+{
+    m_paths = paths;
+    m_completed = 0;
+    m_current = 0;
+    rebuildRows();
+}
+
+void PathQueuePanel::setMetricFrame(const PointCloudFrame &frame)
+{
+    m_frame = frame;
+    rebuildRows();
+}
+
+void PathQueuePanel::setPathProgress(int completedPath, int currentPath)
+{
+    if (m_completed == completedPath && m_current == currentPath) {
+        return;
+    }
+    m_completed = completedPath;
+    m_current = currentPath;
+    refreshStatusColumn();
+    if (m_current > 0 && m_current <= m_paths.size()) {
+        m_table->scrollToItem(m_table->item(m_current - 1, ColIndex), QAbstractItemView::EnsureVisible);
+    }
+}
+
+void PathQueuePanel::selectPath(int pathIndex)
+{
+    if (pathIndex < 0 || pathIndex >= m_paths.size()) {
+        return;
+    }
+    m_updatingSelection = true;
+    m_table->selectRow(pathIndex);
+    m_table->scrollToItem(m_table->item(pathIndex, ColIndex), QAbstractItemView::PositionAtCenter);
+    m_updatingSelection = false;
+}
+
+void PathQueuePanel::clear()
+{
+    m_paths.clear();
+    m_frame = PointCloudFrame();
+    m_completed = 0;
+    m_current = 0;
+    rebuildRows();
+}
+
+void PathQueuePanel::rebuildRows()
+{
+    m_updatingSelection = true;
+    m_table->setRowCount(m_paths.size());
+    int cut = 0;
+    const double scale = m_frame.hasMetricGeometry
+                             ? (std::abs(m_frame.xScaleMm) + std::abs(m_frame.yScaleMm)) / 2.0
+                             : 0.0;
+    for (int i = 0; i < m_paths.size(); ++i) {
+        const MillingPathVM &path = m_paths.at(i);
+        if (path.doCut) {
+            ++cut;
+        }
+        const double lengthPx = std::hypot(double(path.uEnd - path.uStart), double(path.vEnd - path.vStart));
+        const QStringList cells{
+            QStringLiteral("%1").arg(i + 1, 2, 10, QLatin1Char('0')),
+            path.doCut ? QStringLiteral("切削") : QStringLiteral("空移"),
+            metricPoint(path.uStart, path.vStart),
+            metricPoint(path.uEnd, path.vEnd),
+            scale > 0.0 ? QString::number(lengthPx * scale, 'f', 1) : QStringLiteral("%1 px").arg(lengthPx, 0, 'f', 0),
+            path.rSpeed > 0.0f ? QString::number(double(path.rSpeed), 'f', 0) : QStringLiteral("--"),
+            QString::number(std::hypot(double(path.xSpeed), double(path.ySpeed)), 'f', 1),
+            QString(),
+        };
+        for (int column = 0; column < cells.size(); ++column) {
+            auto *item = new QTableWidgetItem(cells.at(column));
+            item->setTextAlignment(column == ColIndex || column == ColType || column == ColStatus
+                                       ? Qt::AlignCenter
+                                       : (Qt::AlignRight | Qt::AlignVCenter));
+            if (column == ColType) {
+                item->setForeground(QColor(path.doCut ? Theme::kStateWarning : Theme::kStateSuccess));
+            }
+            m_table->setItem(i, column, item);
+        }
+    }
+    m_updatingSelection = false;
+    refreshStatusColumn();
+    m_summary->setText(m_paths.isEmpty()
+                           ? QStringLiteral("暂无任务")
+                           : QStringLiteral("共 %1 条 · 切削 %2 · 空移 %3")
+                                 .arg(m_paths.size()).arg(cut).arg(m_paths.size() - cut));
+}
+
+void PathQueuePanel::refreshStatusColumn()
+{
+    for (int i = 0; i < m_paths.size(); ++i) {
+        QTableWidgetItem *item = m_table->item(i, ColStatus);
+        if (!item) {
+            continue;
+        }
+        const bool cutting = m_paths.at(i).doCut;
+        if (i < m_completed) {
+            item->setText(QStringLiteral("已完成"));
+            item->setForeground(QColor(Theme::kStateSuccess));
+        } else if (m_current > 0 && i == m_current - 1) {
+            item->setText(cutting ? QStringLiteral("修磨中") : QStringLiteral("移动中"));
+            item->setForeground(QColor(Theme::kStateRunning));
+        } else {
+            item->setText(cutting ? QStringLiteral("待修磨") : QStringLiteral("待执行"));
+            item->setForeground(QColor(Theme::kTextMuted));
+        }
+    }
+}

@@ -7,17 +7,23 @@
 
 #include <QColor>
 #include <QFont>
+#include <QVariant>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
+#include <QPainter>
 #include <QVBoxLayout>
+
+#include <cmath>
 
 namespace {
 
-const QColor kButtonDefault(Theme::kAccent);
-const QColor kButtonHover = QColor(Theme::kAccent).lighter(112);
-const QColor kButtonPress = QColor(Theme::kAccent).darker(118);
-const QColor kButtonText(Theme::kTextPrimary);
+// 主题色在 main() 里才确定，不能在静态初始化期取值。
+#define kButtonDefault QColor(Theme::kAccentFill)
+#define kButtonHover QColor(Theme::kAccentFill).lighter(112)
+#define kButtonPress QColor(Theme::kAccentFill).darker(118)
+#define kButtonText QColor(Theme::kOnAccentFill)
 
 QString pillStyle(const QString &state)
 {
@@ -103,6 +109,24 @@ QLabel *makeLabel(const QString &text, const QString &objectName)
     return label;
 }
 
+QPixmap tintedIcon(const QString &resource, const QColor &color, int size, qreal devicePixelRatio)
+{
+    const int pixels = qMax(1, int(std::lround(size * devicePixelRatio)));
+    QPixmap base = QIcon(resource).pixmap(QSize(pixels, pixels));
+    if (base.isNull()) {
+        return base;
+    }
+    QPixmap tinted(base.size());
+    tinted.fill(Qt::transparent);
+    QPainter painter(&tinted);
+    painter.drawPixmap(0, 0, base);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+    painter.fillRect(tinted.rect(), color);
+    painter.end();
+    tinted.setDevicePixelRatio(devicePixelRatio);
+    return tinted;
+}
+
 QFrame *createPanel(const QString &title, QWidget *headerWidget, QWidget *parent)
 {
     auto *panel = new QFrame(parent);
@@ -123,7 +147,11 @@ QFrame *createPanel(const QString &title, QWidget *headerWidget, QWidget *parent
 
     auto *divider = new QFrame(panel);
     divider->setFixedHeight(1);
-    divider->setStyleSheet(QString("background:%1;border:none;").arg(Theme::kDivider));
+    const auto paintDivider = [divider]() {
+        divider->setStyleSheet(QString("background:%1;border:none;").arg(Theme::kDivider));
+    };
+    paintDivider();
+    Theme::watch(divider, paintDivider);
     layout->addWidget(divider);
 
     return panel;
@@ -155,6 +183,7 @@ QWidget *createStatusPill(const QString &text, const QString &state, QWidget *pa
 
 void applyPrimaryButtonStyle(ElaPushButton *button)
 {
+    button->setProperty("mztlzButtonRole", QStringLiteral("primary"));
     button->setBorderRadius(6);
     button->setLightDefaultColor(kButtonDefault);
     button->setDarkDefaultColor(kButtonDefault);
@@ -168,6 +197,7 @@ void applyPrimaryButtonStyle(ElaPushButton *button)
 
 void applySecondaryButtonStyle(ElaPushButton *button)
 {
+    button->setProperty("mztlzButtonRole", QStringLiteral("secondary"));
     button->setBorderRadius(6);
     button->setLightDefaultColor(QColor(Theme::kControlBg));
     button->setDarkDefaultColor(QColor(Theme::kControlBg));

@@ -4,6 +4,8 @@
 #include "data/DatabaseBootstrap.h"
 #include "data/InspectionRepository.h"
 #include "app/Logger.h"
+#include "app/AppStyle.h"
+#include "app/Theme.h"
 
 #include "ElaApplication.h"
 #include "ElaMessageBar.h"
@@ -12,6 +14,9 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include <QApplication>
+#include <QCoreApplication>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QDir>
 #include <QFileInfo>
 #include <QStringList>
@@ -98,15 +103,31 @@ int main(int argc, char *argv[])
         qFatal("rclcpp::init failed: %s", ex.what());
         return 1;
     }
+    QCoreApplication::setAttribute(Qt::AA_UseDesktopOpenGL);
     QApplication a(argc, argv);
     Logger::init("logs");
     LOG("程序启动");
 
     eApp->init();
-    eTheme->setThemeMode(ElaThemeType::Dark);
+    Theme::load();
+    applyRuntimeTheme();
 
     MainWindow w;
-    w.showMaximized();
+    if (QScreen *screen = QGuiApplication::primaryScreen()) {
+        const QRect available = screen->availableGeometry();
+        w.setMinimumSize(qMin(1500, available.width()), qMin(920, available.height()));
+        if (available.width() >= Theme::kDesignWidth && available.height() >= Theme::kDesignHeight) {
+            w.resize(Theme::kDesignWidth, Theme::kDesignHeight);
+            w.move(available.x() + (available.width() - Theme::kDesignWidth) / 2,
+                   available.y() + (available.height() - Theme::kDesignHeight) / 2);
+            w.show();
+        } else {
+            w.showMaximized();
+        }
+    } else {
+        w.resize(Theme::kDesignWidth, Theme::kDesignHeight);
+        w.show();
+    }
 
     // 数据库引导在后台线程执行，避免登录超时阻塞 GUI 事件循环。
     const auto databaseBootstrapResult = std::make_shared<DatabaseBootstrapResult>();

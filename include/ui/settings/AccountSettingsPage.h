@@ -6,7 +6,6 @@
 class ElaPushButton;
 class QLabel;
 class QSpinBox;
-class QTabWidget;
 class QTableWidget;
 
 class AccountSettingsPage : public SettingsSubPage
@@ -17,7 +16,7 @@ public:
     explicit AccountSettingsPage(QWidget *parent = nullptr);
 
     QString bindingSummary() const override;
-    // 页底「保存 / 取消 / 默认」只对会话超时有效，因此只在「会话与锁定」页签显示。
+    // 保存区控制本页会话超时策略。
     bool isEditable() const override;
     bool isDirty() const override;
     SettingsSaveOutcome save() override;
@@ -54,8 +53,6 @@ private:
     ElaPushButton *m_logoutButton{nullptr};
     ElaPushButton *m_changePasswordButton{nullptr};
 
-    QTabWidget *m_tabs{nullptr};
-    int m_sessionTabIndex{-1};
     QSpinBox *m_sessionTimeout{nullptr};
     int m_loadedTimeout{0};
 

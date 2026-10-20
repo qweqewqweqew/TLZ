@@ -10,11 +10,14 @@
 #include <QtGui/qwindowdefs.h>
 
 class ElaPushButton;
-class HeightMap3DFrame;
 class HikLiveView;
 class ImageViewFrame;
+class QLabel;
 class QStackedWidget;
+class QToolButton;
 
+// 「铜板粒子分布」卡：2D 强度图 + 路径叠加，可切到海康实时画面 / 算法标注图。
+// 3D 高度图在右侧「选中粒子」卡里单独显示。
 class ImageDisplayPanel : public QFrame
 {
     Q_OBJECT
@@ -23,11 +26,7 @@ public:
     explicit ImageDisplayPanel(QWidget *parent = nullptr);
 
     // 更新一帧图像。任一入参可以为空 QImage 表示"这一路没有数据"。
-    // frameId / timestampNs 用于覆盖层文本，传 0 表示不显示。
     void updateScanFrame(const PointCloudFrame &frame);
-
-    // 调试演示入口：切换到三维高度视图或恢复二维视图。
-    void showHeight3D();
     void show2D();
     void setLiveCameraStatus(bool connected, const QString &message);
 
@@ -46,6 +45,11 @@ public:
     void setAlgorithmImagePath(const QString &path);
     void clearAlgorithmImage();
 
+    // 卡头「板号」与页脚任务摘要
+    void setTaskId(quint64 taskId);
+    void setProgressSummary(int completedPath, int pathTotal, float progressPercent);
+    void clearTask();
+
     // 供日志使用：当前图像区显示模式。
     QString currentViewModeName() const;
 
@@ -53,30 +57,38 @@ signals:
     void liveViewRequested(bool active, WId targetWindow);
     // 2D 图上单击路径线：0-based。
     void millingPathClicked(int pathIndex);
+    // 工具栏「修磨演示」：与 Ctrl+T 相同的调试演示开关。
+    void demoToggleRequested();
 
 private:
-    enum class ViewMode { View2D, Height3D, LiveVideo, AlgorithmImage };
+    enum class ViewMode { View2D, LiveVideo, AlgorithmImage };
     void setViewMode(ViewMode mode);
     void refreshView();
     void applyViewButtonStyles();
+    void refreshPathSummary();
+    QToolButton *makeToolButton(const QString &iconResource, const QString &tooltip, QWidget *parent);
 
     ImageViewFrame *m_imageArea{nullptr};
     ImageViewFrame *m_algorithmImageArea{nullptr};
-    HeightMap3DFrame *m_heightMapArea{nullptr};
     HikLiveView *m_liveViewArea{nullptr};
     QStackedWidget *m_viewStack{nullptr};
     ElaPushButton *m_view2dButton{nullptr};
-    ElaPushButton *m_view3dButton{nullptr};
     ElaPushButton *m_liveViewButton{nullptr};
     ElaPushButton *m_algorithmImageButton{nullptr};
+    ElaPushButton *m_demoButton{nullptr};
+    QLabel *m_boardLabel{nullptr};
+    QLabel *m_footerLeft{nullptr};
+    QLabel *m_footerRight{nullptr};
 
     QImage m_rangeImage;      // Range，Mono16 → Grayscale8（拉伸后）
     QImage m_intensityImage;  // Intensity，Mono8
     QImage m_algorithmImage;
     QString m_algorithmImagePath;
     PointCloudFrame m_pointCloudFrame;
+    QVector<MillingPathVM> m_paths;
     quint64 m_lastFrameId{0};
     quint64 m_lastTimestampNs{0};
+    quint64 m_taskId{0};
     ViewMode m_mode{ViewMode::View2D};
 };
 

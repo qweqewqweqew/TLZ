@@ -40,13 +40,14 @@ AboutSettingsPage::AboutSettingsPage(QWidget *parent)
     QFormLayout *versionForm = settingsFormLayout(versionHost);
     const auto addInfo = [versionForm, versionHost](const QString &name, const QString &value) {
         auto *label = settingsHint(value, versionHost);
-        label->setStyleSheet(QStringLiteral(
-                                 "color:%1;font-size:14px;border:none;background:transparent;")
-                                 .arg(Theme::kTextPrimary));
+        Theme::bindStyle(label, []() {
+            return QStringLiteral("color:%1;font-size:14px;border:none;background:transparent;")
+                .arg(Theme::kTextPrimary);
+        });
         addSettingsField(versionForm, name, label, QString(), versionHost);
     };
-    addInfo(QStringLiteral("名称"), QStringLiteral("阴级铜表面粒子智能修整系统（MzTLZ）"));
-    addInfo(QStringLiteral("版本号"), QStringLiteral("未定义（CMake project 没有 VERSION）"));
+    addInfo(QStringLiteral("名称"), QStringLiteral("阴极铜板粒子检测及修磨系统（MzTLZ）"));
+    addInfo(QStringLiteral("版本号"), QStringLiteral("v" MZTLZ_VERSION_STRING));
     addInfo(QStringLiteral("范围"), QStringLiteral("打磨机构上位机，不含整线画面和威纶通 HMI"));
     qobject_cast<QVBoxLayout *>(version->layout())->addWidget(versionHost);
     versionTab->addWidget(version);

@@ -1,12 +1,16 @@
 #ifndef HISTORYDIALOG_H
 #define HISTORYDIALOG_H
 
+#include "data/InspectionRepository.h"
+
 #include <QDialog>
 
 class ElaComboBox;
 class ElaPushButton;
 class QDateEdit;
 class QLabel;
+class QLineEdit;
+class QPushButton;
 class QScrollArea;
 class QSplitter;
 class QStackedWidget;
@@ -37,33 +41,44 @@ private:
     QWidget *buildTableCard();
 
     QLabel *makeTileValue(QWidget *tile);
-    QWidget *makeTile(const QString &title, const QString &suffix, QLabel *&valueLabelOut);
+    QWidget *makeTile(const QString &title, const QString &suffix, const QString &valueColor,
+                      QLabel *&valueLabelOut);
 
-    void populateRecipeCombo();
     void updateSummary(const struct HistorySummary &s);
-    void populateTable(const class QList<struct InspectionRecordRow> &rows);
+    void populateTable(const QList<InspectionRecordRow> &rows);
     void updateMainTableColumnWidths();
+    void renderPage();
+    void exportCurrentList();
 
-    void updateCustomRangeEnabled();
     void showDetailPlaceholder(const QString &message);
     void showDetailForRecord(int recordId);
+    void openReviewPage(int recordId);
     QWidget *createDetailWidget(int recordId);
     int findRowByRecordId(int recordId) const;
 
     // Filters
-    ElaComboBox   *m_rangeCombo{nullptr};
-    ElaComboBox   *m_recipeCombo{nullptr};
-    QDateEdit     *m_customFrom{nullptr};
-    QDateEdit     *m_customTo{nullptr};
-    QLabel        *m_customDash{nullptr};
+    QDateEdit     *m_from{nullptr};
+    QDateEdit     *m_to{nullptr};
+    QLineEdit     *m_plateEdit{nullptr};
+    ElaComboBox   *m_shiftCombo{nullptr};
+    ElaComboBox   *m_statusCombo{nullptr};
     ElaPushButton *m_refreshButton{nullptr};
-    ElaPushButton *m_closeButton{nullptr};   // 保留但不再挂到界面上
+    ElaPushButton *m_resetButton{nullptr};
+    QPushButton *m_exportButton{nullptr};
+    bool m_splitterSized{false};
 
     // Summary tiles
     QLabel *m_tileTaskCount{nullptr};
     QLabel *m_tileParticles{nullptr};
     QLabel *m_tileClearRate{nullptr};
-    QLabel *m_tileMaxHeight{nullptr};
+    QLabel *m_tilePending{nullptr};
+
+    QList<InspectionRecordRow> m_filtered;
+    int m_page{0};
+    ElaPushButton *m_prevPage{nullptr};
+    ElaPushButton *m_nextPage{nullptr};
+    QLabel *m_pageLabel{nullptr};
+    QLabel *m_totalLabel{nullptr};
 
     // Body
     QLabel         *m_statusLabel{nullptr};

@@ -15,8 +15,10 @@
 #include <QPen>
 #include <QPointF>
 #include <QLineF>
+#include <QResizeEvent>
 #include <QVector>
 #include <QRect>
+#include <QTimer>
 #include <QToolTip>
 #include <QWheelEvent>
 
@@ -59,25 +61,63 @@ double distancePointToSegment(const QPointF &p,
 
 } // namespace
 
+class DynamicLayer : public QWidget
+{
+public:
+    explicit DynamicLayer(ImageViewFrame *host)
+        : QWidget(host)
+        , m_host(host)
+    {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setAttribute(Qt::WA_NoSystemBackground);
+        setAttribute(Qt::WA_OpaquePaintEvent);
+        setAutoFillBackground(false);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        QPainter painter(this);
+        painter.setClipRegion(event->region());
+        m_host->paintDynamic(painter);
+    }
+
+private:
+    ImageViewFrame *m_host;
+};
+
 ImageViewFrame::ImageViewFrame(QWidget *parent)
     : QFrame(parent)
 {
     setMouseTracking(true);
+    m_dynamic = new DynamicLayer(this);
+    m_dynamic->setGeometry(rect());
+    m_dynamic->raise();
+    Theme::watch(this, [this]() {
+        m_viewCacheDirty = true;
+        update();
+        refreshDynamic();
+    });
 }
 
 void ImageViewFrame::setImage(const QImage &image)
 {
     const QSize previousSize = m_image.size();
     m_image = image;
+    m_viewCacheDirty = true;
     if (m_image.isNull() || previousSize != m_image.size()) {
         resetView();
-        m_grindLayer = QImage();
+        m_basePixmap = QPixmap();
+        m_baseImageKey = 0;
         m_hasActiveGrindPath = false;
         m_activeGrindPath = QPainterPath();
         m_grindPaths.clear();
     }
     // 同尺寸新帧也强制立即重绘，避免只靠 update() 被合并后看起来“没刷新”。
     repaint();
+    if (m_dynamic) {
+        m_dynamic->repaint();
+    }
 }
 
 void ImageViewFrame::clearImage()
@@ -92,7 +132,7 @@ void ImageViewFrame::setOverlayText(const QString &text)
         return;
     }
     m_overlayText = text;
-    update();
+    refreshDynamic();
 }
 
 void ImageViewFrame::setMillingPaths(const QVector<MillingPathVM> &paths)
@@ -101,7 +141,7 @@ void ImageViewFrame::setMillingPaths(const QVector<MillingPathVM> &paths)
     m_hoveredPathIndex = -1;
     m_tooltipPathIndex = -1;
     QToolTip::hideText();
-    update();
+    refreshDynamic();
 }
 
 void ImageViewFrame::clearMillingPaths()
@@ -110,7 +150,7 @@ void ImageViewFrame::clearMillingPaths()
     m_hoveredPathIndex = -1;
     m_tooltipPathIndex = -1;
     QToolTip::hideText();
-    update();
+    refreshDynamic();
 }
 
 void ImageViewFrame::setMetricFrame(const PointCloudFrame &frame)
@@ -121,7 +161,7 @@ void ImageViewFrame::setMetricFrame(const PointCloudFrame &frame)
         updateHoverCoordinate(m_hoverWidgetPos);
     }
     if (m_toolPoseValid) {
-        update();
+        refreshDynamic();
     }
 }
 
@@ -187,13 +227,13 @@ void ImageViewFrame::setToolPose(double xMm, double yMm, double zMm, bool valid,
 
 void ImageViewFrame::clearGrindLayer()
 {
-    breakGrindStroke();
+    const bool hadStroke = m_hasActiveGrindPath || !m_grindPaths.isEmpty();
+    m_hasActiveGrindPath = false;
+    m_activeGrindPath = QPainterPath();
     m_grindPaths.clear();
-    if (m_grindLayer.isNull()) {
-        return;
+    if (hadStroke) {
+        refreshDynamic();
     }
-    m_grindLayer = QImage();
-    update();
 }
 
 void ImageViewFrame::breakGrindStroke()
@@ -205,79 +245,72 @@ void ImageViewFrame::breakGrindStroke()
     m_activeGrindPath = QPainterPath();
 }
 
-void ImageViewFrame::ensureGrindLayer()
+void ImageViewFrame::noteInteraction()
 {
-    if (m_image.isNull()) {
-        return;
+    m_interacting = true;
+    if (!m_interactionTimer) {
+        m_interactionTimer = new QTimer(this);
+        m_interactionTimer->setSingleShot(true);
+        connect(m_interactionTimer, &QTimer::timeout, this, [this]() {
+            m_interacting = false;
+            m_viewCacheDirty = true;
+            update();
+        });
     }
-    if (m_grindLayer.size() != m_image.size()
-        || m_grindLayer.format() != QImage::Format_ARGB32_Premultiplied) {
-        m_grindLayer = QImage(m_image.size(), QImage::Format_ARGB32_Premultiplied);
-        m_grindLayer.fill(Qt::transparent);
-    }
+    m_interactionTimer->start(90);
 }
 
-void ImageViewFrame::rebuildGrindLayer()
+void ImageViewFrame::ensureBasePixmap(const QSize &pixelSize)
 {
-    if (m_image.isNull()) {
+    if (pixelSize.isEmpty() || m_image.isNull()) {
         return;
     }
-    ensureGrindLayer();
-    m_grindLayer.fill(Qt::transparent);
-
-    // Stroke width ~ drill indicator diameter (~20px on screen).
-    double sx = 1.0;
-    if (!m_lastImageRect.isEmpty() && m_lastImageSize.width() > 0) {
-        sx = double(m_lastImageRect.width()) / double(m_lastImageSize.width());
+    if (!m_basePixmap.isNull() && m_baseImageKey == m_image.cacheKey()
+        && m_basePixelSize == pixelSize) {
+        return;
     }
-    double penW = 20.0 / qMax(sx, 0.05);
-    penW = qBound(16.0, penW, 96.0);
+    QImage scaled = m_image.scaled(pixelSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    m_basePixmap = QPixmap::fromImage(scaled);
+    m_baseImageKey = m_image.cacheKey();
+    m_basePixelSize = pixelSize;
+}
 
-    QPainter gp(&m_grindLayer);
-    gp.setRenderHint(QPainter::Antialiasing, true);
-    gp.setCompositionMode(QPainter::CompositionMode_SourceOver);
-    QColor ink(Theme::kAccent);
-    ink.setAlpha(85); // ~33% perceived; texture remains readable
-    QPen pen(ink, penW, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    gp.setPen(pen);
-    gp.setBrush(Qt::NoBrush);
+void ImageViewFrame::drawGrindPaths(QPainter &painter,
+                                    const QRectF &dstRect,
+                                    const QRect &clip) const
+{
+    if (dstRect.isEmpty() || m_image.isNull()) {
+        return;
+    }
+    if (m_grindPaths.isEmpty() && !m_hasActiveGrindPath) {
+        return;
+    }
 
+    painter.save();
+    painter.setClipRect(dstRect.intersected(QRectF(clip)));
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QTransform xform;
+    xform.translate(dstRect.left(), dstRect.top());
+    xform.scale(dstRect.width() / double(m_image.width()),
+                dstRect.height() / double(m_image.height()));
+    painter.setTransform(xform, true);
+
+    // 线宽按屏幕像素，不随视图缩放变粗。位置仍贴在铜板像素上。
+    QColor ink(Theme::markColor());
+    ink.setAlpha(150);
+    QPen pen(ink, 18.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    pen.setCosmetic(true);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
     for (const QPainterPath &path : m_grindPaths) {
         if (!path.isEmpty()) {
-            gp.drawPath(path);
+            painter.drawPath(path);
         }
     }
     if (m_hasActiveGrindPath && !m_activeGrindPath.isEmpty()) {
-        gp.drawPath(m_activeGrindPath);
+        painter.drawPath(m_activeGrindPath);
     }
-}
-
-void ImageViewFrame::drawIncrementalStroke(const QPointF &from, const QPointF &to)
-{
-    if (m_image.isNull()) {
-        return;
-    }
-    ensureGrindLayer();
-
-    // Calculate pen width matching rebuildGrindLayer logic.
-    double sx = 1.0;
-    if (!m_lastImageRect.isEmpty() && m_lastImageSize.width() > 0) {
-        sx = double(m_lastImageRect.width()) / double(m_lastImageSize.width());
-    }
-    double penW = 20.0 / qMax(sx, 0.05);
-    penW = qBound(16.0, penW, 96.0);
-
-    QPainter gp(&m_grindLayer);
-    gp.setRenderHint(QPainter::Antialiasing, true);
-    gp.setCompositionMode(QPainter::CompositionMode_SourceOver);
-    QColor ink(Theme::kAccent);
-    ink.setAlpha(85);
-    QPen pen(ink, penW, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    gp.setPen(pen);
-    gp.setBrush(Qt::NoBrush);
-
-    // Draw only the new line segment.
-    gp.drawLine(from, to);
+    painter.restore();
 }
 
 void ImageViewFrame::strokeGrindToImageUv(double u, double v)
@@ -290,7 +323,6 @@ void ImageViewFrame::strokeGrindToImageUv(double u, double v)
         m_activeGrindPath = QPainterPath();
         m_activeGrindPath.moveTo(cur);
         m_hasActiveGrindPath = true;
-        ensureGrindLayer();
         return;
     }
 
@@ -299,12 +331,7 @@ void ImageViewFrame::strokeGrindToImageUv(double u, double v)
         return;
     }
 
-    const QPointF prev = m_activeGrindPath.currentPosition();
     m_activeGrindPath.lineTo(cur);
-
-    // Incremental drawing: only paint the new segment, not the entire layer.
-    // This changes O(n) full redraws to O(1) per tick.
-    drawIncrementalStroke(prev, cur);
 }
 
 void ImageViewFrame::setPathProgress(int completedPath, int currentPath)
@@ -316,28 +343,40 @@ void ImageViewFrame::setPathProgress(int completedPath, int currentPath)
     }
     m_completedPathCount = completed;
     m_currentPathOneBased = current;
-    requestPoseUpdate();
+    refreshDynamic();
 }
 
 void ImageViewFrame::requestPoseUpdate()
 {
-    // PLC can be high-rate; Qt already coalesces update() into one paint per event-loop pass.
-    // Still gate hard repaints to ~30 Hz so we do not flood when the event loop is idle.
+    // 只刷新刀具和最新刀路经过的区域，底图缓存不动。
+    const auto fire = [this]() {
+        const QRect next = toolPoseDirtyRect();
+        if (next.isEmpty()) {
+            m_lastDynamicDirty = QRect();
+            refreshDynamic();
+            return;
+        }
+        const QRect previous = m_lastDynamicDirty;
+        m_lastDynamicDirty = next;
+        invalidateDynamic(previous);
+        invalidateDynamic(next);
+    };
+
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (m_lastPoseUpdateMs > 0 && (now - m_lastPoseUpdateMs) < 33) {
         if (!m_poseUpdatePending) {
             m_poseUpdatePending = true;
-            QMetaObject::invokeMethod(this, [this]() {
+            QMetaObject::invokeMethod(this, [this, fire]() {
                 m_poseUpdatePending = false;
                 m_lastPoseUpdateMs = QDateTime::currentMSecsSinceEpoch();
-                update();
+                fire();
             }, Qt::QueuedConnection);
         }
         return;
     }
     m_lastPoseUpdateMs = now;
     m_poseUpdatePending = false;
-    update();
+    fire();
 }
 
 void ImageViewFrame::recomputeToolPoseMapping()
@@ -452,7 +491,9 @@ void ImageViewFrame::resetView()
     m_hoverCoordinateText.clear();
     QToolTip::hideText();
     setCursor(m_image.isNull() ? Qt::ArrowCursor : Qt::OpenHandCursor);
+    m_viewCacheDirty = true;
     update();
+    refreshDynamic();
 }
 
 void ImageViewFrame::clampPanOffset()
@@ -502,29 +543,80 @@ QPoint ImageViewFrame::mapWidgetToImage(const QPointF &widgetPos) const
     return QPoint(u, v);
 }
 
+QRect ImageViewFrame::hoverBoxRect(const QPointF &anchor,
+                                   const QString &text,
+                                   const QRect &area) const
+{
+    if (text.isEmpty() || area.isEmpty()) {
+        return QRect();
+    }
+    QFont hoverFont(QStringLiteral("Microsoft YaHei"));
+    hoverFont.setPixelSize(13);
+    QFont valueFont = hoverFont;
+    valueFont.setBold(true);
+    const QFontMetrics labelMetrics(hoverFont);
+    const QFontMetrics valueMetrics(valueFont);
+    int maxValueWidth = 0;
+    int lineCount = 0;
+    const QStringList lines = text.split(QLatin1Char('\n'));
+    for (const QString &line : lines) {
+        const int split = line.indexOf(QLatin1Char(' '));
+        const QString value = split < 0 ? line : line.mid(split + 1).trimmed();
+        maxValueWidth = qMax(maxValueWidth, valueMetrics.horizontalAdvance(value));
+        ++lineCount;
+    }
+    constexpr int kLabelWidth = 40;
+    const QSize boxSize(10 + kLabelWidth + 8 + maxValueWidth + 12,
+                        8 + lineCount * (labelMetrics.height() + 2) + 6);
+    QPoint topLeft = anchor.toPoint() + QPoint(16, 18);
+    if (topLeft.x() + boxSize.width() > area.right() - 4) {
+        topLeft.setX(anchor.toPoint().x() - boxSize.width() - 14);
+    }
+    if (topLeft.y() + boxSize.height() > area.bottom() - 4) {
+        topLeft.setY(anchor.toPoint().y() - boxSize.height() - 14);
+    }
+    topLeft.setX(qBound(area.left() + 4, topLeft.x(), qMax(area.left() + 4, area.right() - boxSize.width() - 4)));
+    topLeft.setY(qBound(area.top() + 4, topLeft.y(), qMax(area.top() + 4, area.bottom() - boxSize.height() - 4)));
+    return QRect(topLeft, boxSize);
+}
+
 void ImageViewFrame::updateHoverCoordinate(const QPointF &widgetPos)
 {
+    const QPointF previousPos = m_hoverWidgetPos;
+    const bool wasValid = m_hoverCoordinateValid;
+    const QString previousText = m_hoverCoordinateText;
     m_hoverWidgetPos = widgetPos;
+
+    const QRect area = imageViewportRect().toAlignedRect();
+    const auto invalidate = [this, area](const QPointF &anchor, const QString &text) {
+        const QRect box = hoverBoxRect(anchor, text, area);
+        if (!box.isEmpty()) {
+            invalidateDynamic(box);
+        }
+    };
+
     const QPoint pixel = mapWidgetToImage(widgetPos);
     if (pixel.x() < 0) {
-        if (m_hoverCoordinateValid) {
+        if (wasValid) {
             m_hoverCoordinateValid = false;
             m_hoverCoordinateText.clear();
-            update();
+            invalidate(previousPos, previousText);
         }
         return;
     }
 
     const QString text = coordinateTextAt(pixel.x(), pixel.y());
-    if (m_hoverCoordinateValid && m_hoverCoordinateText == text) {
-        if (m_hoverWidgetPos != widgetPos) {
-            update();
-        }
-        return;
-    }
+    const bool moved = previousPos != widgetPos;
+    const bool textChanged = !wasValid || previousText != text;
     m_hoverCoordinateValid = true;
     m_hoverCoordinateText = text;
-    update();
+    if (!moved && !textChanged) {
+        return;
+    }
+    if (wasValid) {
+        invalidate(previousPos, previousText);
+    }
+    invalidate(widgetPos, text);
 }
 
 QString ImageViewFrame::coordinateTextAt(int column, int row) const
@@ -607,16 +699,39 @@ QString ImageViewFrame::tooltipForPath(const MillingPathVM &p, int indexOneBased
 void ImageViewFrame::paintEvent(QPaintEvent *event)
 {
     QFrame::paintEvent(event);
+    ensureViewCache();
+    if (m_viewCache.isNull()) {
+        return;
+    }
 
     QPainter painter(this);
+    painter.setClipRegion(event->region());
+    painter.drawPixmap(QPoint(0, 0), m_viewCache);
+}
+
+void ImageViewFrame::ensureViewCache()
+{
+    const qreal dpr = devicePixelRatioF();
+    const QSize cachePx(qMax(1, qRound(width() * dpr)), qMax(1, qRound(height() * dpr)));
+    if (!m_viewCacheDirty && m_viewCache.size() == cachePx
+        && qFuzzyCompare(m_viewCache.devicePixelRatioF(), dpr)) {
+        return;
+    }
+
+    m_viewCache = QPixmap(cachePx);
+    m_viewCache.setDevicePixelRatio(dpr);
+    m_viewCache.fill(Qt::transparent);
+    QPainter painter(&m_viewCache);
     painter.setRenderHint(QPainter::Antialiasing, false);
 
     const QRect area = rect().adjusted(1, 1, -2, -2);
-    painter.fillRect(area, QColor(Theme::kCanvasBg));
+    const bool light = Theme::current() == Theme::Id::Light;
+    const QColor canvasColor = light ? QColor(QStringLiteral("#F8FAFC")) : QColor(Theme::kCanvasBg);
+    painter.fillRect(rect(), canvasColor);
+    painter.fillRect(area, canvasColor);
 
     if (m_image.isNull()) {
-        QColor gridColor(Theme::kBorder);
-        gridColor.setAlpha(70);
+        const QColor gridColor = light ? QColor(QStringLiteral("#E2E8F0")) : QColor(Theme::kBorder);
         QPen gridPen(gridColor);
         gridPen.setWidth(1);
         painter.setPen(gridPen);
@@ -629,8 +744,7 @@ void ImageViewFrame::paintEvent(QPaintEvent *event)
             painter.drawLine(area.left(), y, area.right(), y);
         }
 
-        QColor centerColor(Theme::kAccent);
-        centerColor.setAlpha(55);
+        const QColor centerColor = light ? QColor(QStringLiteral("#94A3B8")) : QColor(Theme::markColor());
         QPen centerPen(centerColor);
         centerPen.setWidth(1);
         painter.setPen(centerPen);
@@ -639,22 +753,57 @@ void ImageViewFrame::paintEvent(QPaintEvent *event)
 
         m_lastImageRect = QRectF();
         m_lastImageSize = QSize();
+        m_viewCacheDirty = false;
         return;
     }
 
     const QSize imgSize = m_image.size();
     clampPanOffset();
     const QRectF dstRect = currentImageRect();
-    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-    painter.drawImage(dstRect, m_image);
-
     m_lastImageRect = dstRect;
     m_lastImageSize = imgSize;
 
-    if (!m_grindLayer.isNull()) {
-        painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-        painter.drawImage(dstRect, m_grindLayer);
+    const QRectF visible = dstRect.intersected(QRectF(area));
+    if (!visible.isEmpty() && dstRect.width() > 0.0 && dstRect.height() > 0.0) {
+        const qreal dpr = painter.device()->devicePixelRatioF();
+        const QSizeF fitted = fittedImageSize();
+        const int fitW = qMax(1, int(std::ceil(fitted.width() * dpr)));
+        const int fitH = qMax(1, int(std::ceil(fitted.height() * dpr)));
+        // 底图按视口的两倍准备，放大到约 2 倍仍然清晰，且不再碰原始扫描图。
+        const QSize basePx(qMin(imgSize.width(), fitW * 2),
+                           qMin(imgSize.height(), fitH * 2));
+        ensureBasePixmap(basePx);
+
+        const QRectF source(
+            (visible.left() - dstRect.left()) / dstRect.width() * m_basePixmap.width(),
+            (visible.top() - dstRect.top()) / dstRect.height() * m_basePixmap.height(),
+            visible.width() / dstRect.width() * m_basePixmap.width(),
+            visible.height() / dstRect.height() * m_basePixmap.height());
+        painter.setRenderHint(QPainter::SmoothPixmapTransform, !m_interacting);
+        painter.drawPixmap(visible, m_basePixmap, source);
     }
+
+    m_viewCacheDirty = false;
+}
+
+void ImageViewFrame::paintDynamic(QPainter &painter)
+{
+    ensureViewCache();
+    if (!m_viewCache.isNull()) {
+        painter.drawPixmap(QPoint(0, 0), m_viewCache);
+    }
+    if (m_image.isNull()) {
+        return;
+    }
+
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    const QRect area = rect().adjusted(1, 1, -2, -2);
+    clampPanOffset();
+    const QRectF dstRect = currentImageRect();
+    m_lastImageRect = dstRect;
+    m_lastImageSize = m_image.size();
+
+    drawGrindPaths(painter, dstRect, area);
 
     if (!m_paths.isEmpty()) {
         painter.save();
@@ -681,7 +830,7 @@ void ImageViewFrame::paintEvent(QPaintEvent *event)
                     pen.setColor(QColor(Theme::kRealtime));
                     pen.setWidth(kCutLineWidth + 1);
                 } else {
-                    QColor pending(Theme::kAccent);
+                    QColor pending(Theme::markColor());
                     pending.setAlpha(110);
                     pen.setColor(pending);
                     pen.setWidth(kMoveLineWidth);
@@ -728,7 +877,7 @@ void ImageViewFrame::paintEvent(QPaintEvent *event)
         painter.setRenderHint(QPainter::Antialiasing, true);
         painter.setClipRect(dstRect.intersected(QRectF(area)));
         const QRectF drawBounds = dstRect.adjusted(-20, -20, 20, 20);
-        constexpr double kBitRadius = 7.5; // ~15px diameter
+        constexpr double kBitRadius = 11.25; // 原 7.5，半径增加二分之一
         for (int i = 0; i < m_toolTrail.size(); ++i) {
             const QPointF &pt = m_toolTrail.at(i);
             if (!drawBounds.contains(pt)) {
@@ -737,14 +886,14 @@ void ImageViewFrame::paintEvent(QPaintEvent *event)
             const double age = (m_toolTrail.size() <= 1)
                 ? 1.0
                 : double(i + 1) / double(m_toolTrail.size());
-            QColor trail(Theme::kAccent);
+            QColor trail(Theme::markColor());
             trail.setAlpha(int(191 * age * 0.45));
             painter.setPen(Qt::NoPen);
             painter.setBrush(trail);
             painter.drawEllipse(pt, kBitRadius * 0.85, kBitRadius * 0.85);
         }
         if (drawBounds.contains(tip)) {
-            QColor bit(Theme::kAccent);
+            QColor bit(Theme::markColor());
             bit.setAlpha(191); // 75% opacity
             painter.setPen(Qt::NoPen);
             painter.setBrush(bit);
@@ -770,35 +919,117 @@ void ImageViewFrame::paintEvent(QPaintEvent *event)
     }
 
     if (m_hoverCoordinateValid && !m_hoverCoordinateText.isEmpty() && !m_dragging) {
-        QFont hoverFont = painter.font();
+        const QRect box = hoverBoxRect(m_hoverWidgetPos, m_hoverCoordinateText, area);
+        QFont hoverFont(QStringLiteral("Microsoft YaHei"));
         hoverFont.setPixelSize(13);
         painter.setFont(hoverFont);
-        const QFontMetrics metrics(hoverFont);
-        const QRect textBound = metrics.boundingRect(
-            QRect(0, 0, 280, 120),
-            Qt::AlignLeft | Qt::AlignTop,
-            m_hoverCoordinateText);
-        const QSize boxSize(textBound.width() + 16, textBound.height() + 12);
-        QPoint topLeft = m_hoverWidgetPos.toPoint() + QPoint(16, 18);
-        if (topLeft.x() + boxSize.width() > area.right() - 4) {
-            topLeft.setX(m_hoverWidgetPos.toPoint().x() - boxSize.width() - 12);
-        }
-        if (topLeft.y() + boxSize.height() > area.bottom() - 4) {
-            topLeft.setY(m_hoverWidgetPos.toPoint().y() - boxSize.height() - 12);
-        }
-        topLeft.setX(qMax(area.left() + 4, topLeft.x()));
-        topLeft.setY(qMax(area.top() + 4, topLeft.y()));
-
-        const QRect box(topLeft, boxSize);
         painter.setRenderHint(QPainter::Antialiasing, true);
-        painter.setPen(QPen(QColor(Theme::kBorder), 1));
-        painter.setBrush(QColor(20, 28, 36, 210));
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(31, 42, 51, 45));
+        painter.drawRoundedRect(box.adjusted(1, 2, 2, 3), 4, 4);
+        painter.setPen(QPen(QColor(Theme::kTextSecondary), 1));
+        painter.setBrush(QColor(Theme::kPanelBg));
         painter.drawRoundedRect(box, 4, 4);
-        painter.setPen(QColor(Theme::kTextPrimary));
-        painter.drawText(box.adjusted(8, 6, -8, -6),
-                         Qt::AlignLeft | Qt::AlignTop,
-                         m_hoverCoordinateText);
+
+        const QStringList lines = m_hoverCoordinateText.split(QLatin1Char('\n'));
+        const QFontMetrics metrics(hoverFont);
+        int y = box.top() + 7;
+        const int textLeft = box.left() + 10;
+        const int textRight = box.right() - 10;
+        for (const QString &line : lines) {
+            const int split = line.indexOf(QLatin1Char(' '));
+            const QString label = split < 0 ? line : line.left(split);
+            const QString value = split < 0 ? QString() : line.mid(split + 1).trimmed();
+            painter.setPen(QColor(Theme::kTextSecondary));
+            painter.drawText(QRect(textLeft, y, 40, metrics.height()),
+                             Qt::AlignLeft | Qt::AlignVCenter,
+                             label);
+            QFont valueFont = hoverFont;
+            valueFont.setBold(true);
+            painter.setFont(valueFont);
+            painter.setPen(QColor(Theme::kTextPrimary));
+            painter.drawText(QRect(textLeft + 48, y, textRight - textLeft - 48, metrics.height()),
+                             Qt::AlignLeft | Qt::AlignVCenter,
+                             value);
+            painter.setFont(hoverFont);
+            y += metrics.height() + 2;
+        }
     }
+}
+
+void ImageViewFrame::refreshDynamic()
+{
+    if (m_dynamic) {
+        m_dynamic->update();
+    }
+}
+
+void ImageViewFrame::resizeEvent(QResizeEvent *event)
+{
+    m_viewCacheDirty = true;
+    QFrame::resizeEvent(event);
+    if (m_dynamic) {
+        m_dynamic->setGeometry(rect());
+        m_dynamic->raise();
+    }
+}
+
+void ImageViewFrame::invalidateDynamic(const QRect &rect)
+{
+    if (!m_dynamic || rect.isEmpty()) {
+        return;
+    }
+    const QRect clipped = rect.adjusted(-3, -3, 3, 3).intersected(this->rect());
+    if (!clipped.isEmpty()) {
+        m_dynamic->update(clipped);
+    }
+}
+
+QRect ImageViewFrame::pathSegmentRect(int index) const
+{
+    if (index < 0 || index >= m_paths.size() || m_image.isNull()) {
+        return {};
+    }
+    const MillingPathVM &path = m_paths.at(index);
+    const QPointF a = mapImageToWidget(path.uStart, path.vStart);
+    const QPointF b = mapImageToWidget(path.uEnd, path.vEnd);
+    return QRectF(a, b).normalized().adjusted(-8.0, -8.0, 8.0, 8.0).toAlignedRect();
+}
+
+QRect ImageViewFrame::toolPoseDirtyRect() const
+{
+    if (!m_toolPoseValid || !m_toolPoseMapped || m_lastImageRect.isEmpty()
+        || m_lastImageSize.isEmpty() || m_lastImageSize.width() <= 0
+        || m_lastImageSize.height() <= 0) {
+        return {};
+    }
+
+    const double sx = m_lastImageRect.width() / double(m_lastImageSize.width());
+    const double sy = m_lastImageRect.height() / double(m_lastImageSize.height());
+    QRect dirty;
+    const auto addUv = [&](double u, double v, double pad) {
+        const QPointF pt(m_lastImageRect.x() + u * sx, m_lastImageRect.y() + v * sy);
+        dirty = dirty.united(QRectF(pt.x() - pad, pt.y() - pad, pad * 2.0, pad * 2.0).toAlignedRect());
+    };
+    addUv(m_toolPoseU, m_toolPoseV, 16.0);
+
+    const int start = (m_toolTrailNext - m_toolTrailCount + kToolTrailCapacity) % kToolTrailCapacity;
+    for (int i = 0; i < m_toolTrailCount; ++i) {
+        const QPointF &uv = m_toolTrailUvRing[(start + i) % kToolTrailCapacity];
+        addUv(uv.x(), uv.y(), 14.0);
+    }
+    if (m_hasActiveGrindPath && m_activeGrindPath.elementCount() > 0) {
+        const int last = m_activeGrindPath.elementCount() - 1;
+        const QPainterPath::Element end = m_activeGrindPath.elementAt(last);
+        addUv(end.x, end.y, 6.0);
+        if (last > 0) {
+            const QPainterPath::Element prev = m_activeGrindPath.elementAt(last - 1);
+            const QPointF a(m_lastImageRect.x() + prev.x * sx, m_lastImageRect.y() + prev.y * sy);
+            const QPointF b(m_lastImageRect.x() + end.x * sx, m_lastImageRect.y() + end.y * sy);
+            dirty = dirty.united(QRectF(a, b).normalized().adjusted(-6.0, -6.0, 6.0, 6.0).toAlignedRect());
+        }
+    }
+    return dirty;
 }
 
 void ImageViewFrame::wheelEvent(QWheelEvent *event)
@@ -817,12 +1048,22 @@ void ImageViewFrame::wheelEvent(QWheelEvent *event)
     const double newZoom = qBound(kMinZoom,
                                   m_zoomFactor * std::pow(kZoomStep, wheelSteps),
                                   kMaxZoom);
+    applyZoom(newZoom, event->posF());
+    event->accept();
+}
+
+void ImageViewFrame::applyZoom(double newZoom, const QPointF &anchorHint)
+{
+    const QRectF oldRect = currentImageRect();
+    if (oldRect.isEmpty()) {
+        return;
+    }
+    newZoom = qBound(kMinZoom, newZoom, kMaxZoom);
     if (qFuzzyCompare(newZoom, m_zoomFactor)) {
-        event->accept();
         return;
     }
 
-    QPointF anchor = event->posF();
+    QPointF anchor = anchorHint;
     if (!oldRect.contains(anchor)) {
         anchor = oldRect.center();
     }
@@ -839,8 +1080,36 @@ void ImageViewFrame::wheelEvent(QWheelEvent *event)
     m_panOffset = anchor - centeredTopLeft -
                   QPointF(relativeX * shown.width(), relativeY * shown.height());
     clampPanOffset();
+    noteInteraction();
+    m_viewCacheDirty = true;
     update();
-    event->accept();
+    refreshDynamic();
+}
+
+void ImageViewFrame::zoomIn()
+{
+    if (m_image.isNull()) {
+        return;
+    }
+    applyZoom(m_zoomFactor * kZoomStep * kZoomStep, currentImageRect().center());
+}
+
+void ImageViewFrame::zoomOut()
+{
+    if (m_image.isNull()) {
+        return;
+    }
+    applyZoom(m_zoomFactor / (kZoomStep * kZoomStep), currentImageRect().center());
+}
+
+void ImageViewFrame::fitToView()
+{
+    m_zoomFactor = kMinZoom;
+    m_panOffset = QPointF();
+    clampPanOffset();
+    m_viewCacheDirty = true;
+    update();
+    refreshDynamic();
 }
 
 void ImageViewFrame::mouseMoveEvent(QMouseEvent *event)
@@ -856,6 +1125,7 @@ void ImageViewFrame::mouseMoveEvent(QMouseEvent *event)
             m_dragMoved = true;
             m_panOffset += QPointF(delta);
             clampPanOffset();
+            noteInteraction();
             m_lastDragPosition = event->pos();
             m_hoveredPathIndex = -1;
             m_tooltipPathIndex = -1;
@@ -863,7 +1133,9 @@ void ImageViewFrame::mouseMoveEvent(QMouseEvent *event)
             m_hoverCoordinateText.clear();
             QToolTip::hideText();
             setCursor(Qt::ClosedHandCursor);
+            m_viewCacheDirty = true;
             update();
+            refreshDynamic();
         }
         event->accept();
         return;
@@ -872,8 +1144,10 @@ void ImageViewFrame::mouseMoveEvent(QMouseEvent *event)
     updateHoverCoordinate(event->pos());
     const int idx = hitTestPath(event->pos());
     if (idx != m_hoveredPathIndex) {
+        const int previous = m_hoveredPathIndex;
         m_hoveredPathIndex = idx;
-        update();
+        invalidateDynamic(pathSegmentRect(previous));
+        invalidateDynamic(pathSegmentRect(idx));
     }
     QFrame::mouseMoveEvent(event);
 }
@@ -909,6 +1183,11 @@ void ImageViewFrame::mouseReleaseEvent(QMouseEvent *event)
     m_dragging = false;
     m_dragMoved = false;
     setCursor(m_image.isNull() ? Qt::ArrowCursor : Qt::OpenHandCursor);
+    if (wasDrag) {
+        m_viewCacheDirty = true;
+        update();
+        refreshDynamic();
+    }
 
     if (wasDrag) {
         event->accept();
@@ -932,12 +1211,16 @@ void ImageViewFrame::mouseReleaseEvent(QMouseEvent *event)
 void ImageViewFrame::leaveEvent(QEvent *event)
 {
     QFrame::leaveEvent(event);
-    if (m_hoveredPathIndex != -1) {
-        m_hoveredPathIndex = -1;
-    }
+    const QRect area = imageViewportRect().toAlignedRect();
+    const QRect oldBox = (m_hoverCoordinateValid && !m_hoverCoordinateText.isEmpty())
+        ? hoverBoxRect(m_hoverWidgetPos, m_hoverCoordinateText, area)
+        : QRect();
+    const int oldPath = m_hoveredPathIndex;
+    m_hoveredPathIndex = -1;
     m_tooltipPathIndex = -1;
     m_hoverCoordinateValid = false;
     m_hoverCoordinateText.clear();
     QToolTip::hideText();
-    update();
+    invalidateDynamic(oldBox);
+    invalidateDynamic(pathSegmentRect(oldPath));
 }

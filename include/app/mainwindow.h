@@ -14,10 +14,14 @@ class EventLogPanel;
 class HistoryDialog;
 class HikCameraClient;
 class ImageDisplayPanel;
+class KpiStripPanel;
+class MachineStatusPanel;
+class NavigationBar;
+class NotificationDrawer;
+class ParticleDetailPanel;
+class PathQueuePanel;
+class ReportPage;
 class Ros2Bridge;
-class RunDataPanel;
-class RunningStatusPanel;
-class TaskFlowPanel;
 class SettingsPage;
 class QStackedWidget;
 class QTimer;
@@ -47,13 +51,21 @@ public slots:
 private:
     void changeEvent(QEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
     void buildMainView();
     void connectTitleBar();
     void showUserMenu(const QPoint &anchor);
     void refreshUserIdentity();
     void showHistoryPage();
+    // 左侧导航路由；设置页有未保存修改时会拒绝切换并把导航高亮复位。
+    void showPage(int page);
+    void updateDrawerDockArea();
+    void refreshCalibrationStatus();
     void startRos2Bridge();
+    // Ctrl+T / 工具栏「修磨演示」：加载 TestImage 并播放假任务；再次调用退出。
+    void toggleDemoMode();
+    void updateKpis();
     void startNodes();
     void stopNodes();
     void runNodeLauncherScript(bool start);
@@ -119,17 +131,24 @@ private:
 
     Ui::MainWindow *ui;
     TitleBar *m_titleBar{nullptr};
+    NavigationBar *m_navBar{nullptr};
+    NotificationDrawer *m_drawer{nullptr};
     QStackedWidget *m_contentStack{nullptr};
     QWidget *m_monitorPage{nullptr};
+    ReportPage *m_reportPage{nullptr};
     SettingsPage *m_settingsPage{nullptr};
-    RunningStatusPanel *m_statusPanel{nullptr};
+    KpiStripPanel *m_kpiPanel{nullptr};
     DeviceStatusPanel *m_deviceStatusPanel{nullptr};
     ImageDisplayPanel *m_imagePanel{nullptr};
+    ParticleDetailPanel *m_particlePanel{nullptr};
+    MachineStatusPanel *m_machinePanel{nullptr};
+    PathQueuePanel *m_queuePanel{nullptr};
     HikCameraClient *m_hikCameraClient{nullptr};
     DataStatisticsPanel *m_dataStatisticsPanel{nullptr};
-    EventLogPanel *m_eventLogPanel{nullptr};
-    RunDataPanel *m_runDataPanel{nullptr};
-    TaskFlowPanel *m_taskFlowPanel{nullptr};
+    QVector<MillingPathVM> m_activePaths;
+    int m_activePathTotal{0};
+    int m_activeCompletedPath{0};
+    QString m_activeBoardGrade;
     QTimer *m_waveformTimer{nullptr};
     QTimer *m_simulationProgressTimer{nullptr};
     Ros2Bridge *m_ros2Bridge{nullptr};

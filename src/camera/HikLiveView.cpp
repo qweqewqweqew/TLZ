@@ -2,6 +2,7 @@
 
 #include "app/Theme.h"
 
+#include <QColor>
 #include <QLabel>
 #include <QPalette>
 #include <QResizeEvent>
@@ -29,6 +30,19 @@ HikLiveView::HikLiveView(QWidget *parent)
         "QLabel{background:%1;color:%2;font-size:16px;border:none;padding:24px;}")
                                      .arg(Theme::kCanvasBg, Theme::kTextMuted));
     m_statusLabel->raise();
+    Theme::watch(this, [this]() {
+        setStyleSheet(QStringLiteral(
+                          "QFrame#hikLiveView{background:%1;border:1px solid %2;border-radius:6px;}")
+                          .arg(Theme::kCanvasBg, Theme::kBorder));
+        QPalette surfacePalette = m_videoSurface->palette();
+        surfacePalette.setColor(QPalette::Window, QColor(Theme::kCanvasBg));
+        m_videoSurface->setPalette(surfacePalette);
+        if (m_statusLabel) {
+            m_statusLabel->setStyleSheet(QStringLiteral(
+                                             "QLabel{background:%1;color:%2;font-size:16px;border:none;padding:24px;}")
+                                             .arg(Theme::kCanvasBg, Theme::kTextMuted));
+        }
+    });
 }
 WId HikLiveView::videoWindowId()
 {

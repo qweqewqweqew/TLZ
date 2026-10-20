@@ -60,11 +60,11 @@ QWidget *makeAxisColumn(const QString &title, QLineEdit *edit, QWidget *parent)
     auto *col = new QWidget(parent);
     auto *layout = new QVBoxLayout(col);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(8);
+    layout->setSpacing(6);
 
     auto *label = makeLabel(title, QStringLiteral("axisTitle"));
     label->setStyleSheet(QStringLiteral(
-        "color:%1;font-size:13px;border:none;background:transparent;")
+        "color:%1;font-size:12px;border:none;background:transparent;")
                              .arg(Theme::kTextSecondary));
     layout->addWidget(label);
 
@@ -75,7 +75,7 @@ QWidget *makeAxisColumn(const QString &title, QLineEdit *edit, QWidget *parent)
 
     auto *unit = makeLabel(QStringLiteral("mm"), QStringLiteral("sectionHint"));
     unit->setStyleSheet(QStringLiteral(
-        "color:%1;font-size:12px;border:none;background:transparent;")
+        "color:%1;font-size:11px;border:none;background:transparent;")
                             .arg(Theme::kTextMuted));
     valueRow->addWidget(unit, 0, Qt::AlignVCenter);
     layout->addLayout(valueRow);
@@ -90,13 +90,13 @@ BackendParamsDialog::BackendParamsDialog(Ros2Bridge *bridge, QWidget *parent)
 {
     setObjectName(QStringLiteral("settingsTaskCard"));
     setStyleSheet(taskCardStyle());
-    setMinimumWidth(320);
-    setMaximumWidth(430);
-    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    setMinimumWidth(0);
+    setMaximumWidth(QWIDGETSIZE_MAX);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
 
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(16, 14, 16, 16);
-    root->setSpacing(14);
+    root->setContentsMargins(12, 10, 12, 12);
+    root->setSpacing(10);
 
     // ---- 标题区 ----
     auto *header = new QHBoxLayout();
@@ -104,10 +104,10 @@ BackendParamsDialog::BackendParamsDialog(Ros2Bridge *bridge, QWidget *parent)
     header->setSpacing(10);
 
     auto *badge = makeLabel(QStringLiteral("01"), QStringLiteral("taskBadge"));
-    badge->setFixedSize(32, 32);
+    badge->setFixedSize(28, 28);
     badge->setAlignment(Qt::AlignCenter);
     badge->setStyleSheet(QStringLiteral(
-        "color:%1;font-size:13px;font-weight:700;border:none;border-radius:16px;"
+        "color:%1;font-size:12px;font-weight:700;border:none;border-radius:14px;"
         "background:%2;")
                              .arg(Theme::kAccent, Theme::kRunningBg));
     header->addWidget(badge, 0, Qt::AlignVCenter);
@@ -118,13 +118,13 @@ BackendParamsDialog::BackendParamsDialog(Ros2Bridge *bridge, QWidget *parent)
 
     auto *title = makeLabel(QStringLiteral("加工参数"), QStringLiteral("taskTitle"));
     title->setStyleSheet(QStringLiteral(
-        "color:%1;font-size:16px;font-weight:600;border:none;background:transparent;")
+        "color:%1;font-size:14px;font-weight:600;border:none;background:transparent;")
                              .arg(Theme::kTextPrimary));
     titleCol->addWidget(title);
 
     auto *subtitle = makeLabel(QStringLiteral("坐标补偿 · 路径下发"), QStringLiteral("taskSubtitle"));
     subtitle->setStyleSheet(QStringLiteral(
-        "color:%1;font-size:12px;border:none;background:transparent;")
+        "color:%1;font-size:11px;border:none;background:transparent;")
                                 .arg(Theme::kTextMuted));
     titleCol->addWidget(subtitle);
     header->addLayout(titleCol, 1);
@@ -134,7 +134,7 @@ BackendParamsDialog::BackendParamsDialog(Ros2Bridge *bridge, QWidget *parent)
     kind->setFixedHeight(24);
     kind->setMinimumWidth(52);
     kind->setStyleSheet(QStringLiteral(
-        "color:%1;font-size:12px;font-weight:600;border:none;border-radius:4px;"
+        "color:%1;font-size:11px;font-weight:600;border:none;border-radius:4px;"
         "background:%2;padding:0 8px;")
                             .arg(Theme::kRealtime, Theme::kWarningBg));
     header->addWidget(kind, 0, Qt::AlignTop);
@@ -161,7 +161,7 @@ BackendParamsDialog::BackendParamsDialog(Ros2Bridge *bridge, QWidget *parent)
     m_dispatchPathsCheck = new ElaCheckBox(QStringLiteral("下发路径到 PLC"), this);
     m_dispatchPathsCheck->setChecked(true);
     m_dispatchPathsCheck->setStyleSheet(QStringLiteral(
-        "color:%1;font-size:14px;border:none;background:transparent;")
+        "color:%1;font-size:12px;border:none;background:transparent;")
                                             .arg(Theme::kTextPrimary));
     root->addWidget(m_dispatchPathsCheck, 0, Qt::AlignLeft);
 
@@ -169,7 +169,7 @@ BackendParamsDialog::BackendParamsDialog(Ros2Bridge *bridge, QWidget *parent)
 
     // ---- 全宽应用 ----
     auto *applyBtn = new ElaPushButton(QStringLiteral("应用"), this);
-    applyBtn->setMinimumHeight(40);
+    applyBtn->setMinimumHeight(30);
     applyBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     applyPrimaryButtonStyle(applyBtn);
     root->addWidget(applyBtn);
@@ -193,7 +193,7 @@ QLineEdit *BackendParamsDialog::makeOffsetEdit(QWidget *parent)
 {
     auto *edit = new QLineEdit(parent);
     edit->setText(QStringLiteral("0"));
-    edit->setFixedHeight(34);
+    edit->setFixedHeight(28);
     edit->setMinimumWidth(72);
     edit->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     edit->setValidator(new QDoubleValidator(-99999.0, 99999.0, 3, edit));
@@ -202,9 +202,9 @@ QLineEdit *BackendParamsDialog::makeOffsetEdit(QWidget *parent)
         "  background: %1;"
         "  color: %2;"
         "  border: 1px solid %3;"
-        "  border-radius: 6px;"
-        "  padding: 0 10px;"
-        "  font-size: 14px;"
+        "  border-radius: 4px;"
+        "  padding: 0 8px;"
+        "  font-size: 12px;"
         "  font-weight: 600;"
         "  selection-background-color: %4;"
         "}"

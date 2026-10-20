@@ -5,27 +5,22 @@
 #include "app/UiHelpers.h"
 
 #include <QColor>
-#include <QDateTime>
 #include <QFrame>
-#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QSizePolicy>
-#include <QStringList>
 #include <QTimer>
+#include <QVariant>
 
-namespace {
-
-const QString kValueColorNoData = Theme::kStateUnknown;
-
-} // namespace
+#ifndef MZTLZ_VERSION_STRING
+#define MZTLZ_VERSION_STRING "dev"
+#endif
 
 DeviceStatusPanel::DeviceStatusPanel(QWidget *parent)
     : QFrame(parent)
 {
-    // 横跨主窗口底部：左侧时间、中间版权、右侧三个状态指示控件。
     setObjectName("deviceStatusBar");
-    setMinimumHeight(42);
+    setFixedHeight(36);
     setStyleSheet(QStringLiteral(R"(
         QFrame#deviceStatusBar {
             background: %1;
@@ -34,98 +29,99 @@ DeviceStatusPanel::DeviceStatusPanel(QWidget *parent)
         }
     )").arg(Theme::kStatusBarBg, Theme::kDivider));
 
-    auto *layout = new QGridLayout(this);
-    layout->setContentsMargins(12, 0, 12, 0);
-    layout->setHorizontalSpacing(12);
+    auto *layout = new QHBoxLayout(this);
+    layout->setContentsMargins(14, 0, 14, 0);
+    layout->setSpacing(0);
 
-    m_clockLabel = makeLabel(QString());
-    m_clockLabel->setWordWrap(false);
-    m_clockLabel->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
-    m_clockLabel->setStyleSheet(QString(
-        "color:%1;font-size:16px;border:none;background:transparent;")
-                                    .arg(Theme::kTextSecondary));
-    layout->addWidget(m_clockLabel, 0, 0, Qt::AlignLeft | Qt::AlignVCenter);
+    layout->addWidget(createStatusItem(QStringLiteral("3D相机"), m_camera, this));
+    layout->addSpacing(28);
+    layout->addWidget(createStatusItem(QStringLiteral("PLC"), m_plc, this));
+    layout->addSpacing(28);
+    layout->addWidget(createStatusItem(QStringLiteral("修磨机"), m_machine, this));
+    layout->addSpacing(28);
+    layout->addWidget(createStatusItem(QStringLiteral("坐标标定"), m_calibration, this));
+    layout->addStretch(1);
 
-    auto *copyrightLabel = makeLabel(
-        QStringLiteral("版权所有：长沙铭准信息科技有限公司"));
-    copyrightLabel->setWordWrap(false);
-    copyrightLabel->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
-    copyrightLabel->setStyleSheet(QString(
-        "color:%1;font-size:16px;border:none;background:transparent;")
-                                      .arg(Theme::kTextMuted));
-    layout->addWidget(copyrightLabel, 0, 1, Qt::AlignCenter);
-
-    auto *statusHost = new QWidget(this);
-    auto *statusLayout = new QHBoxLayout(statusHost);
-    statusLayout->setContentsMargins(0, 0, 0, 0);
-    statusLayout->setSpacing(8);
-    statusLayout->addWidget(createStatusItem(QStringLiteral("相机"),
-                                             m_cameraStatusDot,
-                                             statusHost));
-    statusLayout->addWidget(createStatusItem(QStringLiteral("后端"),
-                                             m_backendStatusDot,
-                                             statusHost));
-    statusLayout->addWidget(createStatusItem(QStringLiteral("PLC"),
-                                             m_plcStatusDot,
-                                             statusHost));
-    layout->addWidget(statusHost, 0, 2, Qt::AlignRight | Qt::AlignVCenter);
-    layout->setColumnStretch(0, 1);
-    layout->setColumnStretch(2, 1);
-
-    m_clockTimer = new QTimer(this);
-    m_clockTimer->setInterval(1000);
-    connect(m_clockTimer, &QTimer::timeout, this, &DeviceStatusPanel::updateCurrentTime);
-    updateCurrentTime();
-    m_clockTimer->start();
+    auto *rightLabel = makeLabel(
+        QStringLiteral("长沙铭准信息科技有限公司 · v" MZTLZ_VERSION_STRING));
+    rightLabel->setObjectName(QStringLiteral("statusCompany"));
+    rightLabel->setWordWrap(false);
+    rightLabel->setStyleSheet(QString(
+        "color:%1;font-size:12px;border:none;background:transparent;")
+                                  .arg(Theme::kTextMuted));
+    layout->addWidget(rightLabel, 0, Qt::AlignRight | Qt::AlignVCenter);
 
     m_cameraStatusTimer = new QTimer(this);
     m_cameraStatusTimer->setSingleShot(true);
     m_cameraStatusTimer->setInterval(3000);
     connect(m_cameraStatusTimer, &QTimer::timeout, this, [this]() {
-        applyCameraStatus(ConnectionState::Unknown, QStringLiteral("状态消息超时"));
+        applyCameraStatus(ConnectionState::Unknown, QStringLiteral("无状态"), QStringLiteral("状态消息超时"));
     });
-    applyCameraStatus(ConnectionState::Unknown, QStringLiteral("等待状态"));
+    applyCameraStatus(ConnectionState::Unknown, QStringLiteral("等待"), QStringLiteral("等待相机状态"));
     clearBackendAndPlcStatus();
-}
-
-void DeviceStatusPanel::updateCurrentTime()
-{
-    if (!m_clockLabel) {
-        return;
-    }
-
-    static const QStringList weekdays = {
-        QStringLiteral("一"), QStringLiteral("二"), QStringLiteral("三"),
-        QStringLiteral("四"), QStringLiteral("五"), QStringLiteral("六"),
-        QStringLiteral("日")
-    };
-    const QDateTime now = QDateTime::currentDateTime();
-    const int weekdayIndex = now.date().dayOfWeek() - 1;
-    m_clockLabel->setText(
-        QStringLiteral("%1 星期%2")
-            .arg(now.toString(QStringLiteral("yyyy年MM月dd日 HH:mm:ss")),
-                 weekdays.value(weekdayIndex)));
+    setCalibrationStatus(false, QStringLiteral("尚未读取坐标补偿"));
+    Theme::watch(this, [this]() {
+        setStyleSheet(QStringLiteral(R"(
+            QFrame#deviceStatusBar {
+                background: %1;
+                border: 1px solid %2;
+                border-radius: 6px;
+            }
+        )").arg(Theme::kStatusBarBg, Theme::kDivider));
+        if (auto *company = findChild<QLabel *>(QStringLiteral("statusCompany"))) {
+            company->setStyleSheet(QStringLiteral("color:%1;font-size:12px;border:none;background:transparent;")
+                                       .arg(Theme::kTextMuted));
+        }
+        for (QLabel *name : findChildren<QLabel *>(QStringLiteral("statusName"))) {
+            name->setStyleSheet(QStringLiteral("color:%1;font-size:13px;border:none;background:transparent;")
+                                    .arg(Theme::kTextSecondary));
+        }
+        const auto refreshItem = [this](StatusItem &item) {
+            if (!item.value) {
+                return;
+            }
+            const QString role = item.value->property("statusRole").toString();
+            const char *color = Theme::kTextPrimary;
+            if (role == QLatin1String("success")) {
+                color = Theme::kStateSuccess;
+            } else if (role == QLatin1String("error")) {
+                color = Theme::kStateError;
+            } else if (role == QLatin1String("warning")) {
+                color = Theme::kStateWarning;
+            } else if (role == QLatin1String("running")) {
+                color = Theme::kStateRunning;
+            } else if (role == QLatin1String("unknown")) {
+                color = Theme::kStateUnknown;
+            } else if (!role.isEmpty()) {
+                return;
+            }
+            item.value->setProperty("statusColor", QString());
+            applyStatusItem(item, QString::fromLatin1(color), item.value->text(), item.value->toolTip());
+        };
+        refreshItem(m_camera);
+        refreshItem(m_plc);
+        refreshItem(m_machine);
+        refreshItem(m_calibration);
+    });
 }
 
 void DeviceStatusPanel::clearBackendAndPlcStatus()
 {
-    applyStatusItem(m_backendStatusDot,
-                    kValueColorNoData,
+    m_backendOnline = false;
+    applyStatusItem(m_plc,
+                    QString::fromLatin1(Theme::kStateUnknown),
+                    QStringLiteral("未连接"),
                     QStringLiteral("尚未收到 PLC 反馈"));
-    applyStatusItem(m_plcStatusDot,
-                    kValueColorNoData,
-                    QStringLiteral("尚未收到 PLC 反馈"));
+    applyStatusItem(m_machine,
+                    QString::fromLatin1(Theme::kStateUnknown),
+                    m_backendStateText.isEmpty() ? QStringLiteral("离线") : m_backendStateText,
+                    QStringLiteral("尚未收到后端反馈"));
 }
 
 void DeviceStatusPanel::setCameraStatus(bool connected,
                                         const QString &cameraId,
                                         const QString &message)
 {
-    QString detail = connected ? cameraId : message;
-    if (detail.isEmpty()) {
-        detail = connected ? QStringLiteral("已连接") : QStringLiteral("未连接");
-    }
-
     QString tooltip = cameraId;
     if (!message.isEmpty()) {
         if (!tooltip.isEmpty()) {
@@ -134,7 +130,8 @@ void DeviceStatusPanel::setCameraStatus(bool connected,
         tooltip += message;
     }
     applyCameraStatus(connected ? ConnectionState::Online : ConnectionState::Offline,
-                      tooltip.isEmpty() ? detail : tooltip);
+                      connected ? QStringLiteral("在线") : QStringLiteral("离线"),
+                      tooltip);
     if (m_cameraStatusTimer) {
         m_cameraStatusTimer->start();
     }
@@ -142,9 +139,20 @@ void DeviceStatusPanel::setCameraStatus(bool connected,
 
 void DeviceStatusPanel::setBackendOnline(const QString &tooltip)
 {
-    applyStatusItem(m_backendStatusDot,
+    m_backendOnline = true;
+    applyStatusItem(m_machine,
                     QString::fromLatin1(Theme::kStateSuccess),
+                    m_backendStateText.isEmpty() ? QStringLiteral("在线") : m_backendStateText,
                     tooltip);
+}
+
+void DeviceStatusPanel::setBackendState(const QString &state)
+{
+    m_backendStateText = state.trimmed();
+    applyStatusItem(m_machine,
+                    QString::fromLatin1(m_backendOnline ? Theme::kStateSuccess : Theme::kStateRunning),
+                    m_backendStateText.isEmpty() ? QStringLiteral("在线") : m_backendStateText,
+                    QStringLiteral("后端状态：%1").arg(state));
 }
 
 void DeviceStatusPanel::setPlcStatus(quint16 statusWord, quint16 faultCode)
@@ -155,39 +163,53 @@ void DeviceStatusPanel::setPlcStatus(quint16 statusWord, quint16 faultCode)
                                 .arg(statusWord, 4, 16, QLatin1Char('0'))
                                 .arg(faultCode)
                                 .toUpper();
-    QString displayColor = QString::fromLatin1(Theme::kStateUnknown);
+    QString displayColor = QString::fromLatin1(Theme::kStateSuccess);
+    QString text = QStringLiteral("已连接");
     if (plcStatus.critical) {
         displayColor = QString::fromLatin1(Theme::kStateError);
-    } else if (plcStatus.color != QString::fromLatin1(Theme::kStateUnknown)) {
-        displayColor = QString::fromLatin1(Theme::kStateSuccess);
+        text = QStringLiteral("故障 %1").arg(faultCode);
+    } else if (plcStatus.color == QString::fromLatin1(Theme::kStateUnknown)) {
+        displayColor = QString::fromLatin1(Theme::kStateUnknown);
+        text = QStringLiteral("未知");
     }
-    applyStatusItem(m_plcStatusDot,
-                    displayColor,
-                    tooltip);
+    applyStatusItem(m_plc, displayColor, text, tooltip);
 }
 
-QWidget *DeviceStatusPanel::createStatusItem(const QString &name,
-                                             QLabel *&dotLabel,
-                                             QWidget *parent)
+void DeviceStatusPanel::setCalibrationStatus(bool calibrated, const QString &detail)
 {
-    auto *item = new QWidget(parent);
-    auto *layout = new QHBoxLayout(item);
-    layout->setContentsMargins(8, 0, 8, 0);
-    layout->setSpacing(5);
+    applyStatusItem(m_calibration,
+                    QString::fromLatin1(calibrated ? Theme::kStateSuccess : Theme::kStateWarning),
+                    calibrated ? QStringLiteral("已设置") : QStringLiteral("未标定"),
+                    detail);
+}
 
-    dotLabel = makeLabel(QStringLiteral("●"));
-    dotLabel->setFixedWidth(16);
-    layout->addWidget(dotLabel);
+QWidget *DeviceStatusPanel::createStatusItem(const QString &name, StatusItem &item, QWidget *parent)
+{
+    auto *host = new QWidget(parent);
+    auto *layout = new QHBoxLayout(host);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(6);
 
-    auto *nameLabel = makeLabel(name);
+    item.dot = makeLabel(QStringLiteral("●"));
+    item.dot->setFixedWidth(14);
+    layout->addWidget(item.dot);
+
+    auto *nameLabel = makeLabel(name + QStringLiteral("："));
+    nameLabel->setObjectName(QStringLiteral("statusName"));
     nameLabel->setStyleSheet(QString(
-        "color:%1;font-size:14px;border:none;background:transparent;")
+        "color:%1;font-size:13px;border:none;background:transparent;")
         .arg(Theme::kTextSecondary));
     layout->addWidget(nameLabel);
-    return item;
+
+    item.value = makeLabel(QString());
+    item.value->setStyleSheet(QString(
+        "color:%1;font-size:13px;border:none;background:transparent;")
+        .arg(Theme::kTextPrimary));
+    layout->addWidget(item.value);
+    return host;
 }
 
-void DeviceStatusPanel::applyCameraStatus(ConnectionState state, const QString &detail)
+void DeviceStatusPanel::applyCameraStatus(ConnectionState state, const QString &text, const QString &detail)
 {
     QString color;
     switch (state) {
@@ -198,23 +220,43 @@ void DeviceStatusPanel::applyCameraStatus(ConnectionState state, const QString &
         color = QString::fromLatin1(Theme::kStateError);
         break;
     case ConnectionState::Unknown:
-        color = kValueColorNoData;
+        color = QString::fromLatin1(Theme::kStateUnknown);
         break;
     }
-
-    applyStatusItem(m_cameraStatusDot, color, detail);
+    applyStatusItem(m_camera, color, text, detail);
 }
 
-void DeviceStatusPanel::applyStatusItem(QLabel *dotLabel,
+void DeviceStatusPanel::applyStatusItem(StatusItem &item,
                                         const QString &color,
+                                        const QString &text,
                                         const QString &tooltip)
 {
-    if (!dotLabel) {
+    if (!item.dot || !item.value) {
         return;
     }
-
-    dotLabel->setText(QStringLiteral("●"));
-    dotLabel->setStyleSheet(
-        QString("color:%1;font-size:14px;border:none;background:transparent;").arg(color));
-    dotLabel->setToolTip(tooltip);
+    if (item.value->text() == text && item.value->toolTip() == tooltip
+        && item.value->property("statusColor").toString() == color) {
+        return;
+    }
+    QString role = QStringLiteral("custom");
+    if (color == QLatin1String(Theme::kStateSuccess)) {
+        role = QStringLiteral("success");
+    } else if (color == QLatin1String(Theme::kStateError)) {
+        role = QStringLiteral("error");
+    } else if (color == QLatin1String(Theme::kStateWarning)) {
+        role = QStringLiteral("warning");
+    } else if (color == QLatin1String(Theme::kStateRunning)) {
+        role = QStringLiteral("running");
+    } else if (color == QLatin1String(Theme::kStateUnknown)) {
+        role = QStringLiteral("unknown");
+    }
+    item.value->setProperty("statusRole", role);
+    item.value->setProperty("statusColor", color);
+    item.dot->setStyleSheet(
+        QString("color:%1;font-size:12px;border:none;background:transparent;").arg(color));
+    item.dot->setToolTip(tooltip);
+    item.value->setText(text);
+    item.value->setStyleSheet(
+        QString("color:%1;font-size:13px;border:none;background:transparent;").arg(color));
+    item.value->setToolTip(tooltip);
 }

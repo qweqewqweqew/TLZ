@@ -4,10 +4,13 @@
 #include <QWidget>
 
 class EventLogPanel;
+class NodeCommSettingsPage;
 class NodeLifecycleMonitor;
 class QLabel;
 class QListWidget;
 class QPushButton;
+class QResizeEvent;
+class QShowEvent;
 class QStackedWidget;
 class Ros2Bridge;
 class SettingsSubPage;
@@ -25,11 +28,21 @@ public:
     // 离开设置或切换子页前调用。保存失败或用户取消时返回 false。
     bool confirmLeave();
 
+public slots:
+    // 节点运行态回传给「节点与通信」页的启停控件。
+    void setNodesRunning(bool running);
+    void setNodesBusy(bool busy);
+
 signals:
     void historyRequested();
     void logRequested(const QString &level, const QString &message);
+    void startNodesRequested();
+    void stopNodesRequested();
 
 private:
+    void resizeEvent(QResizeEvent *event) override;
+    void showEvent(QShowEvent *event) override;
+    void updateNavCardSizes();
     void showPage(int row);
     void updateActions();
     void refreshAccess();
@@ -42,6 +55,7 @@ private:
 
     QListWidget *m_nav{nullptr};
     QStackedWidget *m_stack{nullptr};
+    NodeCommSettingsPage *m_nodeCommPage{nullptr};
     QLabel *m_pageTitle{nullptr};
     QLabel *m_accessBanner{nullptr};
     QLabel *m_status{nullptr};

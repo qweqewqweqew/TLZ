@@ -42,24 +42,24 @@ constexpr int kAuditRows = 200;
 QString tableStyle()
 {
     return QStringLiteral(
-               "QTableWidget {"
-               "  background: %1;"
-               "  color: %2;"
-               "  border: 1px solid %3;"
-               "  gridline-color: %4;"
-               "  font-size: 13px;"
+                             "QTableWidget {"
+                             "  background: %1;"
+                             "  color: %2;"
+                             "  border: 1px solid %3;"
+                             "  gridline-color: %4;"
+                             "  font-size: 12px;"
                "  selection-background-color: %6;"
-               "}"
-               "QHeaderView::section {"
-               "  background: %5;"
-               "  color: %2;"
-               "  border: none;"
-               "  padding: 6px;"
-               "}")
-        .arg(Theme::kControlBg,
-             Theme::kTextPrimary,
-             Theme::kBorder,
-             Theme::kDivider,
+                             "}"
+                             "QHeaderView::section {"
+                             "  background: %5;"
+                             "  color: %2;"
+                             "  border: none;"
+                             "  padding: 4px;"
+                             "}")
+                             .arg(Theme::kControlBg,
+                                  Theme::kTextPrimary,
+                                  Theme::kBorder,
+                                  Theme::kDivider,
              Theme::kPanelBg,
              Theme::kSelectionBg);
 }
@@ -75,7 +75,7 @@ QTableWidget *makeTable(const QStringList &headers, QWidget *parent)
     table->setWordWrap(true);
     table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     table->horizontalHeader()->setStretchLastSection(true);
-    table->setStyleSheet(tableStyle());
+    Theme::bindStyle(table, []() { return tableStyle(); });
     return table;
 }
 
@@ -120,10 +120,10 @@ QString comboStyle()
                "  background: %1;"
                "  color: %2;"
                "  border: 1px solid %3;"
-               "  border-radius: 6px;"
-               "  padding: 0 10px;"
-               "  min-height: 32px;"
-               "  font-size: 14px;"
+               "  border-radius: 4px;"
+               "  padding: 0 8px;"
+               "  min-height: 28px;"
+               "  font-size: 12px;"
                "}"
                "QComboBox QAbstractItemView {"
                "  background: %1;"
@@ -156,13 +156,13 @@ public:
         m_dialog.setWindowTitle(title);
         m_dialog.setWindowFlags(m_dialog.windowFlags() & ~Qt::WindowContextHelpButtonHint);
         m_dialog.setModal(true);
-        m_dialog.setFixedWidth(460);
+        m_dialog.setFixedWidth(420);
         m_dialog.setObjectName(QStringLiteral("accountFormDialog"));
         m_dialog.setStyleSheet(QStringLiteral("QDialog#accountFormDialog { background: %1; }")
                                    .arg(Theme::kPanelBg));
         m_layout = new QVBoxLayout(&m_dialog);
-        m_layout->setContentsMargins(24, 20, 24, 20);
-        m_layout->setSpacing(8);
+        m_layout->setContentsMargins(18, 14, 18, 14);
+        m_layout->setSpacing(6);
         auto *heading = makeLabel(title, QStringLiteral("panelTitle"));
         heading->setParent(&m_dialog);
         m_layout->addWidget(heading);
@@ -181,8 +181,8 @@ public:
         m_buttons->addStretch(1);
         auto *cancel = new ElaPushButton(QStringLiteral("取消"), &m_dialog);
         m_ok = new ElaPushButton(okText, &m_dialog);
-        cancel->setMinimumSize(96, 36);
-        m_ok->setMinimumSize(112, 36);
+        cancel->setMinimumSize(84, 30);
+        m_ok->setMinimumSize(98, 30);
         applySecondaryButtonStyle(cancel);
         applyPrimaryButtonStyle(m_ok);
         m_buttons->addWidget(cancel);
@@ -263,7 +263,7 @@ private:
 ElaPushButton *makeActionButton(const QString &text, bool primary, QWidget *parent)
 {
     auto *button = new ElaPushButton(text, parent);
-    button->setMinimumSize(96, 34);
+    button->setMinimumSize(88, 30);
     if (primary) {
         applyPrimaryButtonStyle(button);
     } else {
@@ -275,10 +275,11 @@ ElaPushButton *makeActionButton(const QString &text, bool primary, QWidget *pare
 QLabel *makeLockedHint(const QString &text, QWidget *parent)
 {
     auto *label = settingsHint(text, parent);
-    label->setStyleSheet(QStringLiteral(
-                             "color:%1;font-size:13px;border:none;border-radius:6px;"
-                             "padding:6px 10px;background:%2;")
-                             .arg(Theme::kStateWarning, Theme::kWarningBg));
+    Theme::bindStyle(label, []() {
+        return QStringLiteral("color:%1;font-size:12px;border:none;border-radius:4px;"
+                              "padding:5px 8px;background:%2;")
+            .arg(Theme::kStateWarning, Theme::kWarningBg);
+    });
     return label;
 }
 
@@ -287,22 +288,21 @@ QLabel *makeLockedHint(const QString &text, QWidget *parent)
 AccountSettingsPage::AccountSettingsPage(QWidget *parent)
     : SettingsSubPage(parent)
 {
-    auto *root = new QVBoxLayout(this);
+    auto *root = new QHBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(0);
-    auto *tabs = settingsTabs(this);
-    m_tabs = tabs;
-    root->addWidget(tabs);
+    root->setSpacing(12);
 
     // ---- 当前身份 ----
-    QVBoxLayout *identityTab = addSettingsTab(tabs, QStringLiteral("当前身份"));
-    auto *identityPanel = createPanel(QStringLiteral("登录状态"), nullptr, this);
+    auto *identityPanel = settingsGroupPanel(QStringLiteral("账号与角色"),
+                                              QStringLiteral(":/img/nav_settings.svg"), this);
+    root->addWidget(identityPanel, 1);
     auto *identityLayout = qobject_cast<QVBoxLayout *>(identityPanel->layout());
     m_identity = makeLabel(QString());
     m_identity->setParent(identityPanel);
-    m_identity->setStyleSheet(QStringLiteral(
-                                  "color:%1;font-size:16px;border:none;background:transparent;")
-                                  .arg(Theme::kTextPrimary));
+    Theme::bindStyle(m_identity, []() {
+        return QStringLiteral("color:%1;font-size:14px;border:none;background:transparent;")
+            .arg(Theme::kTextPrimary);
+    });
     identityLayout->addWidget(m_identity);
     m_identityScope = settingsHint(QString(), identityPanel);
     identityLayout->addWidget(m_identityScope);
@@ -317,61 +317,62 @@ AccountSettingsPage::AccountSettingsPage(QWidget *parent)
     identityButtons->addWidget(m_logoutButton);
     identityButtons->addStretch(1);
     identityLayout->addLayout(identityButtons);
-    identityTab->addWidget(identityPanel);
-    identityTab->addWidget(settingsHint(
-        QStringLiteral("监视画面、历史记录、急停、启动 / 停止节点不需要登录，与之前的现场操作一致。"
+    identityLayout->addWidget(settingsHint(
+        QStringLiteral("监视画面、历史记录、启停节点不需要登录，与之前的现场操作一致。"
                        "登录后按角色解锁对应的设置项。"),
-        this));
-    identityTab->addStretch(1);
-    identityTab->addWidget(settingsSourceBanner(
+        identityPanel));
+    identityLayout->addWidget(settingsSourceBanner(
         QStringLiteral("账户保存在 database.ini 指向的 SQLite 数据库。密码用 PBKDF2-SHA256 加 %1 字节随机盐、"
                        "%2 轮迭代保存，不存明文。账户由管理员在「账户管理」创建，或在登录界面「注册」并由管理员现场授权。")
             .arg(PasswordHasher::kSaltBytes)
             .arg(PasswordHasher::kDefaultIterations),
-        this));
+        identityPanel));
 
     // ---- 账户管理 ----
-    QVBoxLayout *usersTab = addSettingsTab(tabs, QStringLiteral("账户管理"), false);
-    m_usersLocked = makeLockedHint(QStringLiteral("需要管理员登录后才能查看和管理账户。"), this);
-    usersTab->addWidget(m_usersLocked);
+    identityLayout->addWidget(settingsSectionHeading(QStringLiteral("账户管理"), identityPanel));
+    m_usersLocked = makeLockedHint(QStringLiteral("需要管理员登录后才能查看和管理账户。"), identityPanel);
+    identityLayout->addWidget(m_usersLocked);
     auto *userButtons = new QHBoxLayout();
     userButtons->setContentsMargins(0, 0, 0, 0);
     userButtons->setSpacing(8);
-    m_createButton = makeActionButton(QStringLiteral("新建账户"), true, this);
-    m_resetButton = makeActionButton(QStringLiteral("重置密码"), false, this);
-    m_roleButton = makeActionButton(QStringLiteral("修改角色"), false, this);
-    m_enableButton = makeActionButton(QStringLiteral("停用"), false, this);
-    m_unlockButton = makeActionButton(QStringLiteral("解锁"), false, this);
+    m_createButton = makeActionButton(QStringLiteral("新建账户"), true, identityPanel);
+    m_resetButton = makeActionButton(QStringLiteral("重置密码"), false, identityPanel);
+    m_roleButton = makeActionButton(QStringLiteral("修改角色"), false, identityPanel);
+    m_enableButton = makeActionButton(QStringLiteral("停用"), false, identityPanel);
+    m_unlockButton = makeActionButton(QStringLiteral("解锁"), false, identityPanel);
     for (ElaPushButton *button :
          {m_createButton, m_resetButton, m_roleButton, m_enableButton, m_unlockButton}) {
         userButtons->addWidget(button);
     }
     userButtons->addStretch(1);
-    usersTab->addLayout(userButtons);
+    identityLayout->addLayout(userButtons);
     m_users = makeTable({QStringLiteral("用户名"),
                          QStringLiteral("角色"),
                          QStringLiteral("状态"),
                          QStringLiteral("最后登录"),
                          QStringLiteral("创建者")},
-                        this);
+                        identityPanel);
     m_users->setWordWrap(false);
     m_users->verticalHeader()->setDefaultSectionSize(36);
     m_users->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    usersTab->addWidget(m_users, 1);
-    usersTab->addStretch(0);
-    usersTab->addWidget(settingsHint(
+    identityLayout->addWidget(m_users, 1);
+    identityLayout->addWidget(settingsHint(
         QStringLiteral("系统只有一个管理员，新建账户只能是操作员或技术员；管理员不能修改自己的角色、不能停用自己。"
                        "账户不提供删除，离职人员请停用，以保留审计记录的对应关系。"),
-        this));
+        identityPanel));
 
     // ---- 角色与权限 ----
-    QVBoxLayout *matrixTab = addSettingsTab(tabs, QStringLiteral("角色与权限"));
+    auto *securityPanel = settingsGroupPanel(QStringLiteral("安全联锁与会话"),
+                                              QStringLiteral(":/img/kpi_alert.svg"), this);
+    root->addWidget(securityPanel, 1);
+    auto *securityLayout = qobject_cast<QVBoxLayout *>(securityPanel->layout());
+    securityLayout->addWidget(settingsSectionHeading(QStringLiteral("角色与权限"), securityPanel));
     const QVector<Permission> permissions = Auth::allPermissions();
     auto *matrix = makeTable({QStringLiteral("权限点"),
                               Auth::roleDisplayName(Role::Operator),
                               Auth::roleDisplayName(Role::Technician),
                               Auth::roleDisplayName(Role::Administrator)},
-                             this);
+                             securityPanel);
     matrix->setSelectionMode(QAbstractItemView::NoSelection);
     matrix->setFocusPolicy(Qt::NoFocus);
     matrix->setWordWrap(false);
@@ -392,8 +393,8 @@ AccountSettingsPage::AccountSettingsPage(QWidget *parent)
             matrix->setItem(row, column++, cell);
         }
     }
-    constexpr int kMatrixRowHeight = 38;
-    constexpr int kMatrixRoleColumnWidth = 96;
+    constexpr int kMatrixRowHeight = 30;
+    constexpr int kMatrixRoleColumnWidth = 84;
     QHeaderView *matrixHeader = matrix->horizontalHeader();
     matrixHeader->setStretchLastSection(false);
     matrixHeader->setSectionResizeMode(0, QHeaderView::Stretch);
@@ -401,23 +402,20 @@ AccountSettingsPage::AccountSettingsPage(QWidget *parent)
         matrixHeader->setSectionResizeMode(column, QHeaderView::Fixed);
         matrix->setColumnWidth(column, kMatrixRoleColumnWidth);
     }
-    matrixHeader->setFixedHeight(36);
+    matrixHeader->setFixedHeight(30);
     matrix->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
     matrix->verticalHeader()->setDefaultSectionSize(kMatrixRowHeight);
     matrix->setFixedHeight(matrixHeader->height() + permissions.size() * kMatrixRowHeight
                            + 2 * matrix->frameWidth());
-    matrixTab->addWidget(matrix);
-    matrixTab->addWidget(settingsHint(
+    securityLayout->addWidget(matrix);
+    securityLayout->addWidget(settingsHint(
         QStringLiteral("角色逐级包含。没有权限的设置项照样可以查看，但控件置灰；"
                        "保存时还会再校验一次，并记入操作审计。「确认报警」在报警页接入后生效。"),
-        this));
-    matrixTab->addStretch(1);
+        securityPanel));
 
     // ---- 会话与锁定 ----
-    QVBoxLayout *sessionTab = addSettingsTab(tabs, QStringLiteral("会话与锁定"));
-    m_sessionTabIndex = tabs->count() - 1;
-    auto *sessionPanel = createPanel(QStringLiteral("会话超时"), nullptr, this);
-    auto *sessionHost = new QWidget(sessionPanel);
+    securityLayout->addWidget(settingsSectionHeading(QStringLiteral("会话与登录保护"), securityPanel));
+    auto *sessionHost = new QWidget(securityPanel);
     QFormLayout *sessionForm = settingsFormLayout(sessionHost);
     m_sessionTimeout = settingsSpinBox(sessionHost);
     m_sessionTimeout->setRange(AuthService::kMinSessionTimeoutMinutes,
@@ -429,18 +427,16 @@ AccountSettingsPage::AccountSettingsPage(QWidget *parent)
                      QStringLiteral("空闲超过该时长自动退出登录，界面退回只读，未保存的修改会被丢弃。"
                                     "只有管理员能修改，改完点页底「保存」。"),
                      sessionHost);
-    qobject_cast<QVBoxLayout *>(sessionPanel->layout())->addWidget(sessionHost);
-    sessionPanel->setMaximumWidth(720);
-    sessionTab->addWidget(sessionPanel);
+    securityLayout->addWidget(sessionHost);
 
-    auto *lockPanel = createPanel(QStringLiteral("登录保护"), nullptr, this);
-    auto *lockHost = new QWidget(lockPanel);
+    auto *lockHost = new QWidget(securityPanel);
     QFormLayout *lockForm = settingsFormLayout(lockHost);
     const auto addFact = [lockForm, lockHost](const QString &name, const QString &value) {
         auto *label = settingsHint(value, lockHost);
-        label->setStyleSheet(QStringLiteral(
-                                 "color:%1;font-size:14px;border:none;background:transparent;")
-                                 .arg(Theme::kTextPrimary));
+        Theme::bindStyle(label, []() {
+            return QStringLiteral("color:%1;font-size:14px;border:none;background:transparent;")
+                .arg(Theme::kTextPrimary);
+        });
         addSettingsField(lockForm, name, label, QString(), lockHost);
     };
     addFact(QStringLiteral("失败锁定"),
@@ -449,23 +445,24 @@ AccountSettingsPage::AccountSettingsPage(QWidget *parent)
                 .arg(AuthService::kLockoutMinutes));
     addFact(QStringLiteral("首次改密"), QStringLiteral("新建账户或被重置密码后，首次登录必须先改密"));
     addFact(QStringLiteral("密码规则"), PasswordPolicy::passwordRequirementText());
-    qobject_cast<QVBoxLayout *>(lockPanel->layout())->addWidget(lockHost);
-    lockPanel->setMaximumWidth(720);
-    sessionTab->addWidget(lockPanel);
-    sessionTab->addStretch(1);
+    securityLayout->addWidget(lockHost);
+    securityLayout->addStretch(1);
 
     // ---- 操作审计 ----
-    QVBoxLayout *auditTab = addSettingsTab(tabs, QStringLiteral("操作审计"), false);
-    m_auditLocked = makeLockedHint(QStringLiteral("需要管理员登录后才能查看操作审计。"), this);
-    auditTab->addWidget(m_auditLocked);
+    auto *auditPanel = settingsGroupPanel(QStringLiteral("操作审计"),
+                                           QStringLiteral(":/img/kpi_check.svg"), this);
+    root->addWidget(auditPanel, 1);
+    auto *auditLayout = qobject_cast<QVBoxLayout *>(auditPanel->layout());
+    m_auditLocked = makeLockedHint(QStringLiteral("需要管理员登录后才能查看操作审计。"), auditPanel);
+    auditLayout->addWidget(m_auditLocked);
     auto *auditHeader = new QHBoxLayout();
     auditHeader->setContentsMargins(0, 0, 0, 0);
     auditHeader->setSpacing(8);
-    m_auditCaption = settingsHint(QStringLiteral("最近 %1 条，只追加，不记录任何密码。").arg(kAuditRows), this);
+    m_auditCaption = settingsHint(QStringLiteral("最近 %1 条，只追加，不记录任何密码。").arg(kAuditRows), auditPanel);
     auditHeader->addWidget(m_auditCaption, 1);
-    m_auditRefreshButton = makeActionButton(QStringLiteral("刷新"), false, this);
+    m_auditRefreshButton = makeActionButton(QStringLiteral("刷新"), false, auditPanel);
     auditHeader->addWidget(m_auditRefreshButton);
-    auditTab->addLayout(auditHeader);
+    auditLayout->addLayout(auditHeader);
     m_audit = makeTable({QStringLiteral("时间"),
                          QStringLiteral("用户"),
                          QStringLiteral("角色"),
@@ -473,13 +470,12 @@ AccountSettingsPage::AccountSettingsPage(QWidget *parent)
                          QStringLiteral("对象"),
                          QStringLiteral("结果"),
                          QStringLiteral("详情")},
-                        this);
+                        auditPanel);
     m_audit->setSelectionMode(QAbstractItemView::NoSelection);
     m_audit->setWordWrap(false);
     m_audit->setTextElideMode(Qt::ElideRight);
     m_audit->verticalHeader()->setDefaultSectionSize(32);
-    auditTab->addWidget(m_audit, 1);
-    auditTab->addStretch(0);
+    auditLayout->addWidget(m_audit, 1);
 
     connect(m_loginButton, &ElaPushButton::clicked, this, [this]() { LoginDialog::runLogin(this); });
     connect(m_changePasswordButton, &ElaPushButton::clicked, this, [this]() {
@@ -490,7 +486,6 @@ AccountSettingsPage::AccountSettingsPage(QWidget *parent)
     connect(m_logoutButton, &ElaPushButton::clicked, this, []() { AuthService::instance().logout(); });
     connect(m_sessionTimeout, qOverload<int>(&QSpinBox::valueChanged), this,
             [this](int) { emit dirtyChanged(isDirty()); });
-    connect(tabs, &QTabWidget::currentChanged, this, [this](int) { emit editableChanged(); });
     connect(m_users, &QTableWidget::itemSelectionChanged, this, &AccountSettingsPage::updateUserActions);
     connect(m_createButton, &ElaPushButton::clicked, this, &AccountSettingsPage::createUser);
     connect(m_resetButton, &ElaPushButton::clicked, this, &AccountSettingsPage::resetPassword);
@@ -523,8 +518,7 @@ QString AccountSettingsPage::bindingSummary() const
 
 bool AccountSettingsPage::isEditable() const
 {
-    // 有未保存的超时修改时仍保留按钮，避免切到别的页签后修改被藏起来。
-    return (m_tabs && m_tabs->currentIndex() == m_sessionTabIndex) || isDirty();
+    return true;
 }
 
 bool AccountSettingsPage::isDirty() const
