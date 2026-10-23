@@ -12,6 +12,7 @@
 #include "ui/settings/VisionSettingsPage.h"
 
 #include <QAbstractItemView>
+#include <QColor>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -66,14 +67,17 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
                       "QListWidget#settingsNav::item:selected {"
                       "  background: %5; color: %6; border-color: %6;"
                       "}"
+                      "QListWidget#settingsNav::item:selected:hover { background: %8; }"
+                      "QListWidget#settingsNav::item:selected:pressed { background: %9; }"
                       "QListWidget#settingsNav::item:hover { background: %7; }")
                       .arg(Theme::kCanvasBg,
                            Theme::kPanelBg,
                            Theme::kTextPrimary,
                            Theme::kBorder,
-                           Theme::kControlBg,
-                           Theme::markColor(),
-                           Theme::kHoverBg));
+                           Theme::kSelectionBg,
+                           Theme::kSelectionText,
+                           Theme::kHoverBg)
+                      .arg(Theme::kSelectedHoverBg, Theme::kSelectedPressedBg));
     Theme::watch(this, [this]() {
         setStyleSheet(QStringLiteral(
                           "QWidget#settingsPage { background: %1; }"
@@ -93,14 +97,18 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
                           "QListWidget#settingsNav::item:selected {"
                           "  background: %5; color: %6; border-color: %6;"
                           "}"
+                          "QListWidget#settingsNav::item:selected:hover { background: %8; }"
+                          "QListWidget#settingsNav::item:selected:pressed { background: %9; }"
                           "QListWidget#settingsNav::item:hover { background: %7; }")
                           .arg(Theme::kCanvasBg,
                                Theme::kPanelBg,
                                Theme::kTextPrimary,
                                Theme::kBorder,
-                               Theme::kControlBg,
-                               Theme::markColor(),
-                               Theme::kHoverBg));
+                               Theme::kSelectionBg,
+                               Theme::kSelectionText,
+                               Theme::kHoverBg)
+                          .arg(Theme::kSelectedHoverBg, Theme::kSelectedPressedBg));
+        updateNavIcons();
         updateAccessBanner();
         if (m_status && !m_status->text().isEmpty()) {
             setStatus(m_status->text(), m_status->property("problem").toBool());
@@ -174,7 +182,11 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
     root->addLayout(contentColumn, 1);
 
     const auto addPage = [this](const QString &title, const QString &iconPath, SettingsSubPage *page) {
-        auto *item = new QListWidgetItem(QIcon(iconPath), title, m_nav);
+        auto *item = new QListWidgetItem(title, m_nav);
+        // 图标交给 tintedIcon 按当前主题着色，深色模式显示为白色。
+        item->setData(Qt::UserRole, iconPath);
+        item->setIcon(QIcon(tintedIcon(iconPath, QColor(Theme::kTextPrimary), 30,
+                                       m_nav->devicePixelRatioF())));
         item->setTextAlignment(Qt::AlignCenter);
         m_stack->addWidget(page);
         connect(page, &SettingsSubPage::dirtyChanged, this, [this, page](bool) {
@@ -196,8 +208,8 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
     };
     addPage(QStringLiteral("设备与通信"), QStringLiteral(":/img/nav_settings.svg"),
             new NodeCommSettingsPage(m_stack));
-    addPage(QStringLiteral("检测与标定"), QStringLiteral(":/img/nav_detect.svg"),
-            new VisionSettingsPage(m_stack));
+    m_visionPage = new VisionSettingsPage(m_stack);
+    addPage(QStringLiteral("检测与标定"), QStringLiteral(":/img/nav_detect.svg"), m_visionPage);
     addPage(QStringLiteral("修磨工艺"), QStringLiteral(":/img/kpi_target.svg"),
             new ProcessSettingsPage(bridge, m_stack));
     addPage(QStringLiteral("安全与权限"), QStringLiteral(":/img/kpi_alert.svg"),
@@ -207,6 +219,21 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
             this, &SettingsPage::startNodesRequested);
     connect(m_nodeCommPage, &NodeCommSettingsPage::stopNodesRequested,
             this, &SettingsPage::stopNodesRequested);
+    connect(m_nodeCommPage, &NodeCommSettingsPage::hikCameraConnectRequested,
+            this, &SettingsPage::hikCameraConnectRequested);
+    connect(m_nodeCommPage, &NodeCommSettingsPage::hikCameraDisconnectRequested,
+            this, &SettingsPage::hikCameraDisconnectRequested);
+    connect(m_visionPage, &VisionSettingsPage::previewRequested,
+            this, &SettingsPage::hikCameraPreviewRequested);
+    connect(m_visionPage, &VisionSettingsPage::stopPreviewRequested,
+            this, &SettingsPage::hikCameraDisconnectRequested);
+    connect(m_visionPage, &VisionSettingsPage::refreshCameraDiagnosticsRequested,
+            this, &SettingsPage::refreshCameraDiagnosticsRequested);
+    connect(m_visionPage, &VisionSettingsPage::processSettingsRequested, this, [this]() {
+        if (m_nav) {
+            m_nav->setCurrentRow(2);
+        }
+    });
 
     connect(m_nav, &QListWidget::currentRowChanged, this, [this](int row) {
         if (m_updatingNav || row < 0 || row == m_currentRow) {
@@ -279,6 +306,26 @@ void SettingsPage::updateNavCardSizes()
     }
 }
 
+void SettingsPage::updateNavIcons()
+{
+    if (!m_nav) {
+        return;
+    }
+    const QColor color(Theme::kTextPrimary);
+    const qreal dpr = m_nav->devicePixelRatioF();
+    for (int i = 0; i < m_nav->count(); ++i) {
+        auto *item = m_nav->item(i);
+        if (!item) {
+            continue;
+        }
+        const QString iconPath = item->data(Qt::UserRole).toString();
+        if (iconPath.isEmpty()) {
+            continue;
+        }
+        item->setIcon(QIcon(tintedIcon(iconPath, color, 30, dpr)));
+    }
+}
+
 void SettingsPage::setNodesRunning(bool running)
 {
     if (m_nodeCommPage) {
@@ -290,6 +337,43 @@ void SettingsPage::setNodesBusy(bool busy)
 {
     if (m_nodeCommPage) {
         m_nodeCommPage->setNodesBusy(busy);
+    }
+}
+
+void SettingsPage::setCameraNodeStatus(bool connected, const QString &detail)
+{
+    if (m_nodeCommPage) {
+        m_nodeCommPage->setCameraNodeStatus(connected, detail);
+    }
+    if (m_visionPage) {
+        m_visionPage->setCameraNodeStatus(connected, detail);
+    }
+}
+
+void SettingsPage::setCameraTopicDiagnostics(bool bridgeRunning, int publisherCount)
+{
+    if (m_nodeCommPage) {
+        m_nodeCommPage->setCameraTopicDiagnostics(bridgeRunning, publisherCount);
+    }
+    if (m_visionPage) {
+        m_visionPage->setCameraTopicDiagnostics(bridgeRunning, publisherCount);
+    }
+}
+
+void SettingsPage::setHikCameraStatus(bool connected, const QString &detail)
+{
+    if (m_nodeCommPage) {
+        m_nodeCommPage->setHikCameraStatus(connected, detail);
+    }
+    if (m_visionPage) {
+        m_visionPage->setHikCameraStatus(connected, detail);
+    }
+}
+
+void SettingsPage::setPlcDeviceStatus(const QString &status, const QString &detail)
+{
+    if (m_nodeCommPage) {
+        m_nodeCommPage->setPlcDeviceStatus(status, detail);
     }
 }
 
@@ -329,7 +413,7 @@ void SettingsPage::showPage(int row)
     if (!m_stack || row < 0 || row >= m_stack->count()) {
         return;
     }
-    m_stack->setCurrentIndex(row);
+    fadeToStackedWidgetPage(m_stack, m_stack->widget(row));
     if (m_pageTitle && m_nav && m_nav->item(row)) {
         m_pageTitle->setText(m_nav->item(row)->text());
     }

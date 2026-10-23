@@ -83,6 +83,8 @@ private:
     QRect hoverBoxRect(const QPointF &anchor, const QString &text, const QRect &area) const;
     QString coordinateTextAt(int column, int row) const;
     int hitTestPath(const QPointF &widgetPos) const;
+    // 同上，但使用自定义命中半径（用于"点击粒子附近"的宽容命中）。
+    int hitTestPathInRange(const QPointF &widgetPos, double thresholdPx) const;
     QString tooltipForPath(const MillingPathVM &path, int indexOneBased) const;
     bool mapMetricToImage(double xMm, double yMm, double *uOut, double *vOut) const;
     void recomputeToolPoseMapping();

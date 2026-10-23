@@ -28,6 +28,9 @@ struct Palette
     const char *hoverBg;
     const char *pressedBg;
     const char *selectionBg;
+    const char *selectedHoverBg;
+    const char *selectedPressedBg;
+    const char *focusRing;
     const char *textPrimary;
     const char *textSecondary;
     const char *textMuted;
@@ -53,7 +56,7 @@ struct Palette
 // 深色：炭灰分层，钢蓝做交互，实时数用金色。
 const Palette kDark = {
     "#0B1014", "#171D22", "#20272D", "#20272D", "#080D11", "#0E1418", "#0D1216",
-    "#303A42", "#283138", "#273038", "#1D252B", "#1C4960",
+    "#303A42", "#283138", "#1C252C", "#111920", "#244B62", "#1F4056", "#173449", "#55B8E6",
     "#E8ECEF", "#A7B0B7", "#74828C", "#A7B0B7", "#FFFFFF",
     "#E8ECEF", "#E8ECEF",
     "#2697D4", "#2697D4", "#FFFFFF", "#F4C542",
@@ -64,9 +67,9 @@ const Palette kDark = {
 // 浅色沿用麦肯锡：白底，标题藏蓝，正文石板灰，亮蓝每页只留一处。
 const Palette kLight = {
     "#FFFFFF", "#FFFFFF", "#F0F4F8", "#FFFFFF", "#F0F4F8", "#F0F4F8", "#FFFFFF",
-    "#F0F4F8", "#F0F4F8", "#F0F4F8", "#F0F4F8", "#F0F4F8",
+    "#D6E0E9", "#E7EDF3", "#E5F0F7", "#C4DDED", "#D7ECFA", "#C0E2F7", "#9FCDE8", "#287DB2",
     "#4E5B66", "#4E5B66", "#4E5B66", "#4E5B66", "#FFFFFF",
-    "#002D62", "#002D62",
+    "#002D62", "#17466F",
     "#2251FF", "#002D62", "#FFFFFF", "#2251FF",
     "#03735C", "#002D62", "#B86E00", "#C73E3A", "#4E5B66",
     "#E5F4F0", "#F0F4F8", "#FBF3E6", "#FBECEA",
@@ -99,6 +102,9 @@ void assign(const Palette &palette)
     kHoverBg = palette.hoverBg;
     kPressedBg = palette.pressedBg;
     kSelectionBg = palette.selectionBg;
+    kSelectedHoverBg = palette.selectedHoverBg;
+    kSelectedPressedBg = palette.selectedPressedBg;
+    kFocusRing = palette.focusRing;
     kTextPrimary = palette.textPrimary;
     kTextSecondary = palette.textSecondary;
     kTextMuted = palette.textMuted;
@@ -195,6 +201,9 @@ const char *kDivider = kLight.divider;
 const char *kHoverBg = kLight.hoverBg;
 const char *kPressedBg = kLight.pressedBg;
 const char *kSelectionBg = kLight.selectionBg;
+const char *kSelectedHoverBg = kLight.selectedHoverBg;
+const char *kSelectedPressedBg = kLight.selectedPressedBg;
+const char *kFocusRing = kLight.focusRing;
 const char *kTextPrimary = kLight.textPrimary;
 const char *kTextSecondary = kLight.textSecondary;
 const char *kTextMuted = kLight.textMuted;

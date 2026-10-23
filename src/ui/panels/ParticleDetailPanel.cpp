@@ -8,8 +8,71 @@
 #include <QLabel>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <cstring>
+
 namespace {
 
+// 从整板点云里裁出以路径（粒子）为中心的一块，避免右侧 3D 视图显示整块铜板。
+// u/v 是扫描图的像素坐标，xScaleMm / yScaleMm 只影响显示比例，裁剪仍按像素进行。
+// TODO(粒子数据): 这是占位实现。算法侧已有粒子识别结果，但尚未通过 ROS topic 下发，
+// 目前只能用铣削路径的 u/v 包围盒近似粒子范围。算法数据接入后，把入参换成粒子 bbox，
+// 并同步替换 ImageViewFrame 里基于路径线的命中测试。详见 README「粒子信息与粒子三维点云」。
+PointCloudFrame cropParticleCloud(const PointCloudFrame &frame, const MillingPathVM &path)
+{
+    if (!frame.hasFloatRange()) {
+        return PointCloudFrame();
+    }
+    const int w = int(frame.width);
+    const int h = int(frame.height);
+    const int u0 = std::min(path.uStart, path.uEnd);
+    const int u1 = std::max(path.uStart, path.uEnd);
+    const int v0 = std::min(path.vStart, path.vEnd);
+    const int v1 = std::max(path.vStart, path.vEnd);
+
+    // 粒子半径留白：至少 16 px，长路径按跨度的一半扩展。
+    const int span = std::max(u1 - u0, v1 - v0);
+    const int margin = std::max(16, span / 2);
+    const int x0 = std::clamp(u0 - margin, 0, w - 1);
+    const int x1 = std::clamp(u1 + margin, 0, w - 1);
+    const int y0 = std::clamp(v0 - margin, 0, h - 1);
+    const int y1 = std::clamp(v1 + margin, 0, h - 1);
+    const int cw = x1 - x0 + 1;
+    const int ch = y1 - y0 + 1;
+    if (cw < 8 || ch < 8) {
+        return PointCloudFrame();
+    }
+
+    PointCloudFrame out;
+    out.frameId = frame.frameId;
+    out.taskId = frame.taskId;
+    out.timestampNs = frame.timestampNs;
+    out.width = quint32(cw);
+    out.height = quint32(ch);
+    out.rangePixelFormat = frame.rangePixelFormat;
+    out.intensityPixelFormat = frame.intensityPixelFormat;
+    out.hasMetricGeometry = frame.hasMetricGeometry;
+    out.xScaleMm = frame.xScaleMm;
+    out.yScaleMm = frame.yScaleMm;
+    out.missingValue = frame.missingValue;
+    out.encoderResolutionMm = frame.encoderResolutionMm;
+    // 保留绝对坐标，方便和 2D 位置对应。
+    out.xOffsetMm = frame.xOffsetMm + double(x0) * frame.xScaleMm;
+    out.yOffsetMm = frame.yOffsetMm + double(y0) * frame.yScaleMm;
+    if (!frame.encoderValues.isEmpty() && frame.encoderValues.size() == h) {
+        out.encoderValues = frame.encoderValues.mid(y0, ch);
+    }
+
+    out.rangeFloat32.resize(int(std::size_t(cw) * std::size_t(ch) * sizeof(float)));
+    const float *src = reinterpret_cast<const float *>(frame.rangeFloat32.constData());
+    float *dst = reinterpret_cast<float *>(out.rangeFloat32.data());
+    for (int row = 0; row < ch; ++row) {
+        std::memcpy(dst + std::size_t(row) * std::size_t(cw),
+                    src + std::size_t(y0 + row) * std::size_t(w) + std::size_t(x0),
+                    std::size_t(cw) * sizeof(float));
+    }
+    return out;
+}
 
 class ParticlePreview : public QWidget
 {
@@ -61,7 +124,7 @@ ParticleDetailPanel::ParticleDetailPanel(QWidget *parent)
     auto *cloudLayout = new QVBoxLayout(cloudColumn);
     cloudLayout->setContentsMargins(0, 0, 0, 0);
     cloudLayout->setSpacing(8);
-    auto *cloudTitle = new QLabel(QStringLiteral("三维点云"), cloudColumn);
+    auto *cloudTitle = new QLabel(QStringLiteral("粒子三维点云"), cloudColumn);
     Theme::bindStyle(cloudTitle, []() {
         return QStringLiteral("color:%1;font-size:16px;font-weight:600;background:transparent;border:none;")
             .arg(Theme::kTitle);
@@ -93,11 +156,8 @@ ParticleDetailPanel::ParticleDetailPanel(QWidget *parent)
 void ParticleDetailPanel::setPointCloudFrame(const PointCloudFrame &frame)
 {
     m_frame = frame;
-    if (m_preview) {
-        static_cast<ParticlePreview *>(m_preview)->setFrame(frame);
-    } else if (m_heightMap) {
-        m_heightMap->setPointCloudFrame(frame);
-    }
+    // 只保存整板点云；具体显示哪一块由当前选中的粒子决定。
+    refreshParticleCloud();
     refresh();
 }
 
@@ -107,7 +167,25 @@ void ParticleDetailPanel::setMillingPaths(const QVector<MillingPathVM> &paths)
     m_selected = -1;
     m_completed = 0;
     m_current = 0;
+    refreshParticleCloud();
     refresh();
+}
+
+void ParticleDetailPanel::refreshParticleCloud()
+{
+    PointCloudFrame particleFrame;
+    if (m_selected >= 0 && m_selected < m_paths.size()) {
+        particleFrame = cropParticleCloud(m_frame, m_paths[m_selected]);
+    }
+    if (auto *preview = static_cast<ParticlePreview *>(m_preview)) {
+        preview->setFrame(particleFrame);
+    } else if (m_heightMap) {
+        if (particleFrame.hasFloatRange()) {
+            m_heightMap->setPointCloudFrame(particleFrame);
+        } else {
+            m_heightMap->clearPointCloud();
+        }
+    }
 }
 
 void ParticleDetailPanel::setTaskInfo(int maxParticleHeight, const QString &grade)
@@ -120,6 +198,7 @@ void ParticleDetailPanel::setTaskInfo(int maxParticleHeight, const QString &grad
 void ParticleDetailPanel::selectPath(int pathIndex)
 {
     m_selected = (pathIndex >= 0 && pathIndex < m_paths.size()) ? pathIndex : -1;
+    refreshParticleCloud();
     refresh();
 }
 
@@ -157,11 +236,7 @@ void ParticleDetailPanel::clear()
     m_current = 0;
     m_maxParticleHeight = -1;
     m_grade.clear();
-    if (m_preview) {
-        static_cast<ParticlePreview *>(m_preview)->setFrame(PointCloudFrame());
-    } else if (m_heightMap) {
-        m_heightMap->clearPointCloud();
-    }
+    refreshParticleCloud();
     setTaskProgress(0.0f);
     refresh();
 }

@@ -224,17 +224,19 @@ QFrame *settingsGroupPanel(const QString &title, const QString &iconResource, QW
     titleLabel->setParent(copy);
     auto *subtitle = settingsHint(QString(), copy);
     static const QHash<QString, QString> subtitles = {
-        {QStringLiteral("节点与服务"), QStringLiteral("运行控制与启动配置")},
-        {QStringLiteral("数据库与存储"), QStringLiteral("连接状态与本地数据源")},
-        {QStringLiteral("设备通信"), QStringLiteral("现场设备链路配置")},
-        {QStringLiteral("扫描采集"), QStringLiteral("相机连接与图像采集")},
-        {QStringLiteral("检测判定"), QStringLiteral("粒子识别与质量规则")},
-        {QStringLiteral("坐标标定"), QStringLiteral("相机、工件与机床坐标")},
-        {QStringLiteral("坐标与示教"), QStringLiteral("补偿参数与现场示教")},
+        {QStringLiteral("节点服务"), QStringLiteral("运行控制与启动检查")},
+        {QStringLiteral("数据存储"), QStringLiteral("数据库结构与图像记录")},
+        {QStringLiteral("设备状态"), QStringLiteral("相机、PLC 与现场连接")},
+        {QStringLiteral("相机节点"), QStringLiteral("ROS 2 状态与诊断")},
+        {QStringLiteral("实时预览"), QStringLiteral("连接相机并查看画面")},
+        {QStringLiteral("检测判定"), QStringLiteral("粒子阈值与分级规则")},
+        {QStringLiteral("坐标标定"), QStringLiteral("补偿参数与标定状态")},
+        {QStringLiteral("坐标补偿"), QStringLiteral("XYZ 偏移与 PLC 下发")},
+        {QStringLiteral("现场示教"), QStringLiteral("采集当前机械位置")},
         {QStringLiteral("修磨参数"), QStringLiteral("加工参数与安全边界")},
-        {QStringLiteral("策略与复检"), QStringLiteral("任务策略与质量复核")},
-        {QStringLiteral("账号与角色"), QStringLiteral("当前身份与用户管理")},
-        {QStringLiteral("安全联锁与会话"), QStringLiteral("权限范围与登录保护")},
+        {QStringLiteral("复检策略"), QStringLiteral("修磨分级与质量复核")},
+        {QStringLiteral("账号管理"), QStringLiteral("用户、角色与账户状态")},
+        {QStringLiteral("权限与登录保护"), QStringLiteral("角色授权与会话策略")},
         {QStringLiteral("操作审计"), QStringLiteral("关键操作记录与追溯")},
     };
     subtitle->setText(subtitles.value(title));
@@ -306,7 +308,6 @@ QTabWidget *settingsTabs(QWidget *parent)
     tabs->tabBar()->setExpanding(false);
     tabs->tabBar()->setIconSize(QSize(16, 16));
     Theme::bindStyle(tabs, []() {
-        const char *selected = Theme::current() == Theme::Id::Light ? Theme::kTitle : Theme::kAccent;
         return QStringLiteral(
                    "QTabWidget#settingsTabs::pane { border:none; top:0px; }"
                    "QTabWidget#settingsTabs > QStackedWidget { background:transparent; }"
@@ -318,13 +319,16 @@ QTabWidget *settingsTabs(QWidget *parent)
                    "QTabWidget#settingsTabs QTabBar::tab:selected {"
                    "  background:%4; color:%5; border-color:%5;"
                    "}"
+                   "QTabWidget#settingsTabs QTabBar::tab:selected:hover { background:%7; }"
+                   "QTabWidget#settingsTabs QTabBar::tab:selected:pressed { background:%8; }"
                    "QTabWidget#settingsTabs QTabBar::tab:hover:!selected { background:%6; }")
             .arg(Theme::kPanelBg,
                  Theme::kTextSecondary,
                  Theme::kBorder,
-                 Theme::kControlBg,
-                 selected,
-                 Theme::kHoverBg);
+                 Theme::kSelectionBg,
+                 Theme::kSelectionText,
+                 Theme::kHoverBg)
+            .arg(Theme::kSelectedHoverBg, Theme::kSelectedPressedBg);
     });
     return tabs;
 }

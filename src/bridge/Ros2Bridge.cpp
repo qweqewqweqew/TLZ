@@ -21,6 +21,7 @@
 #include <QMetaObject>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -224,6 +225,7 @@ QImage wrapMono8ToGrayscale8(const RawSlice &slice,
 struct Ros2BridgeEntities final
 {
     rclcpp::Subscription<mz_interfaces::msg::CameraStatus>::SharedPtr cameraStatus;
+    rclcpp::TimerBase::SharedPtr cameraStatusDiagnosticsTimer;
     rclcpp::Subscription<mz_interfaces::msg::ScanResult>::SharedPtr scanRange;
     rclcpp::Subscription<mz_interfaces::msg::ScanResult>::SharedPtr scanIntensity;
     rclcpp::Subscription<mz_interfaces::msg::ScanGeometry>::SharedPtr scanGeometry;
@@ -592,6 +594,15 @@ bool Ros2Bridge::start()
                         QString::fromStdString(msg->camera_id),
                         QString::fromStdString(msg->message));
                 });
+        m_entities->cameraStatusDiagnosticsTimer = m_node->create_wall_timer(
+            std::chrono::seconds(1),
+            [this]() {
+                if (m_entities && m_entities->cameraStatus) {
+                    emit cameraStatusDiagnosticsChanged(
+                        true,
+                        static_cast<int>(m_entities->cameraStatus->get_publisher_count()));
+                }
+            });
 
         m_entities->millingPaths = m_node->create_subscription<mz_interfaces::msg::MillingPaths>(
             kMillingPathsTopic,
@@ -752,6 +763,7 @@ void Ros2Bridge::stop()
     }
 
     m_running = false;
+    emit cameraStatusDiagnosticsChanged(false, 0);
 
     if (m_executor) {
         m_executor->cancel();
@@ -789,6 +801,17 @@ void Ros2Bridge::stop()
 bool Ros2Bridge::isRunning() const
 {
     return m_running;
+}
+
+void Ros2Bridge::refreshCameraStatusDiagnostics()
+{
+    if (!m_running || !m_entities || !m_entities->cameraStatus) {
+        emit cameraStatusDiagnosticsChanged(false, 0);
+        return;
+    }
+    emit cameraStatusDiagnosticsChanged(
+        true,
+        static_cast<int>(m_entities->cameraStatus->get_publisher_count()));
 }
 
 void Ros2Bridge::queueMillingProgress(quint64 taskId,

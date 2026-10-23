@@ -38,6 +38,7 @@ public:
     bool start();
     void stop();
     bool isRunning() const;
+    void refreshCameraStatusDiagnostics();
 
     void publishTeachRequest();
     // 写入坐标补偿（mm）到 plc/coordinate_offset，JSON: {"x":..,"y":..,"z":..}
@@ -64,6 +65,7 @@ signals:
     void cameraStatusReceived(bool connected,
                               const QString &cameraId,
                               const QString &message);
+    void cameraStatusDiagnosticsChanged(bool bridgeRunning, int publisherCount);
 
     // 打磨路径全量下发（后端 → 前端）。
     void millingPathsReceived(quint64 taskId,

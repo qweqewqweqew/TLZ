@@ -11,7 +11,7 @@ class HeightMap3DFrame;
 class QVBoxLayout;
 class QWidget;
 
-// 右侧点云区：通栏 3D 点云，右侧竖排修磨数据，底部一条直线进度。
+// 右侧点云区：显示「2D 图里选中的单个粒子」的三维点云，右侧竖排修磨数据。
 class ParticleDetailPanel : public QFrame
 {
     Q_OBJECT
@@ -33,6 +33,8 @@ public:
 
 private:
     void refresh();
+    // 从整板点云里裁出当前选中粒子附近的区域，喂给 3D 视图。
+    void refreshParticleCloud();
 
     HeightMap3DFrame *m_heightMap{nullptr};
     QWidget *m_preview{nullptr};

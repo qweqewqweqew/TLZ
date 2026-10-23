@@ -2,6 +2,7 @@
 
 #include "ElaPushButton.h"
 #include "camera/HikLiveView.h"
+#include "vision/HeightMap3DFrame.h"
 #include "vision/ImageViewFrame.h"
 #include "app/Theme.h"
 #include "app/UiHelpers.h"
@@ -63,7 +64,7 @@ ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
     rootLayout->addWidget(panel);
     auto *panelLayout = qobject_cast<QVBoxLayout *>(panel->layout());
 
-    // ---- 工具栏：视图切换 | 演示 | 缩放 ----
+    // ---- 工具栏：视图切换 | 缩放 ----
     auto *toolbar = new QWidget(panel);
     auto *toolbarLayout = new QHBoxLayout(toolbar);
     toolbarLayout->setContentsMargins(0, 0, 0, 0);
@@ -72,9 +73,10 @@ ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
     m_view2dButton = new ElaPushButton(QStringLiteral("粒子分布"), toolbar);
     m_liveViewButton = new ElaPushButton(QStringLiteral("实时画面"), toolbar);
     m_algorithmImageButton = new ElaPushButton(QStringLiteral("算法图像"), toolbar);
+    m_pointCloudButton = new ElaPushButton(QStringLiteral("三维点云"), toolbar);
     auto *viewModeGroup = new QButtonGroup(this);
     viewModeGroup->setExclusive(true);
-    for (ElaPushButton *button : {m_view2dButton, m_liveViewButton, m_algorithmImageButton}) {
+    for (ElaPushButton *button : {m_view2dButton, m_liveViewButton, m_algorithmImageButton, m_pointCloudButton}) {
         button->setFixedSize(84, 28);
         button->setCheckable(true);
         viewModeGroup->addButton(button);
@@ -82,12 +84,6 @@ ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
     }
     m_view2dButton->setChecked(true);
 
-    toolbarLayout->addSpacing(10);
-    m_demoButton = new ElaPushButton(QStringLiteral("修磨演示"), toolbar);
-    m_demoButton->setFixedSize(96, 28);
-    applySecondaryButtonStyle(m_demoButton);
-    m_demoButton->setToolTip(QStringLiteral("加载 TestImage 并播放路径修磨演示（Ctrl+T）"));
-    toolbarLayout->addWidget(m_demoButton);
     toolbarLayout->addStretch(1);
 
     auto *zoomIn = makeToolButton(QStringLiteral(":/img/zoom_in.svg"), QStringLiteral("放大"), toolbar);
@@ -115,6 +111,7 @@ ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
     m_viewStack->addWidget(m_imageArea);
 
     m_liveViewArea = new HikLiveView(m_viewStack);
+    m_liveViewArea->setProperty("mztlzNoFade", true);
     m_viewStack->addWidget(m_liveViewArea);
 
     m_algorithmImageArea = new ImageViewFrame(m_viewStack);
@@ -127,6 +124,12 @@ ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
         }
     )").arg(distributionCanvas(), Theme::kBorder));
     m_viewStack->addWidget(m_algorithmImageArea);
+
+    // 整板三维点云：HeightMap3DFrame 内嵌原生 OpenGL 窗口，
+    // 不能参与 QGraphicsOpacityEffect 淡入，标记为不淡入页。
+    m_pointCloudArea = new HeightMap3DFrame(m_viewStack);
+    m_pointCloudArea->setProperty("mztlzNoFade", true);
+    m_viewStack->addWidget(m_pointCloudArea);
     panelLayout->addWidget(m_viewStack, 1);
 
     // ---- 页脚：任务摘要 ----
@@ -148,7 +151,7 @@ ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
     connect(m_view2dButton, &ElaPushButton::clicked, this, [this]() { setViewMode(ViewMode::View2D); });
     connect(m_liveViewButton, &ElaPushButton::clicked, this, [this]() { setViewMode(ViewMode::LiveVideo); });
     connect(m_algorithmImageButton, &ElaPushButton::clicked, this, [this]() { setViewMode(ViewMode::AlgorithmImage); });
-    connect(m_demoButton, &ElaPushButton::clicked, this, &ImageDisplayPanel::demoToggleRequested);
+    connect(m_pointCloudButton, &ElaPushButton::clicked, this, [this]() { setViewMode(ViewMode::PointCloud3D); });
     connect(zoomIn, &QToolButton::clicked, this, [this]() {
         if (m_mode == ViewMode::View2D) m_imageArea->zoomIn();
         else if (m_mode == ViewMode::AlgorithmImage) m_algorithmImageArea->zoomIn();
@@ -163,6 +166,8 @@ ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
     });
     connect(m_imageArea, &ImageViewFrame::millingPathClicked,
             this, &ImageDisplayPanel::millingPathClicked);
+    connect(m_liveViewArea, &HikLiveView::expandRequested,
+            this, &ImageDisplayPanel::livePreviewExpandRequested);
 
     applyViewButtonStyles();
     clearTask();
@@ -197,9 +202,6 @@ ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
                                       "QToolButton:hover { background:%3; }"
                                       "QToolButton:pressed { background:%4; }")
                                       .arg(Theme::kControlBg, Theme::kBorder, Theme::kHoverBg, Theme::kPressedBg));
-        }
-        if (m_demoButton) {
-            applySecondaryButtonStyle(m_demoButton);
         }
         applyViewButtonStyles();
     });
@@ -361,6 +363,8 @@ QString ImageDisplayPanel::currentViewModeName() const
         return QStringLiteral("实时画面");
     case ViewMode::AlgorithmImage:
         return QStringLiteral("算法图像");
+    case ViewMode::PointCloud3D:
+        return QStringLiteral("三维点云");
     }
     return QStringLiteral("未知");
 }
@@ -384,8 +388,15 @@ void ImageDisplayPanel::updateScanFrame(const PointCloudFrame &frame)
     m_lastTimestampNs = frame.timestampNs;
     refreshPathSummary();
 
+    // 整板三维点云随扫图一起更新；隐藏状态下 HeightMap3DFrame 会缓存待上传。
+    if (m_pointCloudArea) {
+        m_pointCloudArea->setPointCloudFrame(frame);
+    }
+
     // 新扫图到达时，若停在实时/算法页，自动切回粒子分布，避免“有帧但看不见”。
-    if (m_mode != ViewMode::View2D && (!m_rangeImage.isNull() || !m_intensityImage.isNull())) {
+    // 三维点云页是用户主动查看的，不强制切走。
+    if ((m_mode == ViewMode::LiveVideo || m_mode == ViewMode::AlgorithmImage)
+        && (!m_rangeImage.isNull() || !m_intensityImage.isNull())) {
         setViewMode(ViewMode::View2D);
         return;
     }
@@ -402,6 +413,11 @@ void ImageDisplayPanel::setLiveCameraStatus(bool connected, const QString &messa
     if (m_liveViewArea) {
         m_liveViewArea->setConnectionStatus(connected, message);
     }
+}
+
+WId ImageDisplayPanel::liveVideoWindowId()
+{
+    return m_liveViewArea ? m_liveViewArea->videoWindowId() : WId();
 }
 
 void ImageDisplayPanel::setViewMode(ViewMode mode)
@@ -428,26 +444,34 @@ void ImageDisplayPanel::applyViewButtonStyles()
 {
     const auto style = [](ElaPushButton *button, bool active) {
         button->setChecked(active);
-        active ? applyPrimaryButtonStyle(button) : applySecondaryButtonStyle(button);
+        active ? applySelectedButtonStyle(button) : applySecondaryButtonStyle(button);
         // ElaPushButton 的颜色属性变化不会自动请求重绘，需显式刷新外观。
         button->update();
     };
     style(m_view2dButton, m_mode == ViewMode::View2D);
     style(m_liveViewButton, m_mode == ViewMode::LiveVideo);
     style(m_algorithmImageButton, m_mode == ViewMode::AlgorithmImage);
+    style(m_pointCloudButton, m_mode == ViewMode::PointCloud3D);
 }
 
 void ImageDisplayPanel::refreshView()
 {
     if (m_mode == ViewMode::LiveVideo) {
         if (m_viewStack && m_liveViewArea) {
-            m_viewStack->setCurrentWidget(m_liveViewArea);
+            fadeToStackedWidgetPage(m_viewStack, m_liveViewArea);
+        }
+        return;
+    }
+    if (m_mode == ViewMode::PointCloud3D) {
+        if (m_viewStack && m_pointCloudArea) {
+            fadeToStackedWidgetPage(m_viewStack, m_pointCloudArea);
+            m_pointCloudArea->setPointCloudFrame(m_pointCloudFrame);
         }
         return;
     }
     if (m_mode == ViewMode::AlgorithmImage) {
         if (m_viewStack && m_algorithmImageArea) {
-            m_viewStack->setCurrentWidget(m_algorithmImageArea);
+            fadeToStackedWidgetPage(m_viewStack, m_algorithmImageArea);
             m_algorithmImageArea->setImage(m_algorithmImage);
             if (m_algorithmImage.isNull()) {
                 m_algorithmImageArea->setOverlayText(m_algorithmImagePath.isEmpty()
@@ -466,7 +490,7 @@ void ImageDisplayPanel::refreshView()
     }
 
     if (m_viewStack && m_imageArea) {
-        m_viewStack->setCurrentWidget(m_imageArea);
+        fadeToStackedWidgetPage(m_viewStack, m_imageArea);
     }
     const bool showingIntensity = !m_intensityImage.isNull();
     const QImage &shown = showingIntensity ? m_intensityImage : m_rangeImage;

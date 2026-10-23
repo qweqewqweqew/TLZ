@@ -96,3 +96,11 @@ CMakeLists.txt.user*
 # Local scratch scripts and patch archives
 tmp_*
 *.tgz
+
+# Deployment output: exe / dll / logs / sqlite / 现场配置覆盖
+/deploy/
+
+# Local backups of build scripts and sources
+*.bak
+*.bak_*
+*.codex_backup_*

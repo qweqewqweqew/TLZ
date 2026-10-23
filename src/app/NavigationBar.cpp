@@ -62,10 +62,15 @@ void NavItemButton::paintEvent(QPaintEvent *event)
     QColor background = Qt::transparent;
     QColor foreground(Theme::kTextSecondary);
     if (isChecked()) {
-        background = QColor(Theme::kSelectionBg);
+        background = isDown() ? QColor(Theme::kSelectedPressedBg)
+                              : m_hovered ? QColor(Theme::kSelectedHoverBg)
+                                          : QColor(Theme::kSelectionBg);
         foreground = QColor(Theme::kSelectionText);
     } else if (m_hovered) {
         background = QColor(Theme::kHoverBg);
+        foreground = QColor(Theme::kTextPrimary);
+    } else if (isDown()) {
+        background = QColor(Theme::kPressedBg);
         foreground = QColor(Theme::kTextPrimary);
     }
     if (background.alpha() > 0) {

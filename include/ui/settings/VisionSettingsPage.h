@@ -1,12 +1,17 @@
 #ifndef VISIONSETTINGSPAGE_H
 #define VISIONSETTINGSPAGE_H
 
-#include "camera/HikCameraConfig.h"
 #include "ui/settings/SettingsSubPage.h"
 
-class ElaCheckBox;
-class QLineEdit;
-class QSpinBox;
+#include <QDateTime>
+#include <QtGui/qwindowdefs.h>
+
+class ElaPushButton;
+class QComboBox;
+class QFrame;
+class QLabel;
+class QShowEvent;
+class QHideEvent;
 
 class VisionSettingsPage : public SettingsSubPage
 {
@@ -16,38 +21,57 @@ public:
     explicit VisionSettingsPage(QWidget *parent = nullptr);
 
     QString bindingSummary() const override;
-    bool isEditable() const override { return true; }
-    bool isDirty() const override;
-    SettingsSaveOutcome save() override;
-    void revert() override;
-    void restoreDefaults() override;
-    std::optional<Permission> writePermission() const override
-    {
-        return Permission::EditCameraConfig;
-    }
-    void setWriteAllowed(bool allowed) override;
-    QString pendingChangeSummary() const override;
+    bool isEditable() const override { return false; }
+
+public slots:
+    void setCameraNodeStatus(bool connected, const QString &detail);
+    void setCameraTopicDiagnostics(bool bridgeRunning, int publisherCount);
+    void setHikCameraStatus(bool connected, const QString &detail);
+
+signals:
+    void previewRequested(WId targetWindow);
+    void stopPreviewRequested();
+    void refreshCameraDiagnosticsRequested();
+    void processSettingsRequested();
 
 protected:
-    void reloadFromSource() override;
+    void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
 
 private:
-    void setConfig(const HikCameraConfig &config);
-    HikCameraConfig currentConfig() const;
-    void notifyDirty();
+    void updateNodeStatus();
+    void updatePreviewStatus();
+    void refreshCalibrationValues();
 
-    HikCameraConfig m_loaded;
-    QWidget *m_form{nullptr};
-    ElaCheckBox *m_enabled{nullptr};
-    QLineEdit *m_address{nullptr};
-    QSpinBox *m_port{nullptr};
-    QLineEdit *m_username{nullptr};
-    QLineEdit *m_password{nullptr};
-    QSpinBox *m_channel{nullptr};
-    QSpinBox *m_streamType{nullptr};
-    QSpinBox *m_linkMode{nullptr};
-    QSpinBox *m_loginTimeout{nullptr};
-    QSpinBox *m_reconnect{nullptr};
+
+    QLabel *m_nodeBadge{nullptr};
+    QLabel *m_publisherCount{nullptr};
+    QLabel *m_diagnosticBanner{nullptr};
+    ElaPushButton *m_diagnosticsButton{nullptr};
+    ElaPushButton *m_refreshNodeButton{nullptr};
+
+    QFrame *m_previewSurface{nullptr};
+    QLabel *m_previewPlaceholder{nullptr};
+    QLabel *m_previewBadge{nullptr};
+    QComboBox *m_cameraSelector{nullptr};
+    ElaPushButton *m_startPreviewButton{nullptr};
+    ElaPushButton *m_stopPreviewButton{nullptr};
+
+    QLabel *m_calibrationBadge{nullptr};
+    QLabel *m_compensationX{nullptr};
+    QLabel *m_compensationY{nullptr};
+    QLabel *m_compensationZ{nullptr};
+
+    bool m_cameraNodeReceived{false};
+    bool m_cameraNodeConnected{false};
+    bool m_bridgeRunning{false};
+    bool m_hikConnected{false};
+    bool m_hikConnecting{false};
+    bool m_previewRequested{false};
+    int m_publisherCountValue{-1};
+    QDateTime m_cameraLastMessageAt;
+    QString m_cameraDetail;
+    QString m_hikDetail;
 };
 
 #endif // VISIONSETTINGSPAGE_H

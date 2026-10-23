@@ -2,6 +2,7 @@
 #define SETTINGSPAGE_H
 
 #include <QWidget>
+#include <QtGui/qwindowdefs.h>
 
 class EventLogPanel;
 class NodeCommSettingsPage;
@@ -14,6 +15,7 @@ class QShowEvent;
 class QStackedWidget;
 class Ros2Bridge;
 class SettingsSubPage;
+class VisionSettingsPage;
 
 class SettingsPage : public QWidget
 {
@@ -32,17 +34,26 @@ public slots:
     // 节点运行态回传给「节点与通信」页的启停控件。
     void setNodesRunning(bool running);
     void setNodesBusy(bool busy);
+    void setCameraNodeStatus(bool connected, const QString &detail);
+    void setCameraTopicDiagnostics(bool bridgeRunning, int publisherCount);
+    void setHikCameraStatus(bool connected, const QString &detail);
+    void setPlcDeviceStatus(const QString &status, const QString &detail = QString());
 
 signals:
     void historyRequested();
     void logRequested(const QString &level, const QString &message);
     void startNodesRequested();
     void stopNodesRequested();
+    void hikCameraConnectRequested();
+    void hikCameraPreviewRequested(WId targetWindow);
+    void hikCameraDisconnectRequested();
+    void refreshCameraDiagnosticsRequested();
 
 private:
     void resizeEvent(QResizeEvent *event) override;
     void showEvent(QShowEvent *event) override;
     void updateNavCardSizes();
+    void updateNavIcons();
     void showPage(int row);
     void updateActions();
     void refreshAccess();
@@ -56,6 +67,7 @@ private:
     QListWidget *m_nav{nullptr};
     QStackedWidget *m_stack{nullptr};
     NodeCommSettingsPage *m_nodeCommPage{nullptr};
+    VisionSettingsPage *m_visionPage{nullptr};
     QLabel *m_pageTitle{nullptr};
     QLabel *m_accessBanner{nullptr};
     QLabel *m_status{nullptr};

@@ -4,6 +4,7 @@
 #include <QDate>
 #include <QList>
 #include <QMap>
+#include <QStringList>
 #include <QWidget>
 
 class ElaComboBox;
@@ -27,6 +28,9 @@ class ReportPage : public QWidget
 public:
     explicit ReportPage(QWidget *parent = nullptr);
 
+    // Ctrl+T 调试演示模式开关：只有开启时才补演示记录，正式查询只展示真实数据。
+    void setDemoMode(bool active);
+
 public slots:
     void reload();
 
@@ -43,9 +47,12 @@ private:
         int cleared{0};
         double cycleSecondsTotal{0.0};
         int cycleSamples{0};
-        int shiftBoards[3]{0, 0, 0};
-        int shiftCompleted[3]{0, 0, 0};
+        QMap<QString, int> shiftBoards;
+        QMap<QString, int> shiftCompleted;
     };
+
+    // 班次名称来自 backend_params.ini 的 [Report] Shifts，可自定义，不再固定甲乙丙。
+    QStringList shiftNames() const;
 
     QWidget *buildFilterBar();
     QWidget *buildKpiRow();
@@ -76,7 +83,6 @@ private:
     ElaPushButton *m_excelButton{nullptr};
     ElaPushButton *m_pdfButton{nullptr};
     QLabel *m_status{nullptr};
-    QLabel *m_filterHint{nullptr};
 
     QLabel *m_kpiBoards{nullptr};
     QLabel *m_kpiParticleBoards{nullptr};
@@ -111,6 +117,7 @@ private:
     QMap<QDate, DailyStat> m_lastDaily;
     QString m_lastRangeText;
     bool m_demoDataActive{false};
+    bool m_demoModeActive{false};
 };
 
 #endif // REPORTPAGE_H

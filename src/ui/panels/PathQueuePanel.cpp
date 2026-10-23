@@ -91,7 +91,7 @@ PathQueuePanel::PathQueuePanel(QWidget *parent)
     m_table->setStyleSheet(QStringLiteral(
                                "QTableWidget#queueTable {"
                                "  background:%1; color:%2; gridline-color:%3; border:none;"
-                               "  alternate-background-color:%4; selection-background-color:%5; selection-color:%2;"
+                               "  alternate-background-color:%4; selection-background-color:%5; selection-color:%7;"
                                "}"
                                "QTableWidget#queueTable::item { padding:2px 8px; }"
                                "QHeaderView::section {"
@@ -103,7 +103,8 @@ PathQueuePanel::PathQueuePanel(QWidget *parent)
                                     Theme::kBorder,
                                     Theme::kControlBg,
                                     Theme::kSelectionBg,
-                                    Theme::kTextSecondary));
+                                    Theme::kTextSecondary,
+                                    Theme::kSelectionText));
     m_stack->addWidget(m_table);
 
     m_telemetry = new DataStatisticsPanel(m_stack, /*framed=*/false);
@@ -129,7 +130,7 @@ PathQueuePanel::PathQueuePanel(QWidget *parent)
             m_table->setStyleSheet(QStringLiteral(
                                        "QTableWidget#queueTable {"
                                        "  background:%1; color:%2; gridline-color:%3; border:none;"
-                                       "  alternate-background-color:%4; selection-background-color:%5; selection-color:%2;"
+                                       "  alternate-background-color:%4; selection-background-color:%5; selection-color:%7;"
                                        "}"
                                        "QTableWidget#queueTable::item { padding:2px 8px; }"
                                        "QHeaderView::section {"
@@ -141,7 +142,8 @@ PathQueuePanel::PathQueuePanel(QWidget *parent)
                                             Theme::kBorder,
                                             Theme::kControlBg,
                                             Theme::kSelectionBg,
-                                            Theme::kTextSecondary));
+                                            Theme::kTextSecondary,
+                                            Theme::kSelectionText));
         }
         showQueue(m_stack && m_stack->currentWidget() == m_table);
     });
@@ -188,10 +190,11 @@ bool PathQueuePanel::eventFilter(QObject *watched, QEvent *event)
 
 void PathQueuePanel::showQueue(bool queue)
 {
-    m_stack->setCurrentWidget(queue ? static_cast<QWidget *>(m_table) : static_cast<QWidget *>(m_telemetry));
+    fadeToStackedWidgetPage(m_stack,
+                            queue ? static_cast<QWidget *>(m_table) : static_cast<QWidget *>(m_telemetry));
     const auto style = [](ElaPushButton *button, bool active) {
         button->setChecked(active);
-        active ? applyPrimaryButtonStyle(button) : applySecondaryButtonStyle(button);
+        active ? applySelectedButtonStyle(button) : applySecondaryButtonStyle(button);
         button->update();
     };
     style(m_queueButton, queue);

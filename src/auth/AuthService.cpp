@@ -774,6 +774,43 @@ AuthResult AuthService::unlock(int userId)
     return {true, QStringLiteral("已解锁 %1。").arg(target)};
 }
 
+AuthResult AuthService::deleteUser(int userId)
+{
+    StoredUser user;
+    QString error;
+    const bool found = findUserById(userId, &user, &error);
+    const QString target = found ? user.record.username : QString::number(userId);
+    const AuthResult allowed = requireAdmin(QStringLiteral("account.delete"), target);
+    if (!allowed.ok) {
+        return allowed;
+    }
+    if (!found) {
+        return {false, QStringLiteral("账户不存在。")};
+    }
+    if (userId == m_userId) {
+        return {false, QStringLiteral("不能删除当前登录的账户。")};
+    }
+    if (user.record.role == Role::Administrator) {
+        return {false, QStringLiteral("不能删除管理员账户。")};
+    }
+
+    QSqlQuery sessionQuery(database());
+    sessionQuery.prepare(QStringLiteral("DELETE FROM UserSession WHERE UserId = :id"));
+    sessionQuery.bindValue(QStringLiteral(":id"), userId);
+    sessionQuery.exec();
+
+    QSqlQuery query(database());
+    query.prepare(QStringLiteral("DELETE FROM UserAccount WHERE Id = :id"));
+    query.bindValue(QStringLiteral(":id"), userId);
+    if (!query.exec()) {
+        return {false, QStringLiteral("删除账户失败: %1").arg(query.lastError().text())};
+    }
+    writeAudit(m_username, m_role, QStringLiteral("account.delete"), target,
+               QStringLiteral("删除账户"), true);
+    emit accountsChanged();
+    return {true, QStringLiteral("已删除账户 %1。").arg(target)};
+}
+
 QVector<AuditEntry> AuthService::recentAudit(int limit, QString *errorMessage) const
 {
     QVector<AuditEntry> entries;

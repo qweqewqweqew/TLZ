@@ -35,6 +35,9 @@ extern const char *kDivider;
 extern const char *kHoverBg;
 extern const char *kPressedBg;
 extern const char *kSelectionBg;
+extern const char *kSelectedHoverBg;
+extern const char *kSelectedPressedBg;
+extern const char *kFocusRing;
 
 extern const char *kTextPrimary;
 extern const char *kTextSecondary;

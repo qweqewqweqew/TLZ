@@ -1,6 +1,5 @@
 #include "ui/panels/MachineStatusPanel.h"
 
-#include "ElaPushButton.h"
 #include "app/Theme.h"
 #include "app/UiHelpers.h"
 #include "bridge/PlcFeedbackVM.h"
@@ -8,9 +7,11 @@
 #include "qcustomplot.h"
 
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QLinearGradient>
 #include <QProgressBar>
+#include <QPushButton>
 #include <QVBoxLayout>
 
 #include <array>
@@ -36,6 +37,46 @@ constexpr std::array<MetricDefinition, 6> kMetricDefinitions = {{
     {"y", "Y速度", "mm/min", 0.0, 100.0, 1},
     {"z", "Z速度", "mm/min", 0.0, 100.0, 1},
 }};
+
+// 控制按钮：语义色铺底，悬停/按下用同色加深；图标与文字一起按主题重刷。
+void applyControlButtonStyle(QPushButton *button, const QColor &base)
+{
+    if (!button) {
+        return;
+    }
+    // 黄色底用深色文字保证对比度，绿/红底用白色。
+    const int hue = base.hue();
+    const QColor textColor = (hue >= 25 && hue <= 70) ? QColor(0x1A, 0x1A, 0x1A) : QColor(Qt::white);
+    const QString iconPath = button->property("controlIcon").toString();
+    if (!iconPath.isEmpty()) {
+        button->setIcon(QIcon(tintedIcon(iconPath, textColor, 16, button->devicePixelRatioF())));
+        button->setIconSize(QSize(16, 16));
+    }
+    button->setStyleSheet(QStringLiteral(
+                              "QPushButton {"
+                              "  background:%1; color:%6; border:none; border-radius:6px;"
+                              "  padding:4px 12px; font-size:13px; font-weight:600;"
+                              "}"
+                              "QPushButton:hover { background:%2; }"
+                              "QPushButton:pressed { background:%3; }"
+                              "QPushButton:disabled { background:%4; color:%5; }")
+                              .arg(base.name(),
+                                   base.darker(110).name(),
+                                   base.darker(128).name(),
+                                   QLatin1String(Theme::kControlBg),
+                                   QLatin1String(Theme::kTextMuted),
+                                   textColor.name()));
+}
+
+QPushButton *makeControlButton(const QString &text, const QString &iconPath,
+                               const QColor &base, QWidget *parent)
+{
+    auto *button = new QPushButton(text, parent);
+    button->setCursor(Qt::PointingHandCursor);
+    button->setProperty("controlIcon", iconPath);
+    applyControlButtonStyle(button, base);
+    return button;
+}
 
 // 单个 QCustomPlot 承载六个指标。每个指标使用归一化量程，刻度文字和卡片
 // 通过 QCPItem 绘制，从而保留一张图的刷新效率，同时呈现独立仪表条的层次。
@@ -320,20 +361,23 @@ MachineStatusPanel::MachineStatusPanel(QWidget *parent)
     auto *buttons = new QHBoxLayout();
     buttons->setContentsMargins(0, 0, 0, 0);
     buttons->setSpacing(8);
-    m_startButton = new ElaPushButton(QStringLiteral("启动修磨"), panel);
-    applyPrimaryButtonStyle(m_startButton);
-    m_pauseButton = new ElaPushButton(QStringLiteral("暂停修磨"), panel);
-    applySecondaryButtonStyle(m_pauseButton);
-    m_stopButton = new ElaPushButton(QStringLiteral("停止"), panel);
-    applySecondaryButtonStyle(m_stopButton);
-    m_stopButton->setLightTextColor(QColor(Theme::kStateError));
-    m_stopButton->setDarkTextColor(QColor(Theme::kStateError));
-    for (ElaPushButton *button : {m_startButton, m_pauseButton, m_stopButton}) {
+    m_startButton = makeControlButton(QStringLiteral("启动修磨"),
+                                      QStringLiteral(":/img/play.svg"),
+                                      QColor(Theme::kStateSuccess), panel);
+    m_pauseButton = makeControlButton(QStringLiteral("暂停修磨"),
+                                      QStringLiteral(":/img/pause.svg"),
+                                      QColor(Theme::kStateWarning), panel);
+    m_stopButton = makeControlButton(QStringLiteral("停止"),
+                                     QStringLiteral(":/img/stop.svg"),
+                                     QColor(Theme::kStateError), panel);
+    for (QPushButton *button : {m_startButton, m_pauseButton, m_stopButton}) {
         button->setFixedHeight(32);
-        button->setEnabled(false);
-        button->setToolTip(QStringLiteral("后端尚未提供控制指令接口"));
+        button->setToolTip(QStringLiteral("演示模式下控制打磨路径演示；后端控制接口待接入"));
         buttons->addWidget(button, 1);
     }
+    connect(m_startButton, &QPushButton::clicked, this, &MachineStatusPanel::startMillingRequested);
+    connect(m_pauseButton, &QPushButton::clicked, this, &MachineStatusPanel::pauseMillingRequested);
+    connect(m_stopButton, &QPushButton::clicked, this, &MachineStatusPanel::stopMillingRequested);
     panelLayout->addLayout(buttons);
 
     clear();
@@ -485,14 +529,12 @@ void MachineStatusPanel::applyTheme()
     applyPlcPill();
     refreshTaskLine();
     if (m_startButton) {
-        applyPrimaryButtonStyle(m_startButton);
+        applyControlButtonStyle(m_startButton, QColor(Theme::kStateSuccess));
     }
     if (m_pauseButton) {
-        applySecondaryButtonStyle(m_pauseButton);
+        applyControlButtonStyle(m_pauseButton, QColor(Theme::kStateWarning));
     }
     if (m_stopButton) {
-        applySecondaryButtonStyle(m_stopButton);
-        m_stopButton->setLightTextColor(QColor(Theme::kStateError));
-        m_stopButton->setDarkTextColor(QColor(Theme::kStateError));
+        applyControlButtonStyle(m_stopButton, QColor(Theme::kStateError));
     }
 }

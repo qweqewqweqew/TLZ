@@ -45,7 +45,7 @@ private:
     void resetPassword();
     void changeRole();
     void toggleEnabled();
-    void unlockUser();
+    void deleteUser();
 
     QLabel *m_identity{nullptr};
     QLabel *m_identityScope{nullptr};
@@ -62,8 +62,10 @@ private:
     ElaPushButton *m_resetButton{nullptr};
     ElaPushButton *m_roleButton{nullptr};
     ElaPushButton *m_enableButton{nullptr};
-    ElaPushButton *m_unlockButton{nullptr};
+    ElaPushButton *m_shiftButton{nullptr};
+    ElaPushButton *m_deleteButton{nullptr};
 
+    QWidget *m_auditEmpty{nullptr};
     QLabel *m_auditLocked{nullptr};
     QLabel *m_auditCaption{nullptr};
     ElaPushButton *m_auditRefreshButton{nullptr};

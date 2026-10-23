@@ -14,6 +14,7 @@
 #include "ui/panels/EventLogPanel.h"
 #include "ui/dialogs/HistoryDialog.h"
 #include "camera/HikCameraClient.h"
+#include "camera/HikPreviewDialog.h"
 #include "ui/panels/ImageDisplayPanel.h"
 #include "ui/panels/KpiStripPanel.h"
 #include "ui/panels/MachineStatusPanel.h"
@@ -301,6 +302,7 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    m_shuttingDown = true;
     if (m_waveformTimer) {
         m_waveformTimer->stop();
     }
@@ -434,7 +436,8 @@ void MainWindow::buildMainView()
     m_contentStack = new QStackedWidget(body);
     bodyLayout->addWidget(m_contentStack, 1);
 
-    m_drawer = new NotificationDrawer(root);
+    // 抽屉是顶层 Qt::Tool 浮层（不参与子控件 Z 序），所以直接挂在主窗口下。
+    m_drawer = new NotificationDrawer(this);
     m_drawer->hide();
     connectTitleBar();
 
@@ -470,6 +473,12 @@ void MainWindow::buildMainView()
     m_machinePanel = new MachineStatusPanel(rightColumn);
     m_particlePanel->setSideContent(m_machinePanel->metricColumn());
     rightColumnLayout->addWidget(m_machinePanel, 3);
+    connect(m_machinePanel, &MachineStatusPanel::startMillingRequested,
+            this, &MainWindow::startDemoMilling);
+    connect(m_machinePanel, &MachineStatusPanel::pauseMillingRequested,
+            this, &MainWindow::pauseDemoMilling);
+    connect(m_machinePanel, &MachineStatusPanel::stopMillingRequested,
+            this, &MainWindow::stopDemoMilling);
     m_queuePanel = new PathQueuePanel(rightColumn);
     m_queuePanel->setMinimumHeight(180);
     m_dataStatisticsPanel = m_queuePanel->telemetry();
@@ -486,8 +495,6 @@ void MainWindow::buildMainView()
     connect(m_queuePanel, &PathQueuePanel::pathSelected, this, [this](int pathIndex) {
         m_particlePanel->selectPath(pathIndex);
     });
-    connect(m_imagePanel, &ImageDisplayPanel::demoToggleRequested, this, &MainWindow::toggleDemoMode);
-
     m_hikCameraClient = new HikCameraClient(this);
     connect(m_imagePanel, &ImageDisplayPanel::liveViewRequested, this,
             [this](bool active, WId targetWindow) {
@@ -500,10 +507,41 @@ void MainWindow::buildMainView()
                     m_hikCameraClient->stopPreview();
                 }
             });
+    connect(m_imagePanel, &ImageDisplayPanel::livePreviewExpandRequested, this, [this]() {
+        if (!m_imagePanel || !m_hikCameraClient || m_shuttingDown) {
+            return;
+        }
+        if (!m_hikPreviewDialog) {
+            m_hikPreviewDialog = new HikPreviewDialog(this);
+            connect(m_hikPreviewDialog, &HikPreviewDialog::closed, this, [this]() {
+                if (m_shuttingDown || !m_hikCameraClient || !m_hikPreviewConnected) {
+                    return;
+                }
+                m_hikCameraClient->startPreview(m_imagePanel->liveVideoWindowId());
+            });
+        }
+        m_hikPreviewDialog->setConnectionStatus(
+            m_hikPreviewConnected,
+            m_hikPreviewConnected ? QStringLiteral("实时画面已连接")
+                                  : QStringLiteral("正在连接海康相机…"));
+        m_hikPreviewDialog->show();
+        m_hikPreviewDialog->raise();
+        m_hikPreviewDialog->activateWindow();
+        if (m_hikPreviewConnected) {
+            m_hikCameraClient->startPreview(m_hikPreviewDialog->videoWindowId());
+        }
+    });
     connect(m_hikCameraClient, &HikCameraClient::connectionStatusChanged, this,
             [this](bool connected, const QString &message) {
+                m_hikPreviewConnected = connected;
                 if (m_imagePanel) {
                     m_imagePanel->setLiveCameraStatus(connected, message);
+                }
+                if (m_hikPreviewDialog && m_hikPreviewDialog->isVisible()) {
+                    m_hikPreviewDialog->setConnectionStatus(connected, message);
+                }
+                if (m_settingsPage) {
+                    m_settingsPage->setHikCameraStatus(connected, message);
                 }
             });
     connect(m_hikCameraClient, &HikCameraClient::infoMessage, this,
@@ -553,6 +591,29 @@ void MainWindow::buildMainView()
             });
     connect(m_settingsPage, &SettingsPage::startNodesRequested, this, &MainWindow::startNodes);
     connect(m_settingsPage, &SettingsPage::stopNodesRequested, this, &MainWindow::stopNodes);
+    connect(m_settingsPage, &SettingsPage::hikCameraConnectRequested, this, [this]() {
+        if (m_hikCameraClient && m_imagePanel) {
+            m_settingsPage->setHikCameraStatus(false, QStringLiteral("正在连接网络相机…"));
+            m_hikCameraClient->startPreview(m_imagePanel->liveVideoWindowId());
+        }
+    });
+    connect(m_settingsPage, &SettingsPage::hikCameraPreviewRequested, this, [this](WId targetWindow) {
+        if (m_hikCameraClient) {
+            m_settingsPage->setHikCameraStatus(false, QStringLiteral("正在连接海康相机…"));
+            m_hikCameraClient->startPreview(targetWindow);
+        }
+    });
+    connect(m_settingsPage, &SettingsPage::hikCameraDisconnectRequested, this, [this]() {
+        if (m_hikCameraClient) {
+            m_hikCameraClient->stopPreview();
+        }
+        if (m_imagePanel) {
+            m_imagePanel->setLiveCameraStatus(false, QStringLiteral("已从设备状态中断开预览"));
+        }
+    });
+    connect(m_settingsPage, &SettingsPage::refreshCameraDiagnosticsRequested,
+            m_ros2Bridge, &Ros2Bridge::refreshCameraStatusDiagnostics);
+    m_settingsPage->setCameraTopicDiagnostics(m_ros2Bridge && m_ros2Bridge->isRunning(), -1);
     if (m_nodeLifecycleMonitor) {
         connect(m_nodeLifecycleMonitor, &NodeLifecycleMonitor::nodesRunningChanged,
                 m_settingsPage, &SettingsPage::setNodesRunning);
@@ -616,10 +677,14 @@ void MainWindow::showPage(int page)
         return;
     }
     const bool changed = m_contentStack->currentWidget() != target;
-    m_contentStack->setCurrentWidget(target);
+    fadeToStackedWidgetPage(m_contentStack, target, 200);
     m_navBar->setCurrentPage(page);
     if (changed) {
         appendEventLog(QStringLiteral("INFO"), logText);
+    }
+    // 切页会重新 show/raise 页面，抽屉需要重新回到最上层。
+    if (m_drawer && m_drawer->isVisible()) {
+        m_drawer->raise();
     }
 }
 
@@ -629,8 +694,12 @@ void MainWindow::updateDrawerDockArea()
         return;
     }
     // 抽屉贴着内容区右缘，纵向覆盖整个内容区高度。
-    const QRect stackRect(m_contentStack->mapTo(centralWidget(), QPoint(0, 0)), m_contentStack->size());
+    // 抽屉是顶层窗口，几何按屏幕坐标计算，所以这里映射到全局坐标。
+    const QRect stackRect(m_contentStack->mapToGlobal(QPoint(0, 0)), m_contentStack->size());
     m_drawer->setDockArea(stackRect);
+    if (m_drawer->isVisible()) {
+        m_drawer->raise();
+    }
 }
 
 void MainWindow::refreshCalibrationStatus()
@@ -650,6 +719,15 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
     updateDrawerDockArea();
+}
+
+void MainWindow::moveEvent(QMoveEvent *event)
+{
+    QMainWindow::moveEvent(event);
+    // 抽屉是顶层浮层窗口，不会自动跟随主窗口移动，需要显式重算停靠区域。
+    if (m_drawer && m_drawer->isVisible()) {
+        updateDrawerDockArea();
+    }
 }
 
 void MainWindow::connectTitleBar()
@@ -703,8 +781,14 @@ void MainWindow::showUserMenu(const QPoint &anchor)
     menu.setStyleSheet(QStringLiteral(
                            "QMenu { background: %1; color: %2; border: 1px solid %3; font-size: 15px; }"
                            "QMenu::item { padding: 8px 28px; }"
-                           "QMenu::item:selected { background: %4; }")
-                           .arg(Theme::kPanelBg, Theme::kTextPrimary, Theme::kBorder, Theme::kHoverBg));
+                           "QMenu::item:selected { background: %4; color:%5; }"
+                           "QMenu::item:selected:hover { background:%6; }")
+                           .arg(Theme::kPanelBg,
+                                Theme::kTextPrimary,
+                                Theme::kBorder,
+                                Theme::kSelectionBg,
+                                Theme::kSelectionText,
+                                Theme::kSelectedHoverBg));
     QAction *changePassword = menu.addAction(QStringLiteral("修改密码"));
     QAction *logout = menu.addAction(QStringLiteral("退出登录"));
     QAction *chosen = menu.exec(anchor);
@@ -990,6 +1074,16 @@ void MainWindow::startRos2Bridge()
                 if (m_deviceStatusPanel) {
                     m_deviceStatusPanel->setCameraStatus(connected, cameraId, message);
                 }
+                if (m_settingsPage) {
+                    const QString detail = cameraId.isEmpty() ? message : cameraId + QStringLiteral("\n") + message;
+                    m_settingsPage->setCameraNodeStatus(connected, detail);
+                }
+            });
+    connect(m_ros2Bridge, &Ros2Bridge::cameraStatusDiagnosticsChanged, this,
+            [this](bool bridgeRunning, int publisherCount) {
+                if (m_settingsPage) {
+                    m_settingsPage->setCameraTopicDiagnostics(bridgeRunning, publisherCount);
+                }
             });
 
     connect(m_ros2Bridge, &Ros2Bridge::millingPathsReceived, this,
@@ -1077,6 +1171,15 @@ void MainWindow::startRos2Bridge()
                         QStringLiteral("收到后端转发的 PLC 反馈"));
                     m_deviceStatusPanel->setPlcStatus(feedback.statusWord,
                                                      feedback.faultCode);
+                }
+                if (m_settingsPage) {
+                    const bool fault = feedback.faultCode != 0;
+                    m_settingsPage->setPlcDeviceStatus(
+                        fault ? QStringLiteral("故障") : QStringLiteral("已连接"),
+                        QStringLiteral("状态字：0x%1\n故障码：%2")
+                            .arg(feedback.statusWord, 4, 16, QLatin1Char('0'))
+                            .arg(feedback.faultCode)
+                            .toUpper());
                 }
                 if (m_particlePanel) {
                     m_particlePanel->setPathProgress(int(feedback.completedPath),
@@ -1189,6 +1292,9 @@ void MainWindow::toggleDemoMode()
             }
 
             m_debugFakeActive = true;
+            if (m_reportPage) {
+                m_reportPage->setDemoMode(true);
+            }
             frame.intensity = intensity;
             frame.frameId = 9001;
             frame.intensityPixelFormat = CV_8UC1;
@@ -1278,12 +1384,19 @@ void MainWindow::toggleDemoMode()
             if (m_deviceStatusPanel) {
                 m_deviceStatusPanel->clearBackendAndPlcStatus();
             }
+            if (m_settingsPage) {
+                m_settingsPage->setPlcDeviceStatus(QStringLiteral("待反馈"),
+                                                   QStringLiteral("PLC 状态数据来源待后端补充"));
+            }
             m_activePaths.clear();
             m_activePathTotal = 0;
             m_activeCompletedPath = 0;
             m_activeBoardGrade.clear();
             updateKpis();
             m_debugFakeActive = false;
+            if (m_reportPage) {
+                m_reportPage->setDemoMode(false);
+            }
             appendEventLog("INFO", "已退出调试演示模式");
         }
     }
@@ -1404,6 +1517,10 @@ void MainWindow::appendEventLog(const QString &level, const QString &message)
 {
     if (m_drawer) {
         m_drawer->appendEvent(level, message);
+        // 新日志可能触发抽屉内部布局重算，保持它在最上层。
+        if (m_drawer->isVisible()) {
+            m_drawer->raise();
+        }
     }
 
     const QByteArray levelBytes = level.toUtf8();
@@ -1654,5 +1771,91 @@ void MainWindow::onDemoPoseUpdate()
         m_demoPathT = 0.0;
         ++m_demoPathIndex;
     }
+}
+
+void MainWindow::startDemoMilling()
+{
+    if (!m_debugFakeActive) {
+        appendEventLog(QStringLiteral("WARN"),
+                       QStringLiteral("请先按 Ctrl+T 进入演示模式后再控制打磨演示"));
+        return;
+    }
+
+    // 上一轮已经跑完：先复位到起点，再开始新一轮。
+    if (m_simulationProgress >= 100.0f
+        || (m_demoPathIndex >= m_debugPaths.size() && m_demoPathT <= 0.0)) {
+        resetDemoPoseAnimation();
+        m_currentT = 0.0;
+        m_simulationProgress = 0.0f;
+        m_lastMillingProgress = -1.0f;
+        m_activeBackendTaskId = 9001;
+        m_activeTaskFinished = false;
+        if (m_imagePanel) {
+            m_imagePanel->clearGrindLayer();
+            m_imagePanel->clearToolPose();
+            m_imagePanel->setPathProgress(0, 0);
+        }
+        if (m_ros2Bridge) {
+            emit m_ros2Bridge->millingProgressReceived(9001, 0.0f, false, false, QString());
+        }
+    }
+
+    if (m_demoPoseTimer) {
+        m_demoPoseTimer->start();
+    }
+    setSimulationRunning(true);
+    appendEventLog(QStringLiteral("INFO"), QStringLiteral("演示打磨已开始"));
+}
+
+void MainWindow::pauseDemoMilling()
+{
+    if (!m_debugFakeActive) {
+        return;
+    }
+    if (m_demoPoseTimer) {
+        m_demoPoseTimer->stop();
+    }
+    setSimulationRunning(false);
+    appendEventLog(QStringLiteral("INFO"), QStringLiteral("演示打磨已暂停在当前进度"));
+}
+
+void MainWindow::stopDemoMilling()
+{
+    if (!m_debugFakeActive) {
+        return;
+    }
+    if (m_demoPoseTimer) {
+        m_demoPoseTimer->stop();
+    }
+    setSimulationRunning(false);
+    resetDemoPoseAnimation();
+    m_currentT = 0.0;
+    m_simulationProgress = 0.0f;
+    // 允许进度从 0 重新开始（否则会被“进度回退”保护拦住，进度条停在旧值）。
+    m_lastMillingProgress = -1.0f;
+    m_activeTaskFinished = false;
+    m_activeBackendTaskId = 9001;
+    m_activeCompletedPath = 0;
+    m_activePathTotal = m_debugPaths.size();
+    if (m_machinePanel) {
+        m_machinePanel->setTask(9001, m_debugPaths.size());
+    }
+    if (m_particlePanel) {
+        m_particlePanel->setTaskProgress(0.0f);
+        m_particlePanel->setPathProgress(0, 0);
+    }
+    if (m_queuePanel) {
+        m_queuePanel->setPathProgress(0, 0);
+    }
+    if (m_imagePanel) {
+        m_imagePanel->clearGrindLayer();
+        m_imagePanel->clearToolPose();
+        m_imagePanel->setPathProgress(0, 0);
+        m_imagePanel->setProgressSummary(0, m_debugPaths.size(), 0.0f);
+    }
+    if (m_ros2Bridge) {
+        emit m_ros2Bridge->millingProgressReceived(9001, 0.0f, false, false, QString());
+    }
+    appendEventLog(QStringLiteral("INFO"), QStringLiteral("演示打磨已停止并复位，等待新的开始"));
 }
 

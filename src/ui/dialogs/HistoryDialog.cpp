@@ -179,11 +179,12 @@ QString historyDialogExtraStyle()
         "  background: __CTRL__; color: __TEXT__; gridline-color: __BORDER__;"
         "  border: 1px solid __BORDER__; border-radius: 6px;"
         "  alternate-background-color: __HOVER__;"
-        "  selection-background-color: __SEL__; selection-color: __TEXT__;"
+        "  selection-background-color: __SEL__; selection-color: __SELTEXT__;"
         "}"
         "QTableWidget::item { padding: 6px 8px; }"
         "QTableWidget::item:hover { background: __HOVER__; }"
-        "QTableWidget::item:selected { background: __SEL__; color: __TEXT__; }"
+        "QTableWidget::item:selected { background: __SEL__; color: __SELTEXT__; }"
+        "QTableWidget::item:selected:hover { background: __SEL_HOVER__; }"
         "QSplitter::handle { background: __HOVER__; }"
         "QSplitter::handle:hover { background: __ACCENT__; }"
         "QScrollArea { background: __WIN__; border: none; }"
@@ -200,7 +201,9 @@ QString historyDialogExtraStyle()
         "  border: 1px solid __BORDER__; border-bottom: none;"
         "  border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px;"
         "}"
-        "QTabBar::tab:selected { background: __CTRL__; color: __TEXT__; }"
+        "QTabBar::tab:selected { background: __SEL__; color: __SELTEXT__; border-color: __FOCUS__; }"
+        "QTabBar::tab:selected:hover { background: __SEL_HOVER__; }"
+        "QTabBar::tab:selected:pressed { background: __SEL_PRESSED__; }"
         "QDateEdit, QLineEdit {"
         "  background: __WIN__; color: __TEXT__; border: 1px solid __BORDER__;"
         "  border-radius: 5px; padding: 2px 8px; min-height: 26px;"
@@ -213,7 +216,7 @@ QString historyDialogExtraStyle()
         "QCalendarWidget QWidget { alternate-background-color: __HOVER__; color: __TEXT__; }"
         "QCalendarWidget QAbstractItemView:enabled {"
         "  background: __PANEL__; color: __TEXT__;"
-        "  selection-background-color: __SEL__; selection-color: __TEXT__;"
+        "  selection-background-color: __SEL__; selection-color: __SELTEXT__;"
         "}"
         "QScrollBar:vertical { background: __WIN__; width: 10px; margin: 0; border: none; }"
         "QScrollBar::handle:vertical { background: __BORDER__; border-radius: 4px; min-height: 30px; }"
@@ -236,6 +239,10 @@ QString historyDialogExtraStyle()
     css.replace(QStringLiteral("__BORDER__"), QLatin1String(Theme::kBorder));
     css.replace(QStringLiteral("__HOVER__"), QLatin1String(Theme::kHoverBg));
     css.replace(QStringLiteral("__SEL__"), QLatin1String(Theme::kSelectionBg));
+    css.replace(QStringLiteral("__SEL_HOVER__"), QLatin1String(Theme::kSelectedHoverBg));
+    css.replace(QStringLiteral("__SEL_PRESSED__"), QLatin1String(Theme::kSelectedPressedBg));
+    css.replace(QStringLiteral("__SELTEXT__"), QLatin1String(Theme::kSelectionText));
+    css.replace(QStringLiteral("__FOCUS__"), QLatin1String(Theme::kFocusRing));
     css.replace(QStringLiteral("__ACCENT__"), QLatin1String(Theme::kAccent));
     css.replace(QStringLiteral("__WIN__"), QLatin1String(Theme::kWindowBg));
     css.replace(QStringLiteral("__TEXT2__"), QLatin1String(Theme::kTextSecondary));
@@ -739,7 +746,7 @@ void HistoryDialog::showDetailPlaceholder(const QString &message)
         m_detailPlaceholderLabel->setText(message);
     }
     if (m_detailStack) {
-        m_detailStack->setCurrentIndex(0);
+        fadeToStackedWidgetPage(m_detailStack, m_detailStack->widget(0));
     }
 }
 
@@ -767,7 +774,7 @@ void HistoryDialog::showDetailForRecord(int recordId)
     m_detailScroll->setWidget(detail);
     m_detailContent = detail;
     m_selectedRecordId = recordId;
-    m_detailStack->setCurrentIndex(1);
+    fadeToStackedWidgetPage(m_detailStack, m_detailScroll);
 }
 
 void HistoryDialog::reloadRecords()
@@ -813,7 +820,7 @@ void HistoryDialog::reloadRecords()
     if (!err.isEmpty()) {
         m_table->setRowCount(0);
         if (m_tableStack) {
-            m_tableStack->setCurrentIndex(1);
+            fadeToStackedWidgetPage(m_tableStack, m_tableStack->widget(1));
         }
         showDetailPlaceholder(QStringLiteral("历史记录加载失败"));
         HistorySummary empty;
@@ -894,7 +901,8 @@ void HistoryDialog::renderPage()
     const int begin = m_page * kPageSize;
     populateTable(m_filtered.mid(begin, kPageSize));
     if (m_tableStack) {
-        m_tableStack->setCurrentIndex(m_filtered.isEmpty() ? 1 : 0);
+        fadeToStackedWidgetPage(m_tableStack,
+                                m_tableStack->widget(m_filtered.isEmpty() ? 1 : 0));
     }
     if (m_totalLabel) {
         m_totalLabel->setText(QStringLiteral("共 %1 条 · 每页 %2 条").arg(m_filtered.size()).arg(kPageSize));
@@ -1267,7 +1275,28 @@ QWidget *HistoryDialog::createDetailWidget(int recordId)
     buttons->addWidget(particleButton, 1);
     buttons->addWidget(resultButton, 1);
     hostLayout->addLayout(buttons);
-    connect(particleButton, &ElaPushButton::clicked, stack, [stack]() { stack->setCurrentIndex(0); });
-    connect(resultButton, &ElaPushButton::clicked, stack, [stack]() { stack->setCurrentIndex(1); });
+    particleButton->setCheckable(true);
+    resultButton->setCheckable(true);
+    particleButton->setChecked(true);
+    applySelectedButtonStyle(particleButton);
+    applySecondaryButtonStyle(resultButton);
+    connect(particleButton, &ElaPushButton::clicked, stack, [stack, particleButton, resultButton]() {
+        fadeToStackedWidgetPage(stack, stack->widget(0));
+        particleButton->setChecked(true);
+        resultButton->setChecked(false);
+        applySelectedButtonStyle(particleButton);
+        applySecondaryButtonStyle(resultButton);
+        particleButton->update();
+        resultButton->update();
+    });
+    connect(resultButton, &ElaPushButton::clicked, stack, [stack, particleButton, resultButton]() {
+        fadeToStackedWidgetPage(stack, stack->widget(1));
+        particleButton->setChecked(false);
+        resultButton->setChecked(true);
+        applySecondaryButtonStyle(particleButton);
+        applySelectedButtonStyle(resultButton);
+        particleButton->update();
+        resultButton->update();
+    });
     return host;
 }

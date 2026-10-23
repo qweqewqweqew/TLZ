@@ -257,6 +257,8 @@ add_executable(MzTLZ
     include/camera/HikCameraConfig.h
     src/camera/HikLiveView.cpp
     include/camera/HikLiveView.h
+    src/camera/HikPreviewDialog.cpp
+    include/camera/HikPreviewDialog.h
     src/bridge/Ros2Bridge.cpp
     include/bridge/Ros2Bridge.h
     src/bridge/ShmImageReader.cpp

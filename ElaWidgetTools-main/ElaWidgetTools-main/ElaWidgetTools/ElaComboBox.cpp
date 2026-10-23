@@ -114,7 +114,7 @@ void ElaComboBox::showPopup()
             fixedSizeAnimation->setStartValue(1);
             fixedSizeAnimation->setEndValue(containerHeight);
             fixedSizeAnimation->setEasingCurve(QEasingCurve::OutCubic);
-            fixedSizeAnimation->setDuration(400);
+            fixedSizeAnimation->setDuration(220);
             fixedSizeAnimation->start(QAbstractAnimation::DeleteWhenStopped);
 
             QPropertyAnimation* viewPosAnimation = new QPropertyAnimation(view(), "pos");
@@ -126,7 +126,7 @@ void ElaComboBox::showPopup()
             viewPosAnimation->setStartValue(QPoint(viewPos.x(), viewPos.y() - view()->height()));
             viewPosAnimation->setEndValue(viewPos);
             viewPosAnimation->setEasingCurve(QEasingCurve::OutCubic);
-            viewPosAnimation->setDuration(400);
+            viewPosAnimation->setDuration(220);
             viewPosAnimation->start(QAbstractAnimation::DeleteWhenStopped);
         }
         //指示器动画
@@ -134,13 +134,13 @@ void ElaComboBox::showPopup()
         connect(rotateAnimation, &QPropertyAnimation::valueChanged, this, [=](const QVariant& value) {
             update();
         });
-        rotateAnimation->setDuration(300);
+        rotateAnimation->setDuration(180);
         rotateAnimation->setEasingCurve(QEasingCurve::InOutSine);
         rotateAnimation->setStartValue(d->_comboBoxStyle->getExpandIconRotate());
         rotateAnimation->setEndValue(-180);
         rotateAnimation->start(QAbstractAnimation::DeleteWhenStopped);
         QPropertyAnimation* markAnimation = new QPropertyAnimation(d->_comboBoxStyle, "pExpandMarkWidth");
-        markAnimation->setDuration(300);
+        markAnimation->setDuration(180);
         markAnimation->setEasingCurve(QEasingCurve::InOutSine);
         markAnimation->setStartValue(d->_comboBoxStyle->getExpandMarkWidth());
         markAnimation->setEndValue(width() / 2 - d->_pBorderRadius - 6);
@@ -175,6 +175,7 @@ void ElaComboBox::hidePopup()
             viewPosAnimation->setStartValue(viewPos);
             viewPosAnimation->setEndValue(QPoint(viewPos.x(), viewPos.y() - view()->height()));
             viewPosAnimation->setEasingCurve(QEasingCurve::InCubic);
+            viewPosAnimation->setDuration(220);
             viewPosAnimation->start(QAbstractAnimation::DeleteWhenStopped);
 
             QPropertyAnimation* fixedSizeAnimation = new QPropertyAnimation(container, "maximumHeight");
@@ -184,6 +185,7 @@ void ElaComboBox::hidePopup()
             fixedSizeAnimation->setStartValue(container->height());
             fixedSizeAnimation->setEndValue(1);
             fixedSizeAnimation->setEasingCurve(QEasingCurve::InCubic);
+            fixedSizeAnimation->setDuration(220);
             fixedSizeAnimation->start(QAbstractAnimation::DeleteWhenStopped);
             d->_isAllowHidePopup = false;
         }
@@ -192,13 +194,13 @@ void ElaComboBox::hidePopup()
         connect(rotateAnimation, &QPropertyAnimation::valueChanged, this, [=](const QVariant& value) {
             update();
         });
-        rotateAnimation->setDuration(300);
+        rotateAnimation->setDuration(180);
         rotateAnimation->setEasingCurve(QEasingCurve::InOutSine);
         rotateAnimation->setStartValue(d->_comboBoxStyle->getExpandIconRotate());
         rotateAnimation->setEndValue(0);
         rotateAnimation->start(QAbstractAnimation::DeleteWhenStopped);
         QPropertyAnimation* markAnimation = new QPropertyAnimation(d->_comboBoxStyle, "pExpandMarkWidth");
-        markAnimation->setDuration(300);
+        markAnimation->setDuration(180);
         markAnimation->setEasingCurve(QEasingCurve::InOutSine);
         markAnimation->setStartValue(d->_comboBoxStyle->getExpandMarkWidth());
         markAnimation->setEndValue(0);

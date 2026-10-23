@@ -10,14 +10,15 @@
 #include <QtGui/qwindowdefs.h>
 
 class ElaPushButton;
+class HeightMap3DFrame;
 class HikLiveView;
 class ImageViewFrame;
 class QLabel;
 class QStackedWidget;
 class QToolButton;
 
-// 「铜板粒子分布」卡：2D 强度图 + 路径叠加，可切到海康实时画面 / 算法标注图。
-// 3D 高度图在右侧「选中粒子」卡里单独显示。
+// 「铜板粒子分布」卡：2D 强度图 + 路径叠加，可切到海康实时画面 / 算法标注图 / 整板三维点云。
+// 单个粒子的三维点云在右侧「选中粒子」卡里单独显示。
 class ImageDisplayPanel : public QFrame
 {
     Q_OBJECT
@@ -29,6 +30,7 @@ public:
     void updateScanFrame(const PointCloudFrame &frame);
     void show2D();
     void setLiveCameraStatus(bool connected, const QString &message);
+    WId liveVideoWindowId();
 
     // 设置/清除叠加显示的打磨路径（来自 MillingPaths msg）。
     void setMillingPaths(const QVector<MillingPathVM> &paths);
@@ -55,13 +57,12 @@ public:
 
 signals:
     void liveViewRequested(bool active, WId targetWindow);
+    void livePreviewExpandRequested();
     // 2D 图上单击路径线：0-based。
     void millingPathClicked(int pathIndex);
-    // 工具栏「修磨演示」：与 Ctrl+T 相同的调试演示开关。
-    void demoToggleRequested();
 
 private:
-    enum class ViewMode { View2D, LiveVideo, AlgorithmImage };
+    enum class ViewMode { View2D, LiveVideo, AlgorithmImage, PointCloud3D };
     void setViewMode(ViewMode mode);
     void refreshView();
     void applyViewButtonStyles();
@@ -70,12 +71,13 @@ private:
 
     ImageViewFrame *m_imageArea{nullptr};
     ImageViewFrame *m_algorithmImageArea{nullptr};
+    HeightMap3DFrame *m_pointCloudArea{nullptr};
     HikLiveView *m_liveViewArea{nullptr};
     QStackedWidget *m_viewStack{nullptr};
     ElaPushButton *m_view2dButton{nullptr};
     ElaPushButton *m_liveViewButton{nullptr};
     ElaPushButton *m_algorithmImageButton{nullptr};
-    ElaPushButton *m_demoButton{nullptr};
+    ElaPushButton *m_pointCloudButton{nullptr};
     QLabel *m_boardLabel{nullptr};
     QLabel *m_footerLeft{nullptr};
     QLabel *m_footerRight{nullptr};

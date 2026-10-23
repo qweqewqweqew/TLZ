@@ -79,6 +79,8 @@ QString mainWindowStyleSheet(int panelRadius)
             border-radius: 5px;
             padding-left: 8px;
         }
+        ElaComboBox:hover, QComboBox:hover { background: @HOVER@; }
+        ElaComboBox:focus, QComboBox:focus { border: 1px solid @FOCUS_RING@; }
         ElaPlainTextEdit {
             background: @LOG_BG@;
             color: @TEXT_SECONDARY@;
@@ -102,6 +104,16 @@ QString mainWindowStyleSheet(int panelRadius)
         }
         QPushButton:hover { background: @HOVER@; }
         QPushButton:pressed { background: @PRESSED@; }
+        QPushButton:checked { color: @SELECTION_TEXT@; background: @SELECTION_BG@; border-color: @FOCUS_RING@; }
+        QPushButton:checked:hover { background: @SELECTED_HOVER@; }
+        QPushButton:checked:pressed { background: @SELECTED_PRESSED@; }
+        QPushButton:focus { border: 1px solid @FOCUS_RING@; }
+        QToolButton:hover { background: @HOVER@; }
+        QToolButton:pressed { background: @PRESSED@; }
+        QToolButton:checked { color: @SELECTION_TEXT@; background: @SELECTION_BG@; border-color: @FOCUS_RING@; }
+        QToolButton:checked:hover { background: @SELECTED_HOVER@; }
+        QToolButton:checked:pressed { background: @SELECTED_PRESSED@; }
+        QToolButton:focus { border: 1px solid @FOCUS_RING@; }
         QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QDateEdit, QComboBox, QAbstractSpinBox {
             color: @TEXT_PRIMARY@;
             background: @PANEL_BG@;
@@ -109,6 +121,16 @@ QString mainWindowStyleSheet(int panelRadius)
             border-radius: 5px;
             selection-background-color: @SELECTION_BG@;
             selection-color: @SELECTION_TEXT@;
+        }
+        QAbstractItemView {
+            selection-background-color: @SELECTION_BG@;
+            selection-color: @SELECTION_TEXT@;
+        }
+        QAbstractItemView::item:selected { background: @SELECTION_BG@; color: @SELECTION_TEXT@; }
+        QAbstractItemView::item:selected:hover { background: @SELECTED_HOVER@; }
+        QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QSpinBox:focus,
+        QDoubleSpinBox:focus, QDateEdit:focus, QComboBox:focus, QAbstractSpinBox:focus {
+            border: 1px solid @FOCUS_RING@;
         }
         QCheckBox, QRadioButton { color: @TEXT_PRIMARY@; background: transparent; }
         QTableWidget, QTableView {
@@ -119,6 +141,12 @@ QString mainWindowStyleSheet(int panelRadius)
             selection-background-color: @SELECTION_BG@;
             selection-color: @SELECTION_TEXT@;
             border: 1px solid @BORDER@;
+        }
+        QTableWidget::item:selected, QTableView::item:selected {
+            background: @SELECTION_BG@; color: @SELECTION_TEXT@;
+        }
+        QTableWidget::item:selected:hover, QTableView::item:selected:hover {
+            background: @SELECTED_HOVER@;
         }
         QHeaderView::section {
             color: @TEXT_SECONDARY@;
@@ -136,6 +164,12 @@ QString mainWindowStyleSheet(int panelRadius)
             selection-background-color: @SELECTION_BG@;
             selection-color: @SELECTION_TEXT@;
         }
+        QListWidget::item:selected, QListView::item:selected, QTreeView::item:selected {
+            background: @SELECTION_BG@; color: @SELECTION_TEXT@;
+        }
+        QListWidget::item:selected:hover, QListView::item:selected:hover, QTreeView::item:selected:hover {
+            background: @SELECTED_HOVER@;
+        }
         QTabWidget::pane { border: 1px solid @BORDER@; background: @PANEL_BG@; }
         QTabBar::tab {
             color: @TEXT_SECONDARY@;
@@ -143,7 +177,9 @@ QString mainWindowStyleSheet(int panelRadius)
             border: 1px solid @BORDER@;
             padding: 6px 14px;
         }
-        QTabBar::tab:selected { color: @TITLE@; background: @PANEL_BG@; }
+        QTabBar::tab:selected { color: @SELECTION_TEXT@; background: @SELECTION_BG@; border-color: @FOCUS_RING@; }
+        QTabBar::tab:selected:hover { background: @SELECTED_HOVER@; }
+        QTabBar::tab:selected:pressed { background: @SELECTED_PRESSED@; }
         QMenu {
             color: @TEXT_PRIMARY@;
             background: @PANEL_BG@;
@@ -152,6 +188,7 @@ QString mainWindowStyleSheet(int panelRadius)
         }
         QMenu::item { padding: 6px 18px; background: transparent; }
         QMenu::item:selected { background: @SELECTION_BG@; color: @SELECTION_TEXT@; }
+        QMenu::item:selected:hover { background: @SELECTED_HOVER@; }
         QScrollBar:vertical, QScrollBar:horizontal { background: @CONTROL_BG@; }
         QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
             background: @BORDER@;
@@ -174,6 +211,9 @@ QString mainWindowStyleSheet(int panelRadius)
     style.replace(QStringLiteral("@BORDER@"), Theme::kBorder);
     style.replace(QStringLiteral("@DIVIDER@"), Theme::kDivider);
     style.replace(QStringLiteral("@SELECTION_BG@"), Theme::kSelectionBg);
+    style.replace(QStringLiteral("@SELECTED_HOVER@"), Theme::kSelectedHoverBg);
+    style.replace(QStringLiteral("@SELECTED_PRESSED@"), Theme::kSelectedPressedBg);
+    style.replace(QStringLiteral("@FOCUS_RING@"), Theme::kFocusRing);
     style.replace(QStringLiteral("@TEXT_PRIMARY@"), Theme::kTextPrimary);
     style.replace(QStringLiteral("@TEXT_SECONDARY@"), Theme::kTextSecondary);
     style.replace(QStringLiteral("@TEXT_MUTED@"), Theme::kTextMuted);
@@ -200,8 +240,8 @@ void applyRuntimeTheme()
         paintEla(mode, ElaThemeType::WindowBase, Theme::kWindowBg);
         paintEla(mode, ElaThemeType::WindowCentralStackBase, Theme::kWindowBg);
         paintEla(mode, ElaThemeType::PrimaryNormal, Theme::kAccentFill);
-        paintEla(mode, ElaThemeType::PrimaryHover, Theme::kAccentFill);
-        paintEla(mode, ElaThemeType::PrimaryPress, Theme::kPressedBg);
+        eTheme->setThemeColor(mode, ElaThemeType::PrimaryHover, QColor(Theme::kAccentFill).darker(110));
+        eTheme->setThemeColor(mode, ElaThemeType::PrimaryPress, QColor(Theme::kAccentFill).darker(128));
         paintEla(mode, ElaThemeType::BasicText, Theme::kTextPrimary);
         paintEla(mode, ElaThemeType::BasicTextInvert, Theme::kOnAccentFill);
         paintEla(mode, ElaThemeType::BasicDetailsText, Theme::kTextSecondary);
@@ -234,6 +274,8 @@ void applyRuntimeTheme()
                 applyPrimaryButtonStyle(button);
             } else if (role == QLatin1String("secondary")) {
                 applySecondaryButtonStyle(button);
+            } else if (role == QLatin1String("selected")) {
+                applySelectedButtonStyle(button);
             }
         }
     }

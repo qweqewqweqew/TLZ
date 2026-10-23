@@ -88,59 +88,15 @@ BackendParamsDialog::BackendParamsDialog(Ros2Bridge *bridge, QWidget *parent)
     : QFrame(parent)
     , m_bridge(bridge)
 {
-    setObjectName(QStringLiteral("settingsTaskCard"));
-    setStyleSheet(taskCardStyle());
+    setObjectName(QStringLiteral("coordinateCompensationForm"));
+    setStyleSheet(QStringLiteral("QFrame#coordinateCompensationForm { background:transparent;border:none; }"));
     setMinimumWidth(0);
     setMaximumWidth(QWIDGETSIZE_MAX);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
 
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(12, 10, 12, 12);
-    root->setSpacing(10);
-
-    // ---- 标题区 ----
-    auto *header = new QHBoxLayout();
-    header->setContentsMargins(0, 0, 0, 0);
-    header->setSpacing(10);
-
-    auto *badge = makeLabel(QStringLiteral("01"), QStringLiteral("taskBadge"));
-    badge->setFixedSize(28, 28);
-    badge->setAlignment(Qt::AlignCenter);
-    badge->setStyleSheet(QStringLiteral(
-        "color:%1;font-size:12px;font-weight:700;border:none;border-radius:14px;"
-        "background:%2;")
-                             .arg(Theme::kAccent, Theme::kRunningBg));
-    header->addWidget(badge, 0, Qt::AlignVCenter);
-
-    auto *titleCol = new QVBoxLayout();
-    titleCol->setContentsMargins(0, 0, 0, 0);
-    titleCol->setSpacing(2);
-
-    auto *title = makeLabel(QStringLiteral("加工参数"), QStringLiteral("taskTitle"));
-    title->setStyleSheet(QStringLiteral(
-        "color:%1;font-size:14px;font-weight:600;border:none;background:transparent;")
-                             .arg(Theme::kTextPrimary));
-    titleCol->addWidget(title);
-
-    auto *subtitle = makeLabel(QStringLiteral("坐标补偿 · 路径下发"), QStringLiteral("taskSubtitle"));
-    subtitle->setStyleSheet(QStringLiteral(
-        "color:%1;font-size:11px;border:none;background:transparent;")
-                                .arg(Theme::kTextMuted));
-    titleCol->addWidget(subtitle);
-    header->addLayout(titleCol, 1);
-
-    auto *kind = makeLabel(QStringLiteral("PLC"), QStringLiteral("taskKind"));
-    kind->setAlignment(Qt::AlignCenter);
-    kind->setFixedHeight(24);
-    kind->setMinimumWidth(52);
-    kind->setStyleSheet(QStringLiteral(
-        "color:%1;font-size:11px;font-weight:600;border:none;border-radius:4px;"
-        "background:%2;padding:0 8px;")
-                            .arg(Theme::kRealtime, Theme::kWarningBg));
-    header->addWidget(kind, 0, Qt::AlignTop);
-    root->addLayout(header);
-
-    root->addWidget(makeDivider(this));
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(12);
 
     // ---- XYZ 横向三列 ----
     m_offsetXEdit = makeOffsetEdit(this);
@@ -155,26 +111,14 @@ BackendParamsDialog::BackendParamsDialog(Ros2Bridge *bridge, QWidget *parent)
     axisRow->addWidget(makeAxisColumn(QStringLiteral("Z 轴坐标"), m_offsetZEdit, this), 1);
     root->addLayout(axisRow);
 
-    root->addWidget(makeDivider(this));
-
-    // ---- 下发勾选 ----
-    m_dispatchPathsCheck = new ElaCheckBox(QStringLiteral("下发路径到 PLC"), this);
+    // ---- 路径下发开关 ----
+    m_dispatchPathsCheck = new ElaCheckBox(QStringLiteral("下发修磨路径到 PLC"), this);
     m_dispatchPathsCheck->setChecked(true);
     m_dispatchPathsCheck->setStyleSheet(QStringLiteral(
         "color:%1;font-size:12px;border:none;background:transparent;")
                                             .arg(Theme::kTextPrimary));
     root->addWidget(m_dispatchPathsCheck, 0, Qt::AlignLeft);
 
-    root->addWidget(makeDivider(this));
-
-    // ---- 全宽应用 ----
-    auto *applyBtn = new ElaPushButton(QStringLiteral("应用"), this);
-    applyBtn->setMinimumHeight(30);
-    applyBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    applyPrimaryButtonStyle(applyBtn);
-    root->addWidget(applyBtn);
-
-    connect(applyBtn, &ElaPushButton::clicked, this, &BackendParamsDialog::applyRequested);
     const auto markDirty = [this]() { emit dirtyChanged(isDirty()); };
     connect(m_offsetXEdit, &QLineEdit::textChanged, this, markDirty);
     connect(m_offsetYEdit, &QLineEdit::textChanged, this, markDirty);

@@ -261,6 +261,7 @@ void HikCameraClient::stopPreview()
     QMetaObject::invokeMethod(worker, [worker]() {
         worker->stopPreview();
     }, Qt::QueuedConnection);
+    emit connectionStatusChanged(false, QStringLiteral("实时预览已停止"));
 }
 
 void HikCameraClient::shutdown()

@@ -111,6 +111,7 @@ public:
     AuthResult setRole(int userId, Role role);
     AuthResult setEnabled(int userId, bool enabled);
     AuthResult unlock(int userId);
+    AuthResult deleteUser(int userId);
     QVector<AuditEntry> recentAudit(int limit, QString *errorMessage = nullptr) const;
 
     // 设置页等调用方写审计用。detail 里不得包含密码。

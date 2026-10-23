@@ -8,6 +8,7 @@
 
 class ElaPushButton;
 class QLabel;
+class QStackedWidget;
 class QWidget;
 
 QLabel *makeLabel(const QString &text, const QString &objectName = QString());
@@ -17,5 +18,8 @@ QFrame *createPanel(const QString &title, QWidget *headerWidget = nullptr, QWidg
 QWidget *createStatusPill(const QString &text, const QString &state, QWidget *parent = nullptr);
 void applyPrimaryButtonStyle(ElaPushButton *button);
 void applySecondaryButtonStyle(ElaPushButton *button);
+void applySelectedButtonStyle(ElaPushButton *button);
+void fadeToStackedWidgetPage(QStackedWidget *stack, QWidget *page, int durationMs = 180);
+void animateWidgetVisibility(QWidget *widget, bool visible, int durationMs = 180);
 
 #endif // UIHELPERS_H

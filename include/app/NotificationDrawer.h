@@ -22,7 +22,8 @@ public:
     // 未读数：抽屉关闭时累计的 WARN / ERROR 条数
     int unreadCount() const { return m_unread; }
 
-    // 由父窗口在 resize 时调用，给出抽屉应占据的区域（右侧列）。
+    // 由父窗口在 resize / move 时调用，给出抽屉应占据的区域。
+    // 抽屉是顶层浮层窗口，area 使用屏幕全局坐标。
     void setDockArea(const QRect &area);
 
 public slots:
@@ -34,8 +35,13 @@ signals:
     void unreadChanged(int count);
     void openChanged(bool open);
 
+protected:
+    void resizeEvent(QResizeEvent *event) override;
+    void paintEvent(QPaintEvent *event) override;
+
 private:
     void moveTo(bool open, bool animated);
+    void updateRoundedMask();
 
     EventLogPanel *m_log{nullptr};
     QLabel *m_subtitle{nullptr};

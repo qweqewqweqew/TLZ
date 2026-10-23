@@ -31,6 +31,10 @@ namespace {
 constexpr int kCutLineWidth = 2;
 constexpr int kMoveLineWidth = 1;
 constexpr double kHitThresholdPx = 6.0;
+// 点击选中粒子的宽容半径：不必精确压在路径线上，点在粒子附近即可。
+// TODO(粒子数据): 算法下发粒子 bbox 后，命中测试应改为"点是否落在粒子区域内"，
+// 这里的路径线容差只是过渡方案。详见 README「粒子信息与粒子三维点云」。
+constexpr double kParticleClickThresholdPx = 26.0;
 constexpr double kZoomStep = 1.15;
 constexpr double kMinZoom = 1.0;
 constexpr double kMaxZoom = 20.0;
@@ -659,11 +663,16 @@ QString ImageViewFrame::coordinateTextAt(int column, int row) const
 
 int ImageViewFrame::hitTestPath(const QPointF &widgetPos) const
 {
+    return hitTestPathInRange(widgetPos, kHitThresholdPx);
+}
+
+int ImageViewFrame::hitTestPathInRange(const QPointF &widgetPos, double thresholdPx) const
+{
     if (m_paths.isEmpty() || m_lastImageRect.isEmpty() || m_lastImageSize.isEmpty()) {
         return -1;
     }
 
-    double bestDist = kHitThresholdPx;
+    double bestDist = thresholdPx;
     int bestIndex = -1;
     for (int i = 0; i < m_paths.size(); ++i) {
         const auto &p = m_paths[i];
@@ -1194,7 +1203,11 @@ void ImageViewFrame::mouseReleaseEvent(QMouseEvent *event)
         return;
     }
 
-    const int idx = hitTestPath(event->pos());
+    int idx = hitTestPath(event->pos());
+    if (idx < 0) {
+        // 没精确压在路径线上时，按粒子半径再找一次，方便直接点粒子选中。
+        idx = hitTestPathInRange(event->pos(), kParticleClickThresholdPx);
+    }
     if (idx >= 0 && idx < m_paths.size()) {
         const QString text = tooltipForPath(m_paths[idx], idx + 1);
         const QPoint tooltipPos = event->globalPos() + QPoint(14, 18);

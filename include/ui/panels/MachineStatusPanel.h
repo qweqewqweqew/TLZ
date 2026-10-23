@@ -3,13 +3,13 @@
 
 #include <QFrame>
 
-class ElaPushButton;
+class QPushButton;
 class QLabel;
 class QProgressBar;
 struct PlcFeedbackVM;
 
 // 「修磨实时状态」卡：PLC 状态、任务进度、主轴 / 进给 / 坐标实时值。
-// 启动 / 暂停 / 停止按钮等待后端控制接口，当前禁用。
+// 启动 / 暂停 / 停止按钮已配色并带图标，控制指令仍等待后端接口。
 class MachineStatusPanel : public QFrame
 {
     Q_OBJECT
@@ -24,6 +24,12 @@ public:
     void clear();
     QWidget *metricColumn() const;
 
+signals:
+    // 演示模式下由 MainWindow 接管：开始/继续、暂停在当前、停止并复位。
+    void startMillingRequested();
+    void pauseMillingRequested();
+    void stopMillingRequested();
+
 private:
     void setMetric(const QString &key, double value, int decimals, bool hasData = true);
     void refreshTaskLine();
@@ -35,9 +41,9 @@ private:
     QLabel *m_taskLine{nullptr};
     QProgressBar *m_progress{nullptr};
     QLabel *m_percent{nullptr};
-    ElaPushButton *m_startButton{nullptr};
-    ElaPushButton *m_pauseButton{nullptr};
-    ElaPushButton *m_stopButton{nullptr};
+    QPushButton *m_startButton{nullptr};
+    QPushButton *m_pauseButton{nullptr};
+    QPushButton *m_stopButton{nullptr};
 
     quint64 m_taskId{0};
     int m_pathTotal{0};

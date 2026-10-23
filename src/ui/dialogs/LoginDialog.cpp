@@ -34,11 +34,12 @@ QString cardStyle()
                "  background:%5; color:%6; border:1px solid %2; border-radius:8px;"
                "  padding:0 12px; min-height:40px; font-size:15px; selection-background-color:%7;"
                "}"
-               "QLineEdit#loginField:focus { border:1px solid %8; }"
+               "QLineEdit#loginField:focus { border:1px solid %14; }"
                "QComboBox#loginField {"
                "  background:%5; color:%6; border:1px solid %2; border-radius:8px;"
                "  padding:0 12px; min-height:40px; font-size:15px;"
                "}"
+               "QComboBox#loginField:focus { border:1px solid %14; }"
                "QComboBox#loginField::drop-down { border:none; width:32px; }"
                "QComboBox#loginField::down-arrow { image:url(:/img/chevron_down.svg);"
                "  width:12px; height:12px; margin-right:12px; }"
@@ -48,12 +49,14 @@ QString cardStyle()
                "  background:transparent; color:%9; border:none; border-radius:6px;"
                "  font-size:15px; min-height:34px;"
                "}"
-               "QPushButton#loginModeTab:checked { background:%8; color:#FFFFFF; }"
+               "QPushButton#loginModeTab:checked { background:%8; color:%9; border:1px solid %14; }"
+               "QPushButton#loginModeTab:checked:hover { background:%11; }"
+               "QPushButton#loginModeTab:checked:pressed { background:%12; }"
                "QPushButton#loginModeTab:hover:!checked { background:%10; }"
                "QPushButton#loginClose {"
                "  background:transparent; color:%9; border:none; border-radius:6px; font-size:20px;"
                "}"
-               "QPushButton#loginClose:hover { background:%11; color:#FFFFFF; }")
+               "QPushButton#loginClose:hover { background:%13; color:#FFFFFF; }")
         .arg(Theme::kPanelBg,
              Theme::kBorder,
              Theme::kStatusBarBg,
@@ -61,9 +64,13 @@ QString cardStyle()
              Theme::kControlBg,
              Theme::kTextPrimary,
              Theme::kSelectionBg,
-             Theme::kAccent,
-             Theme::kTextSecondary)
-        .arg(Theme::kHoverBg, Theme::kStateError);
+             Theme::kSelectionBg,
+             Theme::kSelectionText)
+        .arg(Theme::kHoverBg,
+             Theme::kSelectedHoverBg,
+             Theme::kSelectedPressedBg,
+             Theme::kStateError,
+             Theme::kFocusRing);
 }
 
 } // namespace
@@ -82,7 +89,7 @@ LoginDialog::LoginDialog(Mode mode, QWidget *parent)
     auto *card = new QFrame(this);
     card->setFixedWidth(kDialogWidth);
     card->setObjectName(QStringLiteral("loginCard"));
-    card->setStyleSheet(cardStyle());
+    Theme::bindStyle(card, []() { return cardStyle(); });
     outer->addWidget(card);
 
     auto *cardLayout = new QVBoxLayout(card);
@@ -221,9 +228,11 @@ QWidget *LoginDialog::buildModeSwitch()
 {
     auto *frame = new QFrame(this);
     frame->setObjectName(QStringLiteral("loginModeSwitch"));
-    frame->setStyleSheet(QStringLiteral(
-                             "QFrame#loginModeSwitch { background:%1; border:1px solid %2; border-radius:8px; }")
-                             .arg(Theme::kControlBg, Theme::kBorder));
+    Theme::bindStyle(frame, []() {
+        return QStringLiteral(
+                   "QFrame#loginModeSwitch { background:%1; border:1px solid %2; border-radius:8px; }")
+            .arg(Theme::kControlBg, Theme::kBorder);
+    });
     auto *layout = new QHBoxLayout(frame);
     layout->setContentsMargins(4, 4, 4, 4);
     layout->setSpacing(4);
@@ -428,7 +437,7 @@ void LoginDialog::showStep(Step step)
         break;
     }
     // 栈默认按最高的页（注册页）撑高，登录页的字段之间会被拉开；按当前页固定高度。
-    m_pages->setCurrentWidget(page);
+    fadeToStackedWidgetPage(m_pages, page, 160);
     page->layout()->activate();
     m_pages->setFixedHeight(page->sizeHint().height());
     if (focus) {

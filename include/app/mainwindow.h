@@ -13,6 +13,7 @@ class DataStatisticsPanel;
 class EventLogPanel;
 class HistoryDialog;
 class HikCameraClient;
+class HikPreviewDialog;
 class ImageDisplayPanel;
 class KpiStripPanel;
 class MachineStatusPanel;
@@ -52,6 +53,7 @@ private:
     void changeEvent(QEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    void moveEvent(QMoveEvent *event) override;
 
     void buildMainView();
     void connectTitleBar();
@@ -114,6 +116,10 @@ private slots:
     void onSimulationProgressUpdate();
     void onDemoPoseUpdate();
     void resetDemoPoseAnimation();
+    // Ctrl+T 演示模式下的打磨控制：开始/继续、暂停、停止并复位。
+    void startDemoMilling();
+    void pauseDemoMilling();
+    void stopDemoMilling();
 
 private:
     struct PendingScanFrame
@@ -144,6 +150,7 @@ private:
     MachineStatusPanel *m_machinePanel{nullptr};
     PathQueuePanel *m_queuePanel{nullptr};
     HikCameraClient *m_hikCameraClient{nullptr};
+    HikPreviewDialog *m_hikPreviewDialog{nullptr};
     DataStatisticsPanel *m_dataStatisticsPanel{nullptr};
     QVector<MillingPathVM> m_activePaths;
     int m_activePathTotal{0};
@@ -178,6 +185,8 @@ private:
     double m_debugYOffsetMm{0.0};
     bool m_databaseReady{false};
     bool m_stopScriptLaunched{false};
+    bool m_hikPreviewConnected{false};
+    bool m_shuttingDown{false};
     QString m_lastIdentity;
 };
 

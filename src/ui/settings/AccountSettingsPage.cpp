@@ -2,10 +2,10 @@
 
 #include "ElaMessageBar.h"
 #include "ElaPushButton.h"
+#include "app/RuntimeIniPaths.h"
 #include "app/Theme.h"
 #include "app/UiHelpers.h"
 #include "auth/AuthService.h"
-#include "auth/PasswordHasher.h"
 #include "auth/PasswordPolicy.h"
 #include "ui/dialogs/LoginDialog.h"
 #include "ui/settings/SettingsFormWidgets.h"
@@ -18,9 +18,11 @@
 #include <QHBoxLayout>
 #include <QHash>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QSettings>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStringList>
@@ -107,6 +109,7 @@ QString actionDisplayName(const QString &action)
         {QStringLiteral("account.enable"), QStringLiteral("启用账户")},
         {QStringLiteral("account.disable"), QStringLiteral("停用账户")},
         {QStringLiteral("account.unlock"), QStringLiteral("解锁账户")},
+        {QStringLiteral("account.delete"), QStringLiteral("删除账户")},
         {QStringLiteral("security.session_timeout"), QStringLiteral("修改会话超时")},
         {QStringLiteral("settings.save"), QStringLiteral("保存设置")},
     };
@@ -293,7 +296,7 @@ AccountSettingsPage::AccountSettingsPage(QWidget *parent)
     root->setSpacing(12);
 
     // ---- 当前身份 ----
-    auto *identityPanel = settingsGroupPanel(QStringLiteral("账号与角色"),
+    auto *identityPanel = settingsGroupPanel(QStringLiteral("账号管理"),
                                               QStringLiteral(":/img/nav_settings.svg"), this);
     root->addWidget(identityPanel, 1);
     auto *identityLayout = qobject_cast<QVBoxLayout *>(identityPanel->layout());
@@ -317,20 +320,9 @@ AccountSettingsPage::AccountSettingsPage(QWidget *parent)
     identityButtons->addWidget(m_logoutButton);
     identityButtons->addStretch(1);
     identityLayout->addLayout(identityButtons);
-    identityLayout->addWidget(settingsHint(
-        QStringLiteral("监视画面、历史记录、启停节点不需要登录，与之前的现场操作一致。"
-                       "登录后按角色解锁对应的设置项。"),
-        identityPanel));
-    identityLayout->addWidget(settingsSourceBanner(
-        QStringLiteral("账户保存在 database.ini 指向的 SQLite 数据库。密码用 PBKDF2-SHA256 加 %1 字节随机盐、"
-                       "%2 轮迭代保存，不存明文。账户由管理员在「账户管理」创建，或在登录界面「注册」并由管理员现场授权。")
-            .arg(PasswordHasher::kSaltBytes)
-            .arg(PasswordHasher::kDefaultIterations),
-        identityPanel));
-
     // ---- 账户管理 ----
-    identityLayout->addWidget(settingsSectionHeading(QStringLiteral("账户管理"), identityPanel));
-    m_usersLocked = makeLockedHint(QStringLiteral("需要管理员登录后才能查看和管理账户。"), identityPanel);
+    identityLayout->addWidget(settingsSectionHeading(QStringLiteral("用户列表"), identityPanel));
+    m_usersLocked = makeLockedHint(QStringLiteral("管理员登录后可管理用户。"), identityPanel);
     identityLayout->addWidget(m_usersLocked);
     auto *userButtons = new QHBoxLayout();
     userButtons->setContentsMargins(0, 0, 0, 0);
@@ -339,9 +331,10 @@ AccountSettingsPage::AccountSettingsPage(QWidget *parent)
     m_resetButton = makeActionButton(QStringLiteral("重置密码"), false, identityPanel);
     m_roleButton = makeActionButton(QStringLiteral("修改角色"), false, identityPanel);
     m_enableButton = makeActionButton(QStringLiteral("停用"), false, identityPanel);
-    m_unlockButton = makeActionButton(QStringLiteral("解锁"), false, identityPanel);
+    m_shiftButton = makeActionButton(QStringLiteral("设置班次"), false, identityPanel);
+    m_deleteButton = makeActionButton(QStringLiteral("删除"), false, identityPanel);
     for (ElaPushButton *button :
-         {m_createButton, m_resetButton, m_roleButton, m_enableButton, m_unlockButton}) {
+         {m_createButton, m_resetButton, m_roleButton, m_enableButton, m_shiftButton, m_deleteButton}) {
         userButtons->addWidget(button);
     }
     userButtons->addStretch(1);
@@ -356,17 +349,13 @@ AccountSettingsPage::AccountSettingsPage(QWidget *parent)
     m_users->verticalHeader()->setDefaultSectionSize(36);
     m_users->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     identityLayout->addWidget(m_users, 1);
-    identityLayout->addWidget(settingsHint(
-        QStringLiteral("系统只有一个管理员，新建账户只能是操作员或技术员；管理员不能修改自己的角色、不能停用自己。"
-                       "账户不提供删除，离职人员请停用，以保留审计记录的对应关系。"),
-        identityPanel));
 
     // ---- 角色与权限 ----
-    auto *securityPanel = settingsGroupPanel(QStringLiteral("安全联锁与会话"),
+    auto *securityPanel = settingsGroupPanel(QStringLiteral("权限与登录保护"),
                                               QStringLiteral(":/img/kpi_alert.svg"), this);
     root->addWidget(securityPanel, 1);
     auto *securityLayout = qobject_cast<QVBoxLayout *>(securityPanel->layout());
-    securityLayout->addWidget(settingsSectionHeading(QStringLiteral("角色与权限"), securityPanel));
+    securityLayout->addWidget(settingsSectionHeading(QStringLiteral("角色权限"), securityPanel));
     const QVector<Permission> permissions = Auth::allPermissions();
     auto *matrix = makeTable({QStringLiteral("权限点"),
                               Auth::roleDisplayName(Role::Operator),
@@ -408,13 +397,8 @@ AccountSettingsPage::AccountSettingsPage(QWidget *parent)
     matrix->setFixedHeight(matrixHeader->height() + permissions.size() * kMatrixRowHeight
                            + 2 * matrix->frameWidth());
     securityLayout->addWidget(matrix);
-    securityLayout->addWidget(settingsHint(
-        QStringLiteral("角色逐级包含。没有权限的设置项照样可以查看，但控件置灰；"
-                       "保存时还会再校验一次，并记入操作审计。「确认报警」在报警页接入后生效。"),
-        securityPanel));
-
     // ---- 会话与锁定 ----
-    securityLayout->addWidget(settingsSectionHeading(QStringLiteral("会话与登录保护"), securityPanel));
+    securityLayout->addWidget(settingsSectionHeading(QStringLiteral("登录保护"), securityPanel));
     auto *sessionHost = new QWidget(securityPanel);
     QFormLayout *sessionForm = settingsFormLayout(sessionHost);
     m_sessionTimeout = settingsSpinBox(sessionHost);
@@ -424,27 +408,31 @@ AccountSettingsPage::AccountSettingsPage(QWidget *parent)
     addSettingsField(sessionForm,
                      QStringLiteral("空闲超时"),
                      m_sessionTimeout,
-                     QStringLiteral("空闲超过该时长自动退出登录，界面退回只读，未保存的修改会被丢弃。"
-                                    "只有管理员能修改，改完点页底「保存」。"),
+                     QStringLiteral("管理员可修改；更改后点页面底部“保存”。"),
                      sessionHost);
     securityLayout->addWidget(sessionHost);
 
     auto *lockHost = new QWidget(securityPanel);
     QFormLayout *lockForm = settingsFormLayout(lockHost);
-    const auto addFact = [lockForm, lockHost](const QString &name, const QString &value) {
+    const auto addFact = [lockForm, lockHost](const QString &name,
+                                               const QString &value,
+                                               const QString &detail = QString()) {
         auto *label = settingsHint(value, lockHost);
+        label->setToolTip(detail.isEmpty() ? value : detail);
         Theme::bindStyle(label, []() {
-            return QStringLiteral("color:%1;font-size:14px;border:none;background:transparent;")
+            return QStringLiteral("color:%1;font-size:12px;border:none;background:transparent;")
                 .arg(Theme::kTextPrimary);
         });
         addSettingsField(lockForm, name, label, QString(), lockHost);
     };
     addFact(QStringLiteral("失败锁定"),
-            QStringLiteral("连续输错 %1 次锁定 %2 分钟，不存在的用户名同样计数")
+            QStringLiteral("%1 次失败 · 锁定 %2 分钟")
                 .arg(AuthService::kMaxFailedAttempts)
-                .arg(AuthService::kLockoutMinutes));
-    addFact(QStringLiteral("首次改密"), QStringLiteral("新建账户或被重置密码后，首次登录必须先改密"));
-    addFact(QStringLiteral("密码规则"), PasswordPolicy::passwordRequirementText());
+                .arg(AuthService::kLockoutMinutes),
+            QStringLiteral("不存在的用户名也计入失败次数。"));
+    addFact(QStringLiteral("首次登录"), QStringLiteral("新账户或重置密码后需修改密码"));
+    addFact(QStringLiteral("密码规则"), QStringLiteral("按系统密码策略校验"),
+            PasswordPolicy::passwordRequirementText());
     securityLayout->addWidget(lockHost);
     securityLayout->addStretch(1);
 
@@ -453,12 +441,35 @@ AccountSettingsPage::AccountSettingsPage(QWidget *parent)
                                            QStringLiteral(":/img/kpi_check.svg"), this);
     root->addWidget(auditPanel, 1);
     auto *auditLayout = qobject_cast<QVBoxLayout *>(auditPanel->layout());
-    m_auditLocked = makeLockedHint(QStringLiteral("需要管理员登录后才能查看操作审计。"), auditPanel);
-    auditLayout->addWidget(m_auditLocked);
+
+    // 未登录（无查看审计权限）时的空状态：图标与提示垂直居中，
+    // 避免内容全挤在面板顶部、下方留出大片空白。
+    m_auditEmpty = new QWidget(auditPanel);
+    auto *emptyLayout = new QVBoxLayout(m_auditEmpty);
+    emptyLayout->setContentsMargins(20, 16, 20, 16);
+    emptyLayout->setSpacing(12);
+    emptyLayout->addStretch(1);
+    auto *emptyIcon = new QLabel(m_auditEmpty);
+    emptyIcon->setFixedSize(48, 48);
+    emptyIcon->setAlignment(Qt::AlignCenter);
+    const auto updateEmptyIcon = [emptyIcon]() {
+        emptyIcon->setPixmap(tintedIcon(QStringLiteral(":/img/kpi_alert.svg"),
+                                        QColor(Theme::kTextMuted), 40,
+                                        emptyIcon->devicePixelRatioF()));
+    };
+    updateEmptyIcon();
+    Theme::watch(emptyIcon, updateEmptyIcon);
+    emptyLayout->addWidget(emptyIcon, 0, Qt::AlignHCenter);
+    m_auditLocked = makeLockedHint(QStringLiteral("需要管理员登录后才能查看操作审计。"), m_auditEmpty);
+    m_auditLocked->setAlignment(Qt::AlignCenter);
+    emptyLayout->addWidget(m_auditLocked);
+    emptyLayout->addStretch(1);
+    auditLayout->addWidget(m_auditEmpty, 1);
+
     auto *auditHeader = new QHBoxLayout();
     auditHeader->setContentsMargins(0, 0, 0, 0);
     auditHeader->setSpacing(8);
-    m_auditCaption = settingsHint(QStringLiteral("最近 %1 条，只追加，不记录任何密码。").arg(kAuditRows), auditPanel);
+    m_auditCaption = settingsHint(QStringLiteral("最近 %1 条").arg(kAuditRows), auditPanel);
     auditHeader->addWidget(m_auditCaption, 1);
     m_auditRefreshButton = makeActionButton(QStringLiteral("刷新"), false, auditPanel);
     auditHeader->addWidget(m_auditRefreshButton);
@@ -491,7 +502,34 @@ AccountSettingsPage::AccountSettingsPage(QWidget *parent)
     connect(m_resetButton, &ElaPushButton::clicked, this, &AccountSettingsPage::resetPassword);
     connect(m_roleButton, &ElaPushButton::clicked, this, &AccountSettingsPage::changeRole);
     connect(m_enableButton, &ElaPushButton::clicked, this, &AccountSettingsPage::toggleEnabled);
-    connect(m_unlockButton, &ElaPushButton::clicked, this, &AccountSettingsPage::unlockUser);
+    connect(m_deleteButton, &ElaPushButton::clicked, this, &AccountSettingsPage::deleteUser);
+    connect(m_shiftButton, &ElaPushButton::clicked, this, [this]() {
+        QSettings settings(backendParamsIniPath(), QSettings::IniFormat);
+        settings.setIniCodec("UTF-8");
+        const QString current = settings.value(QStringLiteral("Report/Shift")).toString();
+        QStringList shifts = settings.value(QStringLiteral("Report/Shifts")).toStringList();
+        if (shifts.isEmpty()) {
+            shifts = QStringList{QStringLiteral("白班"), QStringLiteral("晚班")};
+        }
+        bool ok = false;
+        const QString shift = QInputDialog::getText(this,
+                                                    QStringLiteral("设置班次"),
+                                                    QStringLiteral("班次名称（如 白班、晚班，可自定义）"),
+                                                    QLineEdit::Normal,
+                                                    current,
+                                                    &ok)
+                                  .trimmed();
+        if (!ok || shift.isEmpty()) {
+            return;
+        }
+        if (!shifts.contains(shift)) {
+            shifts << shift;
+            settings.setValue(QStringLiteral("Report/Shifts"), shifts);
+        }
+        settings.setValue(QStringLiteral("Report/Shift"), shift);
+        settings.sync();
+        showResult(true, QStringLiteral("班次已设置为 %1").arg(shift));
+    });
     connect(m_auditRefreshButton, &ElaPushButton::clicked, this, &AccountSettingsPage::refreshAudit);
 
     AuthService &auth = AuthService::instance();
@@ -513,7 +551,7 @@ AccountSettingsPage::AccountSettingsPage(QWidget *parent)
 
 QString AccountSettingsPage::bindingSummary() const
 {
-    return QStringLiteral("绑定 SQLite 账户表。三级角色已生效；会话超时由管理员在本页修改。");
+    return QStringLiteral("账户、角色权限、登录保护与操作审计。");
 }
 
 bool AccountSettingsPage::isEditable() const
@@ -581,11 +619,13 @@ void AccountSettingsPage::refreshIdentity()
 {
     AuthService &auth = AuthService::instance();
     if (!auth.isAvailable()) {
-        m_identity->setText(QStringLiteral("数据库未就绪，账户功能暂不可用。"));
+        m_identity->setText(QStringLiteral("账户服务不可用"));
     } else if (!auth.hasAccounts()) {
-        m_identity->setText(QStringLiteral("系统中还没有账户。点「登录」创建第一个管理员。"));
+        m_identity->setText(QStringLiteral("尚未创建管理员"));
     } else {
-        m_identity->setText(QStringLiteral("当前身份：%1").arg(auth.identityText()));
+        m_identity->setText(auth.isLoggedIn()
+                                ? QStringLiteral("当前用户：%1").arg(auth.identityText())
+                                : QStringLiteral("未登录"));
     }
     const bool loggedIn = auth.isLoggedIn();
     QStringList scope;
@@ -594,8 +634,13 @@ void AccountSettingsPage::refreshIdentity()
             scope << Auth::permissionDisplayName(permission);
         }
     }
-    m_identityScope->setText(loggedIn ? QStringLiteral("可执行：%1").arg(scope.join(QStringLiteral("；")))
-                                      : QStringLiteral("未登录时所有受控设置为只读。"));
+    m_identityScope->setText(loggedIn
+                                 ? QStringLiteral("当前角色：%1 · %2 项权限")
+                                       .arg(Auth::roleDisplayName(auth.currentRole()))
+                                       .arg(scope.size())
+                                 : QStringLiteral("登录后按角色开放设置权限"));
+    m_identityScope->setToolTip(loggedIn ? scope.join(QStringLiteral("；"))
+                                          : QStringLiteral("未登录时受控设置为只读。"));
     m_loginButton->setVisible(!loggedIn);
     m_loginButton->setEnabled(auth.isAvailable());
     m_loginButton->setText(auth.isAvailable() && !auth.hasAccounts() ? QStringLiteral("创建管理员")
@@ -611,7 +656,7 @@ void AccountSettingsPage::refreshUsers()
     m_usersLocked->setVisible(!allowed);
     m_users->setVisible(allowed);
     for (ElaPushButton *button :
-         {m_createButton, m_resetButton, m_roleButton, m_enableButton, m_unlockButton}) {
+         {m_createButton, m_resetButton, m_roleButton, m_enableButton, m_shiftButton, m_deleteButton}) {
         button->setVisible(allowed);
     }
     if (!allowed) {
@@ -677,7 +722,9 @@ void AccountSettingsPage::refreshAudit()
 {
     AuthService &auth = AuthService::instance();
     const bool allowed = auth.can(Permission::ViewAuditLog);
-    m_auditLocked->setVisible(!allowed);
+    if (m_auditEmpty) {
+        m_auditEmpty->setVisible(!allowed);
+    }
     m_audit->setVisible(allowed);
     m_auditCaption->setVisible(allowed);
     m_auditRefreshButton->setVisible(allowed);
@@ -718,13 +765,12 @@ void AccountSettingsPage::updateUserActions()
                                                       Qt::CaseInsensitive)
                                == 0;
     const bool enabled = item && item->data(kUserEnabledRole).toBool();
-    const bool locked = item && item->data(kUserLockedRole).toBool();
 
     m_resetButton->setEnabled(hasSelection && !isSelf);
     m_roleButton->setEnabled(hasSelection && !isSelf);
     m_enableButton->setEnabled(hasSelection && !isSelf);
     m_enableButton->setText(item && !enabled ? QStringLiteral("启用") : QStringLiteral("停用"));
-    m_unlockButton->setEnabled(hasSelection && locked);
+    m_deleteButton->setEnabled(hasSelection && !isSelf);
 }
 
 int AccountSettingsPage::selectedUserId() const
@@ -881,12 +927,19 @@ void AccountSettingsPage::toggleEnabled()
     showResult(result.ok, result.message);
 }
 
-void AccountSettingsPage::unlockUser()
+void AccountSettingsPage::deleteUser()
 {
     const int userId = selectedUserId();
-    if (userId <= 0) {
+    const QString name = selectedUsername();
+    if (userId <= 0 || name.isEmpty()) {
         return;
     }
-    const AuthResult result = AuthService::instance().unlock(userId);
+    if (!confirmAction(this,
+                       QStringLiteral("删除用户"),
+                       QStringLiteral("确定要删除账户 %1 吗？删除后不可恢复，审计记录会保留。").arg(name))) {
+        return;
+    }
+    const AuthResult result = AuthService::instance().deleteUser(userId);
     showResult(result.ok, result.message);
 }
+

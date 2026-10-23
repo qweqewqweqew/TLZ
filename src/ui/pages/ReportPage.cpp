@@ -2,6 +2,7 @@
 
 #include "ElaComboBox.h"
 #include "ElaPushButton.h"
+#include "app/RuntimeIniPaths.h"
 #include "app/Theme.h"
 #include "app/UiHelpers.h"
 #include "data/InspectionRepository.h"
@@ -19,6 +20,8 @@
 #include <QLineEdit>
 #include <QPainter>
 #include <QPrinter>
+#include <QSettings>
+#include <QSignalBlocker>
 #include <QStandardPaths>
 #include <QTableWidget>
 #include <QTextDocument>
@@ -45,6 +48,16 @@ public:
         update();
     }
 
+    // 非演示模式：按「≤ 1 mm 占 100%」显示完整圆环，而不是空状态细线。
+    void setPlaceholder(bool on)
+    {
+        if (m_placeholder == on) {
+            return;
+        }
+        m_placeholder = on;
+        update();
+    }
+
 protected:
     void paintEvent(QPaintEvent *) override
     {
@@ -61,39 +74,81 @@ protected:
             total += qMax(0, value);
         }
 
-        const int legendWidth = qMin(190, qMax(155, width() / 3));
-        const int side = qMax(72, qMin(height() - 26, width() - legendWidth - 24));
-        const QRectF pieRect(18, (height() - side) / 2.0, side, side);
-        if (total <= 0) {
-            painter.setPen(QPen(QColor(Theme::kDivider), 2));
-            painter.setBrush(Qt::NoBrush);
-            painter.drawEllipse(pieRect);
-            painter.setPen(QColor(Theme::kTextMuted));
-            painter.drawText(pieRect, Qt::AlignCenter, QStringLiteral("暂无数据"));
-        } else {
-            int start = 90 * 16;
-            for (int i = 0; i < 4; ++i) {
-                const int value = qMax(0, m_values.at(i));
-                if (value <= 0) {
-                    continue;
-                }
-                const int span = qRound(360.0 * 16.0 * value / total);
-                painter.setPen(QPen(QColor(Theme::kPanelBg), 2));
-                painter.setBrush(colors.at(i));
-                painter.drawPie(pieRect, start, -span);
-                start -= span;
-            }
+        if (m_placeholder) {
+            // 非演示模式：按「≤ 1 mm 占 100%」显示完整圆环。
+            const int legendWidth = qMin(190, qMax(155, width() / 3));
+            const int side = qMax(72, qMin(height() - 26, width() - legendWidth - 24));
+            const QRectF pieRect(18, (height() - side) / 2.0, side, side);
             painter.setPen(Qt::NoPen);
+            painter.setBrush(colors.at(0));
+            painter.drawEllipse(pieRect);
             painter.setBrush(QColor(Theme::kPanelBg));
             painter.drawEllipse(pieRect.center(), side * 0.22, side * 0.22);
             painter.setPen(QColor(Theme::kTextPrimary));
-            painter.drawText(QRectF(pieRect.center().x() - side * 0.2,
-                                    pieRect.center().y() - 10,
-                                    side * 0.4,
-                                    20),
-                            Qt::AlignCenter,
-                            QString::number(total));
+            QFont centerFont = painter.font();
+            centerFont.setPointSizeF(11.0);
+            painter.setFont(centerFont);
+            painter.drawText(pieRect, Qt::AlignCenter, QStringLiteral("100%"));
+
+            QFont legendFont = painter.font();
+            legendFont.setPointSizeF(9.0);
+            painter.setFont(legendFont);
+            const int legendX = int(pieRect.right()) + 20;
+            const int rowHeight = qMax(27, height() / 5);
+            for (int i = 0; i < 4; ++i) {
+                const int y = 18 + i * rowHeight;
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(colors.at(i));
+                painter.drawRoundedRect(QRectF(legendX, y + 4, 9, 9), 2, 2);
+                painter.setPen(QColor(Theme::kTextSecondary));
+                painter.drawText(QRectF(legendX + 17, y, legendWidth - 72, 18), labels.at(i));
+                painter.setPen(QColor(Theme::kTextPrimary));
+                painter.drawText(QRectF(width() - 62, y, 56, 18), Qt::AlignRight,
+                                 i == 0 ? QStringLiteral("100%") : QStringLiteral("0%"));
+            }
+            return;
         }
+
+        // 无数据（演示模式下没有高度记录）：显示空状态圆环。
+        if (total <= 0) {
+            const int side = qMax(96, qMin(height() - 40, width() - 48));
+            const QRectF circleRect((width() - side) / 2.0, (height() - side) / 2.0, side, side);
+            painter.setPen(QPen(QColor(Theme::kStateSuccess), 4));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawEllipse(circleRect.adjusted(3, 3, -3, -3));
+            painter.setPen(QColor(Theme::kTextMuted));
+            QFont centerFont = painter.font();
+            centerFont.setPointSizeF(12.0);
+            painter.setFont(centerFont);
+            painter.drawText(circleRect, Qt::AlignCenter, QStringLiteral("--"));
+            return;
+        }
+
+        const int legendWidth = qMin(190, qMax(155, width() / 3));
+        const int side = qMax(72, qMin(height() - 26, width() - legendWidth - 24));
+        const QRectF pieRect(18, (height() - side) / 2.0, side, side);
+        int start = 90 * 16;
+        for (int i = 0; i < 4; ++i) {
+            const int value = qMax(0, m_values.at(i));
+            if (value <= 0) {
+                continue;
+            }
+            const int span = qRound(360.0 * 16.0 * value / total);
+            painter.setPen(QPen(QColor(Theme::kPanelBg), 2));
+            painter.setBrush(colors.at(i));
+            painter.drawPie(pieRect, start, -span);
+            start -= span;
+        }
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(Theme::kPanelBg));
+        painter.drawEllipse(pieRect.center(), side * 0.22, side * 0.22);
+        painter.setPen(QColor(Theme::kTextPrimary));
+        painter.drawText(QRectF(pieRect.center().x() - side * 0.2,
+                                pieRect.center().y() - 10,
+                                side * 0.4,
+                                20),
+                        Qt::AlignCenter,
+                        QString::number(total));
 
         QFont legendFont = painter.font();
         legendFont.setPointSizeF(9.0);
@@ -120,6 +175,7 @@ protected:
 
 private:
     QList<int> m_values{0, 0, 0, 0};
+    bool m_placeholder{false};
 };
 
 namespace {
@@ -218,16 +274,18 @@ ReportPage::ReportPage(QWidget *parent)
                       "QFrame#controlBar { background:%2; border:1px solid %4; border-radius:6px; }"
                       "QTableWidget#reportTable {"
                       "  background:%2; color:%3; gridline-color:%4; border:none;"
-                      "  alternate-background-color:%5; selection-background-color:%6; selection-color:%3;"
+                      "  alternate-background-color:%5; selection-background-color:%6; selection-color:%9;"
                       "}"
                       "QTableWidget#reportTable::item { padding:4px 8px; }"
+                      "QTableWidget#reportTable::item:selected:hover { background:%10; }"
                       "QHeaderView::section {"
                       "  background:%1; color:%7; padding:6px 10px; border:none;"
                       "  border-bottom:1px solid %4; font-weight:600;"
                       "}"
                       "QDateEdit, QComboBox, QLineEdit { background:%2; color:%3; border:1px solid %4; border-radius:5px;"
                       "  padding:2px 6px; min-height:26px; }"
-                      "QDateEdit:focus, QComboBox:focus, QLineEdit:focus { border:1px solid %6; }"
+                      "QDateEdit:focus, QComboBox:focus, QLineEdit:focus { border:1px solid %11; }"
+                      "QDateEdit:hover, QComboBox:hover, QLineEdit:hover { background:%10; }"
                       "QDateEdit:disabled, QComboBox:disabled, QLineEdit:disabled { color:%8; }"
                       "QDateEdit::drop-down { subcontrol-origin:padding; subcontrol-position:right; width:18px;"
                       "  border-left:1px solid %4; }"
@@ -239,7 +297,10 @@ ReportPage::ReportPage(QWidget *parent)
                            Theme::kHoverBg,
                            Theme::kSelectionBg,
                            Theme::kTextSecondary,
-                           Theme::kTextMuted));
+                           Theme::kTextMuted)
+                      .arg(Theme::kSelectionText,
+                           Theme::kHoverBg,
+                           Theme::kFocusRing));
 
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
@@ -273,9 +334,11 @@ QWidget *ReportPage::buildFilterBar()
 
     layout->addWidget(makeLabel(QStringLiteral("班次"), QStringLiteral("sectionHint")));
     m_shiftCombo = new ElaComboBox(bar);
-    m_shiftCombo->addItems({QStringLiteral("全部班次"), QStringLiteral("甲班"), QStringLiteral("乙班"), QStringLiteral("丙班")});
+    m_shiftCombo->setEditable(true);
+    m_shiftCombo->addItem(QStringLiteral("全部班次"));
+    m_shiftCombo->addItems(shiftNames());
     m_shiftCombo->setMinimumWidth(106);
-    m_shiftCombo->setToolTip(QStringLiteral("班次字段待后端补齐，当前仅保留界面入口"));
+    m_shiftCombo->setToolTip(QStringLiteral("班次可在「设置 → 账号管理 → 设置班次」中自定义"));
     layout->addWidget(m_shiftCombo);
 
     layout->addWidget(makeLabel(QStringLiteral("板号"), QStringLiteral("sectionHint")));
@@ -311,10 +374,6 @@ QWidget *ReportPage::buildFilterBar()
     layout->addSpacing(8);
     layout->addWidget(m_status, 1);
 
-    m_filterHint = makeLabel(QStringLiteral("班次、板号暂为前端占位"), QStringLiteral("sectionHint"));
-    m_filterHint->setToolTip(QStringLiteral("当前数据库没有班次和板号字段，查询暂按时间范围执行"));
-    layout->addWidget(m_filterHint);
-
     m_excelButton = new ElaPushButton(QStringLiteral("导出 Excel"), bar);
     m_excelButton->setFixedSize(104, 32);
     applySecondaryButtonStyle(m_excelButton);
@@ -339,6 +398,12 @@ QWidget *ReportPage::buildFilterBar()
         m_rangeCombo->setCurrentIndex(Range7Days);
         m_from->setDate(today.addDays(-6));
         m_to->setDate(today);
+        if (m_shiftCombo) {
+            m_shiftCombo->setCurrentIndex(0);
+        }
+        if (m_plateEdit) {
+            m_plateEdit->clear();
+        }
         reload();
     });
     connect(m_excelButton, &ElaPushButton::clicked, this, &ReportPage::exportExcel);
@@ -560,16 +625,18 @@ void ReportPage::applyTheme()
                       "QFrame#controlBar { background:%2; border:1px solid %4; border-radius:6px; }"
                       "QTableWidget#reportTable {"
                       "  background:%2; color:%3; gridline-color:%4; border:none;"
-                      "  alternate-background-color:%5; selection-background-color:%6; selection-color:%3;"
+                      "  alternate-background-color:%5; selection-background-color:%6; selection-color:%9;"
                       "}"
                       "QTableWidget#reportTable::item { padding:4px 8px; }"
+                      "QTableWidget#reportTable::item:selected:hover { background:%10; }"
                       "QHeaderView::section {"
                       "  background:%1; color:%7; padding:6px 10px; border:none;"
                       "  border-bottom:1px solid %4; font-weight:600;"
                       "}"
                       "QDateEdit, QComboBox, QLineEdit { background:%2; color:%3; border:1px solid %4; border-radius:5px;"
                       "  padding:2px 6px; min-height:26px; }"
-                      "QDateEdit:focus, QComboBox:focus, QLineEdit:focus { border:1px solid %6; }"
+                      "QDateEdit:focus, QComboBox:focus, QLineEdit:focus { border:1px solid %11; }"
+                      "QDateEdit:hover, QComboBox:hover, QLineEdit:hover { background:%10; }"
                       "QDateEdit:disabled, QComboBox:disabled, QLineEdit:disabled { color:%8; }"
                       "QDateEdit::drop-down { subcontrol-origin:padding; subcontrol-position:right; width:18px;"
                       "  border-left:1px solid %4; }"
@@ -581,7 +648,10 @@ void ReportPage::applyTheme()
                            Theme::kHoverBg,
                            Theme::kSelectionBg,
                            Theme::kTextSecondary,
-                           Theme::kTextMuted));
+                           Theme::kTextMuted)
+                      .arg(Theme::kSelectionText,
+                           Theme::kHoverBg,
+                           Theme::kFocusRing));
     if (m_dailyPlot) {
         styleAxes(m_dailyPlot);
         if (m_dailyBars) {
@@ -669,8 +739,55 @@ void ReportPage::applyRange(QDate &from, QDate &to) const
     }
 }
 
+void ReportPage::setDemoMode(bool active)
+{
+    if (m_demoModeActive == active) {
+        return;
+    }
+    m_demoModeActive = active;
+    reload();
+}
+
+QStringList ReportPage::shiftNames() const
+{
+    QSettings settings(backendParamsIniPath(), QSettings::IniFormat);
+    settings.setIniCodec("UTF-8");
+    QStringList names = settings.value(QStringLiteral("Report/Shifts")).toStringList();
+    names.removeAll(QString());
+    if (names.isEmpty()) {
+        names = QStringList{QStringLiteral("白班"), QStringLiteral("晚班")};
+    }
+    return names;
+}
+
 void ReportPage::reload()
 {
+    // 同步「账号管理 → 设置班次」保存的班次与自定义班次列表。
+    const QStringList shifts = shiftNames();
+    if (m_shiftCombo) {
+        QStringList existing;
+        for (int i = 1; i < m_shiftCombo->count(); ++i) {
+            existing << m_shiftCombo->itemText(i);
+        }
+        for (const QString &name : shifts) {
+            if (!existing.contains(name)) {
+                m_shiftCombo->addItem(name);
+            }
+        }
+        QSettings settings(backendParamsIniPath(), QSettings::IniFormat);
+        settings.setIniCodec("UTF-8");
+        const QString shift = settings.value(QStringLiteral("Report/Shift")).toString().trimmed();
+        if (!shift.isEmpty()) {
+            int index = m_shiftCombo->findText(shift);
+            if (index < 0) {
+                m_shiftCombo->addItem(shift);
+                index = m_shiftCombo->count() - 1;
+            }
+            const QSignalBlocker blocker(m_shiftCombo);
+            m_shiftCombo->setCurrentIndex(index);
+        }
+    }
+
     QDate from;
     QDate to;
     applyRange(from, to);
@@ -694,9 +811,11 @@ void ReportPage::reload()
         return;
     }
 
-    m_demoDataActive = rows.size() < kDemoMinimumRows;
-    if (m_demoDataActive) {
+    // 只有 Ctrl+T 演示模式开启时才补演示记录；正常查询只展示数据库真实数据。
+    m_demoDataActive = false;
+    if (m_demoModeActive && rows.size() < kDemoMinimumRows) {
         rows.append(makeDemoRows(kDemoMinimumRows - rows.size(), from, to));
+        m_demoDataActive = true;
     }
 
     m_lastRangeText = from.isValid()
@@ -708,12 +827,6 @@ void ReportPage::reload()
                           .arg(m_lastRangeText)
                           .arg(rows.size())
                           .arg(m_demoDataActive ? QStringLiteral(" · 含演示数据，仅供界面预览") : QString()));
-    if (m_filterHint) {
-        m_filterHint->setText((m_shiftCombo && m_shiftCombo->currentIndex() > 0) ||
-                              (m_plateEdit && !m_plateEdit->text().trimmed().isEmpty())
-                                  ? QStringLiteral("占位筛选未参与查询")
-                                  : QStringLiteral("班次、板号暂为前端占位"));
-    }
 
     QMap<QDate, DailyStat> daily;
     for (const InspectionRecordRow &row : rows) {
@@ -731,9 +844,9 @@ void ReportPage::reload()
                 ++stat.boardsCompleted;
             }
         }
-        if (isDemoRow(row)) {
+        if (isDemoRow(row) && !shifts.isEmpty()) {
             const int demoIndex = -row.id - 100000;
-            const int shift = demoIndex % 3;
+            const QString shift = shifts.at(demoIndex % shifts.size());
             ++stat.shiftBoards[shift];
             if (row.particleCount > 0 && row.clearedCount >= row.particleCount) {
                 ++stat.shiftCompleted[shift];
@@ -794,6 +907,18 @@ void ReportPage::updateKpis(const QList<InspectionRecordRow> &rows)
 
 void ReportPage::updateDailyChart(const QMap<QDate, DailyStat> &daily)
 {
+    // 非演示模式不展示趋势数据，保持空图表。
+    if (!m_demoModeActive) {
+        m_dailyBars->setData(QVector<double>{}, QVector<double>{});
+        m_dailyLine->setData(QVector<double>{}, QVector<double>{});
+        m_dailyPlot->xAxis->setTicker(QSharedPointer<QCPAxisTicker>(new QCPAxisTicker));
+        m_dailyPlot->xAxis->setRange(0, 1);
+        m_dailyPlot->yAxis->setRange(0, 4);
+        m_dailyPlot->replot();
+        m_dailyCaption->setText(QStringLiteral("演示模式下显示"));
+        return;
+    }
+
     QVector<double> ticks;
     QVector<QString> labels;
     QVector<double> boards;
@@ -822,6 +947,15 @@ void ReportPage::updateDailyChart(const QMap<QDate, DailyStat> &daily)
 
 void ReportPage::updateHeightChart(const QList<InspectionRecordRow> &rows)
 {
+    // 非演示模式不展示高度分片，按「≤ 1 mm 占 100%」显示完整圆环。
+    if (!m_demoModeActive) {
+        m_heightPie->setPlaceholder(true);
+        m_heightCaption->setText(QStringLiteral("演示模式下显示"));
+        m_lastHeightBuckets.clear();
+        return;
+    }
+    m_heightPie->setPlaceholder(false);
+
     // 任务记录只有最大高度，先按任务级 MaxParticleHeight 做分段；单颗粒分布等明细接口补齐后再替换口径。
     QVector<double> values(4, 0.0);
     int measured = 0;
@@ -879,7 +1013,12 @@ void ReportPage::updateResultChart(const QList<InspectionRecordRow> &rows)
     const QVector<double> ticks{0, 1, 2, 3, 4};
     const QVector<QString> labels{QStringLiteral("复测通过"), QStringLiteral("待复核"), QStringLiteral("异常"),
                                  QStringLiteral("修磨中"), QStringLiteral("待修磨")};
-    const QVector<double> values{double(completed), double(review), double(abnormal), double(partial), double(clean)};
+    // 状态字段尚未由后端提供；非 Ctrl+T 演示模式不展示推导/占位结果，保持空图表。
+    const QVector<double> values{m_demoModeActive ? double(completed) : 0.0,
+                                 m_demoModeActive ? double(review) : 0.0,
+                                 m_demoModeActive ? double(abnormal) : 0.0,
+                                 m_demoModeActive ? double(partial) : 0.0,
+                                 m_demoModeActive ? double(clean) : 0.0};
     QSharedPointer<QCPAxisTickerText> ticker(new QCPAxisTickerText);
     ticker->addTicks(ticks, labels);
     m_resultPlot->yAxis->setTicker(ticker);
@@ -892,9 +1031,9 @@ void ReportPage::updateResultChart(const QList<InspectionRecordRow> &rows)
     const double maxValue = *std::max_element(values.cbegin(), values.cend());
     m_resultPlot->xAxis->setRange(0, std::max(4.0, maxValue * 1.2));
     m_resultPlot->replot();
-    m_resultCaption->setText(QStringLiteral("按铜板计 · %1%2")
-                                 .arg(m_demoDataActive ? QStringLiteral("演示状态已填充 · ") : QStringLiteral("状态字段待后端 · "))
-                                 .arg(QStringLiteral("共 %1 张").arg(rows.size())));
+    m_resultCaption->setText(m_demoModeActive
+                                 ? QStringLiteral("按铜板计 · 演示状态已填充 · 共 %1 张").arg(rows.size())
+                                 : QStringLiteral("状态字段待后端 · 暂不展示状态分布"));
 }
 
 void ReportPage::updateDailyTable(const QMap<QDate, DailyStat> &daily)
@@ -917,6 +1056,13 @@ void ReportPage::renderDailyPage()
     if (!m_dailyTable) {
         return;
     }
+    const QStringList shifts = shiftNames();
+    m_dailyTable->setColumnCount(1 + shifts.size() + 2);
+    QStringList headers{QStringLiteral("日期")};
+    headers += shifts;
+    headers << QStringLiteral("检测合计") << QStringLiteral("修磨合计");
+    m_dailyTable->setHorizontalHeaderLabels(headers);
+
     const int pages = qMax(1, (m_dailyRows.size() + kDailyPageSize - 1) / kDailyPageSize);
     m_dailyPage = qBound(0, m_dailyPage, pages - 1);
     const int begin = m_dailyPage * kDailyPageSize;
@@ -925,22 +1071,14 @@ void ReportPage::renderDailyPage()
     for (int row = 0; row < count; ++row) {
         const DailyRow &entry = m_dailyRows.at(begin + row);
         const DailyStat &stat = entry.stat;
-        const auto shiftText = [&stat](int shift) {
-            if (stat.shiftBoards[shift] <= 0) {
-                return QStringLiteral("--");
-            }
-            return QStringLiteral("%1 / %2")
-                .arg(stat.shiftBoards[shift])
-                .arg(stat.shiftCompleted[shift]);
-        };
-        const QStringList cells{
-            entry.date.toString(QStringLiteral("yyyy-MM-dd")),
-            shiftText(0),
-            shiftText(1),
-            shiftText(2),
-            QString::number(stat.boards),
-            QString::number(stat.boardsCompleted),
-        };
+        QStringList cells{entry.date.toString(QStringLiteral("yyyy-MM-dd"))};
+        for (const QString &name : shifts) {
+            const int boards = stat.shiftBoards.value(name, 0);
+            const int completed = stat.shiftCompleted.value(name, 0);
+            cells << (boards <= 0 ? QStringLiteral("--")
+                                  : QStringLiteral("%1 / %2").arg(boards).arg(completed));
+        }
+        cells << QString::number(stat.boards) << QString::number(stat.boardsCompleted);
         for (int column = 0; column < cells.size(); ++column) {
             auto *item = new QTableWidgetItem(cells.at(column));
             item->setTextAlignment(column == 0 ? (Qt::AlignLeft | Qt::AlignVCenter) : Qt::AlignCenter);
@@ -998,23 +1136,28 @@ void ReportPage::exportPdf()
                 .arg(m_kpiBoards->text(), m_kpiParticleBoards->text(),
                      m_kpiCompletion->text() == QStringLiteral("--") ? QStringLiteral("--") : m_kpiCompletion->text() + QStringLiteral(" %"),
                      m_kpiCycle->text() == QStringLiteral("--") ? QStringLiteral("--") : m_kpiCycle->text() + QStringLiteral(" s/张"));
-    html += QStringLiteral("<h3>每日班次汇总</h3><table cellspacing='0' cellpadding='5' border='1' style='border-collapse:collapse;'>"
-                           "<tr><th>日期</th><th>甲班</th><th>乙班</th><th>丙班</th><th>检测合计</th><th>修磨合计</th></tr>");
-    const auto shiftText = [](const DailyStat &stat, int shift) {
-        if (stat.shiftBoards[shift] <= 0) {
-            return QStringLiteral("--");
-        }
-        return QStringLiteral("%1 / %2")
-            .arg(stat.shiftBoards[shift])
-            .arg(stat.shiftCompleted[shift]);
-    };
+    const QStringList pdfShifts = shiftNames();
+    QString shiftHeader = QStringLiteral("<h3>每日班次汇总</h3>"
+                                         "<table cellspacing='0' cellpadding='5' border='1' style='border-collapse:collapse;'>"
+                                         "<tr><th>日期</th>");
+    for (const QString &name : pdfShifts) {
+        shiftHeader += QStringLiteral("<th>%1</th>").arg(name.toHtmlEscaped());
+    }
+    shiftHeader += QStringLiteral("<th>检测合计</th><th>修磨合计</th></tr>");
+    html += shiftHeader;
     for (const DailyRow &entry : m_dailyRows) {
         const DailyStat &stat = entry.stat;
-        html += QStringLiteral("<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td><td>%5</td><td>%6</td></tr>")
+        QString shiftCells;
+        for (const QString &name : pdfShifts) {
+            const int boards = stat.shiftBoards.value(name, 0);
+            const int completed = stat.shiftCompleted.value(name, 0);
+            shiftCells += QStringLiteral("<td>%1</td>")
+                              .arg(boards <= 0 ? QStringLiteral("--")
+                                               : QStringLiteral("%1 / %2").arg(boards).arg(completed));
+        }
+        html += QStringLiteral("<tr><td>%1</td>%2<td>%3</td><td>%4</td></tr>")
                     .arg(entry.date.toString(QStringLiteral("yyyy-MM-dd")),
-                         shiftText(stat, 0),
-                         shiftText(stat, 1),
-                         shiftText(stat, 2),
+                         shiftCells,
                          QString::number(stat.boards),
                          QString::number(stat.boardsCompleted));
     }

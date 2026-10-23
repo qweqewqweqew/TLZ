@@ -42,6 +42,9 @@ build-local\Release\MzTLZ.exe
 - 配置：config/database.ini（默认 Path=data/mztlz.db，相对可执行文件目录）
 - Qt 驱动：QSQLITE
 - 启动时由 DatabaseBootstrap 创建/迁移表结构，再由 Database 单例打开连接
+- 设置页“数据与存储”只展示 SQLite 数据表名称、表用途和字段定义，不读取或呈现任何业务记录内容；结构表固定高度且不显示滚动条。
+- 图像目录通过 `InspectionRecord.OverviewImagePath` 的实际值定位。当前前端只读取该字段供历史详情显示，没有负责保存生产图像或写入该字段的逻辑；后端需在保存检测总览图时一并写入可访问的绝对路径（或相对于程序目录的路径）。当数据库没有图像路径记录时，设置页会显示“暂无图像记录”并禁用目录按钮，不会自行猜测生产目录；已有记录若指向测试素材目录，也会按记录中的实际路径打开。
+- 设置页“设备状态”显示相机节点、海康相机和 PLC 三项状态，三项均可展开查看详情。相机节点详情展示 `/camera/status`、消息类型、QoS、ROS_DOMAIN_ID、发布者数量、最近状态消息和排查建议；ROS 2 bridge 每秒查询该 topic 的发布者数量。海康相机详情读取 `hik_camera.ini` 中的 IP、端口、用户名和预览参数，可从详情区调用现有 HCNetSDK 预览客户端连接或断开，密码不在界面展示。PLC 状态目前只在收到后端转发的 PLC 反馈时更新，展开内容暂留空并显示“待反馈”。PLC 状态字、故障码和连接判定的正式数据来源与接口由后端补充。
 
 ## 注意事项
 
@@ -53,6 +56,27 @@ build-local\Release\MzTLZ.exe
 - 停止后的安全回零与状态同步
 
 正式联调前请与后端团队确认接口协议，目前仅作为 UI 占位。
+
+### 粒子信息与「粒子三维点云」（占位实现，待算法 topic）
+
+右侧「粒子三维点云」的目标是：**按算法给出的粒子信息，从扫描点云里取出该粒子所在区域的数据并三维显示**。
+
+当前状态：
+
+- 算法侧**已经实现了粒子识别/定位**，但**还没有通过 ROS topic 把粒子数据发给本程序**；本程序目前只收到 `MillingPaths`（铣削路径，含 `uStart/vStart/uEnd/vEnd` 像素坐标）。
+- 因此本程序**只能用路径近似代表粒子**，属于占位实现：
+  - 2D 图命中：先按路径线 6 px 精确命中，未命中时再用 26 px 容差找最近的路径（`ImageViewFrame::hitTestPathInRange`，常量 `kParticleClickThresholdPx`）。
+  - 3D 裁剪：取选中路径的 `u/v` 包围盒，四周留白 `max(16, span/2)` 像素，从整板 `rangeFloat32` 里切出子区域显示（`ParticleDetailPanel.cpp` 的 `cropParticleCloud`）。
+- 这意味着：**粒子轮廓、粒子中心、粒子编号、单粒子高度/等级目前都不是真实数据**，只是路径附近的一块点云。多条路径属于同一粒子时，看起来会是「按路径分块」，而不是「按粒子分块」。
+
+待算法 topic 接入后应替换的部分：
+
+1. 新增或扩展现有消息（例如 `mz_interfaces/msg/ParticleInfo`，随 `MillingPaths` 一起下发），字段建议：`particle_id`、`bbox`（`u_min/v_min/u_max/v_max` 像素坐标）或 `center_u/center_v + radius`，以及可选的高度、等级。
+2. `Ros2Bridge` 增加订阅，转换成 VM 后交给 `MainWindow` → `ParticleDetailPanel`。
+3. 2D 图按粒子 bbox 绘制轮廓，命中测试改为「点在粒子 bbox 内」，不再依赖路径线容差。
+4. `cropParticleCloud(...)` 的入参由 `MillingPathVM` 改为粒子 bbox，同时把粒子编号显示到卡片标题/工具提示里。
+
+在此之前，界面上看到的粒子三维点云请按「路径附近区域点云」理解，不要作为粒子检测结果的验收依据。
 
 ### Ctrl+T / Ctrl+Shift+T（调试阶段）
 
