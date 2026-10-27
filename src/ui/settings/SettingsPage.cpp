@@ -25,6 +25,7 @@
 #include <QShowEvent>
 #include <QSizePolicy>
 #include <QStackedWidget>
+#include <QStyle>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -38,6 +39,37 @@ void styleConfirmBox(QMessageBox &box)
                           .arg(QLatin1String(Theme::kPanelBg), QLatin1String(Theme::kTextPrimary)));
 }
 
+// 顶部二级导航：矮卡片 + 左图标右文字。卡片本身由 setItemWidget 的自定义 QWidget 绘制，
+// 委托层不再画背景，避免选中/悬停样式被覆盖后出现重影。
+QString settingsPageStyleSheet()
+{
+    return QStringLiteral(
+               "QWidget#settingsPage { background: %1; }"
+               "QListWidget#settingsNav {"
+               "  background: transparent; color: %3; border: none;"
+               "  outline: none; padding: 0; font-size: 14px;"
+               "}"
+               "QListWidget#settingsNav::item {"
+               "  background: transparent; border: none; padding: 0;"
+               "}"
+               "QWidget#navCard {"
+               "  background: %2; border: 1px solid %4; border-radius: 6px;"
+               "}"
+               "QWidget#navCard:hover {"
+               "  background: %7; border-color: %6;"
+               "}"
+               "QWidget#navCard[selected=\"true\"] {"
+               "  background: %5; border-color: %6;"
+               "}")
+        .arg(Theme::kCanvasBg,
+             Theme::kPanelBg,
+             Theme::kTextPrimary,
+             Theme::kBorder,
+             Theme::kSelectionBg,
+             Theme::kSelectionText,
+             Theme::kHoverBg);
+}
+
 } // namespace
 
 SettingsPage::SettingsPage(Ros2Bridge *bridge,
@@ -49,65 +81,9 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
     Q_UNUSED(nodes);
     Q_UNUSED(eventLog);
     setObjectName(QStringLiteral("settingsPage"));
-    setStyleSheet(QStringLiteral(
-                      "QWidget#settingsPage { background: %1; }"
-                      "QListWidget#settingsNav {"
-                      "  background: transparent;"
-                      "  color: %3;"
-                      "  border: none;"
-                      "  outline: none;"
-                      "  padding: 0;"
-                      "  font-size: 15px;"
-                      "}"
-                      "QListWidget#settingsNav::item {"
-                      "  background: %2; color: %3; border: 1px solid %4;"
-                      "  padding: 16px 18px;"
-                      "  border-radius: 6px;"
-                      "}"
-                      "QListWidget#settingsNav::item:selected {"
-                      "  background: %5; color: %6; border-color: %6;"
-                      "}"
-                      "QListWidget#settingsNav::item:selected:hover { background: %8; }"
-                      "QListWidget#settingsNav::item:selected:pressed { background: %9; }"
-                      "QListWidget#settingsNav::item:hover { background: %7; }")
-                      .arg(Theme::kCanvasBg,
-                           Theme::kPanelBg,
-                           Theme::kTextPrimary,
-                           Theme::kBorder,
-                           Theme::kSelectionBg,
-                           Theme::kSelectionText,
-                           Theme::kHoverBg)
-                      .arg(Theme::kSelectedHoverBg, Theme::kSelectedPressedBg));
+    setStyleSheet(settingsPageStyleSheet());
     Theme::watch(this, [this]() {
-        setStyleSheet(QStringLiteral(
-                          "QWidget#settingsPage { background: %1; }"
-                          "QListWidget#settingsNav {"
-                          "  background: transparent;"
-                          "  color: %3;"
-                          "  border: none;"
-                          "  outline: none;"
-                          "  padding: 0;"
-                          "  font-size: 15px;"
-                          "}"
-                          "QListWidget#settingsNav::item {"
-                          "  background: %2; color: %3; border: 1px solid %4;"
-                          "  padding: 16px 18px;"
-                          "  border-radius: 6px;"
-                          "}"
-                          "QListWidget#settingsNav::item:selected {"
-                          "  background: %5; color: %6; border-color: %6;"
-                          "}"
-                          "QListWidget#settingsNav::item:selected:hover { background: %8; }"
-                          "QListWidget#settingsNav::item:selected:pressed { background: %9; }"
-                          "QListWidget#settingsNav::item:hover { background: %7; }")
-                          .arg(Theme::kCanvasBg,
-                               Theme::kPanelBg,
-                               Theme::kTextPrimary,
-                               Theme::kBorder,
-                               Theme::kSelectionBg,
-                               Theme::kSelectionText,
-                               Theme::kHoverBg)
-                          .arg(Theme::kSelectedHoverBg, Theme::kSelectedPressedBg));
+        setStyleSheet(settingsPageStyleSheet());
         updateNavIcons();
         updateAccessBanner();
         if (m_status && !m_status->text().isEmpty()) {
@@ -121,11 +97,11 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
 
     m_nav = new QListWidget(this);
     m_nav->setObjectName(QStringLiteral("settingsNav"));
-    m_nav->setFixedHeight(88);
+    m_nav->setFixedHeight(54);
     m_nav->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    m_nav->setIconSize(QSize(30, 30));
+    m_nav->setIconSize(QSize(20, 20));
     m_nav->setUniformItemSizes(true);
-    m_nav->setSpacing(8);
+    m_nav->setSpacing(6);
     m_nav->setViewMode(QListView::IconMode);
     m_nav->setLayoutMode(QListView::SinglePass);
     m_nav->setFlow(QListView::LeftToRight);
@@ -139,7 +115,7 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
 
     auto *contentColumn = new QVBoxLayout();
     contentColumn->setContentsMargins(0, 0, 0, 0);
-    contentColumn->setSpacing(6);
+    contentColumn->setSpacing(12);
     m_pageTitle = makeLabel(QString(), QStringLiteral("panelTitle"));
     m_pageTitle->setVisible(false);
     contentColumn->addWidget(m_pageTitle);
@@ -183,11 +159,34 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
 
     const auto addPage = [this](const QString &title, const QString &iconPath, SettingsSubPage *page) {
         auto *item = new QListWidgetItem(title, m_nav);
-        // 图标交给 tintedIcon 按当前主题着色，深色模式显示为白色。
         item->setData(Qt::UserRole, iconPath);
-        item->setIcon(QIcon(tintedIcon(iconPath, QColor(Theme::kTextPrimary), 30,
-                                       m_nav->devicePixelRatioF())));
         item->setTextAlignment(Qt::AlignCenter);
+
+        // 左图标 + 右文字，整体水平居中；卡片承载背景 / 悬停 / 选中样式。
+        auto *card = new QWidget(m_nav);
+        card->setObjectName(QStringLiteral("navCard"));
+        card->setAttribute(Qt::WA_StyledBackground, true);
+        card->setAttribute(Qt::WA_Hover, true);
+        card->setProperty("selected", false);
+        auto *cardLayout = new QHBoxLayout(card);
+        cardLayout->setContentsMargins(10, 0, 10, 0);
+        cardLayout->setSpacing(8);
+        cardLayout->setAlignment(Qt::AlignCenter);
+        auto *iconLabel = new QLabel(card);
+        iconLabel->setObjectName(QStringLiteral("navIcon"));
+        iconLabel->setFixedSize(20, 20);
+        iconLabel->setScaledContents(true);
+        iconLabel->setPixmap(tintedIcon(iconPath, QColor(Theme::kTextPrimary), 20,
+                                        m_nav->devicePixelRatioF()));
+        auto *textLabel = new QLabel(title, card);
+        textLabel->setObjectName(QStringLiteral("navText"));
+        textLabel->setStyleSheet(QStringLiteral(
+            "color:%1; font-size:14px; font-weight:700; border:none; background:transparent;")
+            .arg(Theme::kTextPrimary));
+        cardLayout->addWidget(iconLabel, 0, Qt::AlignVCenter);
+        cardLayout->addWidget(textLabel, 0, Qt::AlignVCenter);
+        m_nav->setItemWidget(item, card);
+
         m_stack->addWidget(page);
         connect(page, &SettingsSubPage::dirtyChanged, this, [this, page](bool) {
             if (page == currentPage()) {
@@ -210,9 +209,9 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
             new NodeCommSettingsPage(m_stack));
     m_visionPage = new VisionSettingsPage(m_stack);
     addPage(QStringLiteral("检测与标定"), QStringLiteral(":/img/nav_detect.svg"), m_visionPage);
-    addPage(QStringLiteral("修磨工艺"), QStringLiteral(":/img/kpi_target.svg"),
+    addPage(QStringLiteral("修磨工艺"), QStringLiteral(":/img/nav_process.svg"),
             new ProcessSettingsPage(bridge, m_stack));
-    addPage(QStringLiteral("安全与权限"), QStringLiteral(":/img/kpi_alert.svg"),
+    addPage(QStringLiteral("安全与权限"), QStringLiteral(":/img/nav_security.svg"),
             new AccountSettingsPage(m_stack));
     m_nodeCommPage = qobject_cast<NodeCommSettingsPage *>(m_stack->widget(0));
     connect(m_nodeCommPage, &NodeCommSettingsPage::startNodesRequested,
@@ -247,6 +246,7 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
         }
         m_currentRow = row;
         showPage(row);
+        updateNavSelection();
     });
     connect(saveButton, &ElaPushButton::clicked, this, [this]() { saveCurrent(); });
     connect(cancelButton, &ElaPushButton::clicked, this, [this]() {
@@ -276,6 +276,7 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
     refreshAccess();
     showPage(0);
     updateNavCardSizes();
+    updateNavSelection();
 }
 
 void SettingsPage::resizeEvent(QResizeEvent *event)
@@ -298,12 +299,13 @@ void SettingsPage::updateNavCardSizes()
     // The list viewport is the actual drawable width after scrollbars and layout margins.
     const int available = qMax(320, m_nav->viewport()->width());
     const int cardWidth = qMax(120, (available - m_nav->spacing() * (m_nav->count() - 1)) / m_nav->count());
-    m_nav->setGridSize(QSize(cardWidth, 76));
+    m_nav->setGridSize(QSize(cardWidth, 46));
     for (int i = 0; i < m_nav->count(); ++i) {
         if (auto *item = m_nav->item(i)) {
-            item->setSizeHint(QSize(cardWidth, 76));
+            item->setSizeHint(QSize(cardWidth, 46));
         }
     }
+    m_nav->doItemsLayout();
 }
 
 void SettingsPage::updateNavIcons()
@@ -318,11 +320,44 @@ void SettingsPage::updateNavIcons()
         if (!item) {
             continue;
         }
-        const QString iconPath = item->data(Qt::UserRole).toString();
-        if (iconPath.isEmpty()) {
+        auto *card = m_nav->itemWidget(item);
+        if (!card) {
             continue;
         }
-        item->setIcon(QIcon(tintedIcon(iconPath, color, 30, dpr)));
+        const QString iconPath = item->data(Qt::UserRole).toString();
+        if (auto *icon = card->findChild<QLabel *>(QStringLiteral("navIcon"))) {
+            if (!iconPath.isEmpty()) {
+                icon->setPixmap(tintedIcon(iconPath, color, 20, dpr));
+            }
+        }
+        if (auto *text = card->findChild<QLabel *>(QStringLiteral("navText"))) {
+            text->setStyleSheet(QStringLiteral(
+                "color:%1; font-size:14px; font-weight:700; border:none; background:transparent;")
+                .arg(color.name()));
+        }
+    }
+}
+
+void SettingsPage::updateNavSelection()
+{
+    if (!m_nav) {
+        return;
+    }
+    const int current = m_nav->currentRow();
+    for (int i = 0; i < m_nav->count(); ++i) {
+        auto *item = m_nav->item(i);
+        auto *card = item ? m_nav->itemWidget(item) : nullptr;
+        if (!card) {
+            continue;
+        }
+        const bool selected = (i == current);
+        if (card->property("selected").toBool() == selected) {
+            continue;
+        }
+        card->setProperty("selected", selected);
+        card->style()->unpolish(card);
+        card->style()->polish(card);
+        card->update();
     }
 }
 

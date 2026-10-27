@@ -25,7 +25,7 @@ HikLiveView::HikLiveView(QWidget *parent)
     surfacePalette.setColor(QPalette::Window, QColor(Theme::kCanvasBg));
     m_videoSurface->setPalette(surfacePalette);
 
-    m_statusLabel = new QLabel(QStringLiteral("海康相机尚未连接"), this);
+    m_statusLabel = new QLabel(QStringLiteral("相机未连接"), this);
     m_statusLabel->setAlignment(Qt::AlignCenter);
     m_statusLabel->setWordWrap(true);
     m_statusLabel->setStyleSheet(QStringLiteral(
@@ -83,9 +83,10 @@ void HikLiveView::setConnectionStatus(bool connected, const QString &message)
         return;
     }
 
-    m_statusLabel->setText(message.isEmpty()
-                               ? QStringLiteral("海康相机尚未连接")
-                               : message);
+    const QString shown = message.isEmpty() || message.contains(QStringLiteral(".ini"))
+                              ? QStringLiteral("相机未连接")
+                              : message;
+    m_statusLabel->setText(shown);
     m_statusLabel->show();
     m_statusLabel->raise();
 }

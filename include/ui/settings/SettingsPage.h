@@ -54,6 +54,7 @@ private:
     void showEvent(QShowEvent *event) override;
     void updateNavCardSizes();
     void updateNavIcons();
+    void updateNavSelection();
     void showPage(int row);
     void updateActions();
     void refreshAccess();

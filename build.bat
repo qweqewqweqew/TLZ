@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 setlocal EnableExtensions
 REM MzTLZ Release build script for the target PC.
 REM Do NOT call ROS setup.bat here: it prepends older Qt headers and breaks Qt 5.15.

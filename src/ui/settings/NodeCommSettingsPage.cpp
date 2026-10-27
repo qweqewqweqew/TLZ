@@ -2,41 +2,101 @@
 
 #include "app/RuntimeIniPaths.h"
 #include "app/Theme.h"
-#include "app/UiHelpers.h"
-#include "camera/HikCameraConfig.h"
 #include "data/Database.h"
-#include "ui/settings/SettingsFormWidgets.h"
 
-#include "ElaPushButton.h"
-
+#include <QButtonGroup>
+#include <QCheckBox>
 #include <QCoreApplication>
-#include <QAbstractItemView>
 #include <QDesktopServices>
-#include <QDateTime>
 #include <QDialog>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QFrame>
-#include <QFont>
+#include <QGridLayout>
 #include <QHBoxLayout>
+#include <QHash>
 #include <QHeaderView>
 #include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QProcess>
+#include <QProcessEnvironment>
+#include <QProgressBar>
+#include <QPushButton>
 #include <QRegularExpression>
-#include <QHash>
+#include <QSettings>
+#include <QSizePolicy>
+#include <QSpinBox>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
-#include <QSet>
-#include <QToolButton>
-#include <QProcessEnvironment>
+#include <QStackedWidget>
+#include <QStyle>
+#include <QStorageInfo>
+#include <QStringList>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QUrl>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <cmath>
+
 namespace {
 
+// ---- 通信/存储配置（device_comm.ini）----
+QString deviceCommIniPath()
+{
+    return QCoreApplication::applicationDirPath() + QStringLiteral("/device_comm.ini");
+}
+
+struct DeviceCommConfig
+{
+    QString topic{QStringLiteral("/camera/image_raw")};
+    QString triggerMode{QStringLiteral("soft")}; // soft | hard
+    bool autoReconnect{true};
+    QString imageRoot{QStringLiteral("D:/MZ-VISION/captured_images/")};
+    QString saveMode{QStringLiteral("ng")}; // ng | all | none
+    bool autoClean{true};
+    int cleanMinGb{50};
+    int cleanMaxDays{30};
+};
+
+DeviceCommConfig loadDeviceCommConfig()
+{
+    DeviceCommConfig config;
+    QSettings settings(deviceCommIniPath(), QSettings::IniFormat);
+    settings.setIniCodec("UTF-8");
+    config.topic = settings.value(QStringLiteral("Camera/Topic"), config.topic).toString().trimmed();
+    config.triggerMode = settings.value(QStringLiteral("Camera/TriggerMode"), config.triggerMode).toString();
+    config.autoReconnect = settings.value(QStringLiteral("Camera/AutoReconnect"), config.autoReconnect).toBool();
+    config.imageRoot = settings.value(QStringLiteral("Storage/ImageRoot"), config.imageRoot).toString();
+    config.saveMode = settings.value(QStringLiteral("Storage/SaveMode"), config.saveMode).toString();
+    config.autoClean = settings.value(QStringLiteral("Storage/AutoClean"), config.autoClean).toBool();
+    config.cleanMinGb = settings.value(QStringLiteral("Storage/CleanMinGb"), config.cleanMinGb).toInt();
+    config.cleanMaxDays = settings.value(QStringLiteral("Storage/CleanMaxDays"), config.cleanMaxDays).toInt();
+    return config;
+}
+
+void saveDeviceCommConfig(const DeviceCommConfig &config, QString *error)
+{
+    QSettings settings(deviceCommIniPath(), QSettings::IniFormat);
+    settings.setIniCodec("UTF-8");
+    settings.setValue(QStringLiteral("Camera/Topic"), config.topic);
+    settings.setValue(QStringLiteral("Camera/TriggerMode"), config.triggerMode);
+    settings.setValue(QStringLiteral("Camera/AutoReconnect"), config.autoReconnect);
+    settings.setValue(QStringLiteral("Storage/ImageRoot"), config.imageRoot);
+    settings.setValue(QStringLiteral("Storage/SaveMode"), config.saveMode);
+    settings.setValue(QStringLiteral("Storage/AutoClean"), config.autoClean);
+    settings.setValue(QStringLiteral("Storage/CleanMinGb"), config.cleanMinGb);
+    settings.setValue(QStringLiteral("Storage/CleanMaxDays"), config.cleanMaxDays);
+    settings.sync();
+    if (settings.status() != QSettings::NoError && error) {
+        *error = QStringLiteral("写入 device_comm.ini 失败：%1").arg(deviceCommIniPath());
+    }
+}
+
+// ---- 节点就绪检查（保留原有脚本探测逻辑）----
 struct NodeReadiness
 {
     bool ready{false};
@@ -108,7 +168,7 @@ NodeReadiness checkBatchFiles(const QString &script,
         return result;
     }
     const QRegularExpression guardExpression(
-        QStringLiteral("if\\s+not\\s+exist\\s+\\\"([^\\\"]+)\\\""),
+        QStringLiteral("if\\s+not\\s+exist\\s+\\\"([^\\\"]+)\""),
         QRegularExpression::CaseInsensitiveOption);
     QStringList conditions;
     QRegularExpressionMatchIterator guardIterator = guardExpression.globalMatch(script);
@@ -146,73 +206,6 @@ NodeReadiness checkBatchFiles(const QString &script,
     return result;
 }
 
-QFrame *makeReadinessCard(const QString &title,
-                          QLabel **status,
-                          QWidget *parent)
-{
-    auto *card = new QFrame(parent);
-    card->setObjectName(QStringLiteral("nodeReadinessCard"));
-    Theme::bindStyle(card, []() {
-        return QStringLiteral("QFrame#nodeReadinessCard { background:%1; border:1px solid %2;"
-                              " border-radius:5px; }")
-            .arg(Theme::kPanelBg, Theme::kBorder);
-    });
-    auto *layout = new QVBoxLayout(card);
-    layout->setContentsMargins(12, 8, 12, 8);
-    layout->setSpacing(5);
-    auto *name = settingsSectionHeading(title, card);
-    layout->addWidget(name);
-    *status = makeLabel(QStringLiteral("等待检测"));
-    (*status)->setParent(card);
-    (*status)->setWordWrap(false);
-    (*status)->setStyleSheet(QStringLiteral("font-size:19px;font-weight:700;color:%1;border:none;background:transparent;")
-                                 .arg(Theme::kTextMuted));
-    layout->addWidget(*status);
-    card->setMinimumHeight(70);
-    return card;
-}
-
-void setReadinessLabel(QLabel *label, bool ready, const QString &detail)
-{
-    if (!label) {
-        return;
-    }
-    label->setText(ready ? QStringLiteral("● 准备就绪") : QStringLiteral("● 未就绪"));
-    label->setToolTip(ready ? QStringLiteral("前置检查已通过") : detail);
-    label->setStyleSheet(QStringLiteral(
-                             "color:%1;font-size:19px;font-weight:700;border:none;background:transparent;")
-                             .arg(ready ? Theme::kStateSuccess : Theme::kStateError));
-}
-
-void styleReadinessCard(QFrame *card, bool ready)
-{
-    if (!card) {
-        return;
-    }
-    card->setStyleSheet(QStringLiteral(
-                            "QFrame#nodeReadinessCard { background:%1; border:1px solid %2;"
-                            " border-radius:5px; }")
-                            .arg(Theme::kPanelBg, ready ? Theme::kStateSuccess : Theme::kBorder));
-}
-
-void applyOutlinedButtonStyle(ElaPushButton *button)
-{
-    if (!button) {
-        return;
-    }
-    button->setBorderRadius(5);
-    button->setLightDefaultColor(QColor(Theme::kPanelBg));
-    button->setDarkDefaultColor(QColor(Theme::kControlBg));
-    button->setLightHoverColor(QColor(Theme::kHoverBg));
-    button->setDarkHoverColor(QColor(Theme::kHoverBg));
-    button->setLightPressColor(QColor(Theme::kPressedBg));
-    button->setDarkPressColor(QColor(Theme::kPressedBg));
-    button->setLightTextColor(QColor(Theme::markColor()));
-    button->setDarkTextColor(QColor(Theme::kTextPrimary));
-    button->setStyleSheet(QStringLiteral("QPushButton { border:1px solid %1; border-radius:5px; }")
-                              .arg(Theme::markColor()));
-}
-
 QString quoteSqliteIdentifier(const QString &identifier)
 {
     QString escaped = identifier;
@@ -220,146 +213,205 @@ QString quoteSqliteIdentifier(const QString &identifier)
     return QStringLiteral("\"%1\"").arg(escaped);
 }
 
-void styleSchemaTable(QTableWidget *table)
+// 颜色取自当前主题，切换时由 NodeCommSettingsPage::applyTheme() 重刷。
+QString cardQss()
 {
-    if (!table) {
-        return;
-    }
-    table->setAlternatingRowColors(true);
-    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    table->setSelectionMode(QAbstractItemView::NoSelection);
-    table->setShowGrid(false);
-    table->setWordWrap(true);
-    table->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    table->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    table->verticalHeader()->setVisible(false);
-    table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
-    table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
-    table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
-    table->horizontalHeader()->setMinimumSectionSize(72);
-    table->setStyleSheet(QStringLiteral(
-        "QTableWidget { background:%1; color:%2; font-size:11px; border:1px solid %3; border-radius:5px;"
-        " alternate-background-color:%4; gridline-color:%3; }"
-        "QTableWidget::item { padding:2px 5px; border-bottom:1px solid %3; }"
-        "QHeaderView::section { background:%5; color:%2; border:none; border-bottom:1px solid %3;"
-        " padding:5px 6px; font-weight:600; }")
-                             .arg(Theme::kPanelBg,
-                                  Theme::kTextPrimary,
-                                  Theme::kBorder,
-                                  Theme::kCanvasBg,
-                                  Theme::kControlBg));
+    return QStringLiteral(
+               "QFrame#commCard { background:%1; border:1px solid %2;"
+               " border-top:2px solid %3; border-radius:8px; }")
+        .arg(Theme::kCardBg, Theme::kBorder, Theme::markColor());
 }
 
-QFrame *makeDeviceStatusRow(const QString &title,
-                            QLabel **status,
-                            QToolButton **toggle,
-                            QWidget **details,
-                            QWidget *parent,
-                            const QString &initialText)
+QString primaryBtnQss()
 {
-    auto *row = new QFrame(parent);
-    row->setObjectName(QStringLiteral("deviceStatusRow"));
-    row->setMinimumHeight(62);
-    Theme::bindStyle(row, []() {
-        return QStringLiteral(
-                   "QFrame#deviceStatusRow { background:%1; color:%2;"
-                   " border:1px solid %3; border-left:3px solid %4; border-radius:5px; }")
-            .arg(Theme::kPanelBg, Theme::kTextPrimary, Theme::kBorder, Theme::kStateUnknown);
-    });
-    auto *layout = new QVBoxLayout(row);
-    layout->setContentsMargins(9, 6, 9, 7);
-    layout->setSpacing(5);
-    auto *header = new QWidget(row);
-    auto *headerLayout = new QHBoxLayout(header);
-    headerLayout->setContentsMargins(0, 0, 0, 0);
-    headerLayout->setSpacing(8);
-    *toggle = new QToolButton(header);
-    (*toggle)->setText(title);
-    (*toggle)->setArrowType(Qt::RightArrow);
-    (*toggle)->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    (*toggle)->setCursor(Qt::PointingHandCursor);
-    (*toggle)->setCheckable(true);
-    Theme::bindStyle(*toggle, []() {
-        return QStringLiteral(
-                   "QToolButton { color:%1; font-size:13px; font-weight:600; border:none; background:transparent;"
-                   " text-align:left; padding:3px 2px; }"
-                   "QToolButton:checked { color:%3; background:%4; border-radius:4px; }"
-                   "QToolButton:checked:hover { color:%3; background:%5; }"
-                   "QToolButton:checked:pressed { color:%3; background:%6; }"
-                   "QToolButton:hover { color:%2; }")
-            .arg(Theme::kTextPrimary,
-                 Theme::markColor(),
-                 Theme::kSelectionText,
-                 Theme::kSelectionBg,
-                 Theme::kSelectedHoverBg,
-                 Theme::kSelectedPressedBg);
-    });
-    headerLayout->addWidget(*toggle, 1);
-    *status = makeLabel(initialText);
-    (*status)->setParent(row);
-    (*status)->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    (*status)->setStyleSheet(QStringLiteral("font-size:16px;font-weight:700;color:%1;border:none;background:transparent;")
-                                 .arg(Theme::kStateUnknown));
-    headerLayout->addWidget(*status);
-    layout->addWidget(header);
-    *details = new QWidget(row);
-    (*details)->setObjectName(QStringLiteral("deviceStatusDetails"));
-    Theme::bindStyle(*details, []() {
-        return QStringLiteral("QWidget#deviceStatusDetails { background:%1; border:none; border-top:1px solid %2; }")
-            .arg(Theme::kPanelBg, Theme::kBorder);
-    });
-    (*details)->setVisible(false);
-    layout->addWidget(*details);
-    return row;
+    return QStringLiteral(
+               "QPushButton { background:#1F6FEB; color:#FFFFFF; border:none; border-radius:5px;"
+               " padding:6px 16px; font-size:13px; font-weight:bold; }"
+               "QPushButton:hover { background:#388BFD; }"
+               "QPushButton:pressed { background:#1850B8; }"
+               "QPushButton:disabled { background:#174A9A; color:#FFFFFF; }");
 }
 
-QLabel *addDeviceInfoLine(QVBoxLayout *layout, const QString &key, QWidget *parent)
+QString secondaryBtnQss()
 {
-    auto *line = new QWidget(parent);
-    line->setStyleSheet(QStringLiteral("background:transparent;border:none;"));
-    auto *row = new QHBoxLayout(line);
-    row->setContentsMargins(1, 0, 1, 0);
-    row->setSpacing(10);
-    auto *name = makeLabel(key);
-    name->setFixedWidth(82);
-    name->setStyleSheet(QStringLiteral("color:%1;font-size:11px;border:none;background:transparent;")
-                            .arg(Theme::kTextMuted));
-    auto *value = makeLabel(QStringLiteral("—"));
-    value->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    value->setWordWrap(true);
-    value->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
-    value->setMinimumWidth(0);
-    value->setStyleSheet(QStringLiteral("color:%1;font-size:11px;border:none;background:transparent;")
-                             .arg(Theme::kTextPrimary));
-    row->addWidget(name);
-    row->addWidget(value, 1);
-    layout->addWidget(line);
-    return value;
+    return QStringLiteral(
+               "QPushButton { background:%1; color:%2; border:1px solid %3; border-radius:5px;"
+               " padding:5px 12px; font-size:13px; }"
+               "QPushButton:hover { background:%4; }"
+               "QPushButton:pressed { background:%5; }"
+               "QPushButton:disabled { color:%6; }")
+        .arg(Theme::kControlBg, Theme::kTextPrimary, Theme::kBorder,
+             Theme::kHoverBg, Theme::kPressedBg, Theme::kTextMuted);
 }
 
-void setDeviceStatusLabel(QLabel *label, QWidget *card, const QString &text, const QString &color, const QString &detail)
+QString segmentBtnQss()
 {
-    if (!label) {
-        return;
+    return QStringLiteral(
+               "QPushButton { background:%1; color:%2; border:1px solid %3;"
+               " border-radius:5px; padding:0px 12px; min-height:34px; max-height:34px; font-size:12px; }"
+               "QPushButton:checked { background:%4; color:%5; border-color:%5; font-weight:600; }"
+               "QPushButton:hover { background:%6; }")
+        .arg(Theme::kControlBg, Theme::kTextSecondary, Theme::kBorder,
+             Theme::kSelectionBg, Theme::markColor(), Theme::kHoverBg);
+}
+
+QString inputQss()
+{
+    return QStringLiteral(
+               "QLineEdit { background:%1; color:%2; border:1px solid %3;"
+               " border-radius:5px; padding:0px 8px; min-height:34px; font-size:13px;"
+               " selection-background-color:%4; }"
+               "QLineEdit:focus { border-color:%4; }"
+               "QLineEdit:read-only { color:%5; }")
+        .arg(Theme::kControlBg, Theme::kTextPrimary, Theme::kBorder, Theme::kFocusRing, Theme::kTextSecondary);
+}
+
+QString spinBoxQss()
+{
+    return QStringLiteral(
+               "QSpinBox { background:%1; color:%2; border:1px solid %3;"
+               " border-radius:5px; padding:0px 8px; margin:0;"
+               " min-height:34px; max-height:34px; font-size:13px; }"
+               "QSpinBox:focus { border-color:%4; }"
+               "QSpinBox::up-button, QSpinBox::down-button { width:0; height:0; border:none; }")
+        .arg(Theme::kControlBg, Theme::kTextPrimary, Theme::kBorder, Theme::kFocusRing);
+}
+
+QString checkQss()
+{
+    return QStringLiteral(
+               "QCheckBox { color:%1; font-size:12px; spacing:6px; }"
+               "QCheckBox::indicator { width:15px; height:15px; border-radius:3px;"
+               " border:1px solid %2; background:%3; }"
+               "QCheckBox::indicator:checked { background:%4; border-color:%4; }")
+        .arg(Theme::kTextPrimary, Theme::kBorder, Theme::kControlBg, Theme::kAccent);
+}
+
+QString listQss()
+{
+    return QStringLiteral(
+               "QListWidget#nodeList { background:transparent; border:none; outline:none; padding:0; }"
+               "QListWidget#nodeList::item { background:transparent; border:none; margin:0; }"
+               "QWidget#nodeItem { background:%1; border:1px solid %2; border-radius:6px; }"
+               "QWidget#nodeItem:hover { background:%3; border:1px solid %4; }"
+               "QWidget#nodeItem[selected=\"true\"] {"
+               " background:%5; border:1px solid %6; border-left:3px solid %6; }")
+        .arg(Theme::kControlBg, Theme::kBorder, Theme::kHoverBg, Theme::kFocusRing,
+             Theme::kSelectionBg, Theme::markColor());
+}
+
+QString progressQss(bool warning)
+{
+    const QString chunk = warning ? QLatin1String(Theme::kStateWarning) : QLatin1String(Theme::kAccent);
+    return QStringLiteral(
+               "QProgressBar { background:%1; border:1px solid %2; border-radius:5px;"
+               " text-align:center; color:%3; font-size:12px; font-weight:bold; min-height:24px; max-height:24px; }"
+               "QProgressBar::chunk { background:%4; border-radius:4px; }")
+        .arg(Theme::kControlBg, Theme::kBorder, Theme::kTextPrimary, chunk);
+}
+
+QString labelQss(const char *color, int size, int weight)
+{
+    return QStringLiteral("color:%1;font-size:%2px;font-weight:%3;border:none;background:transparent;")
+        .arg(QLatin1String(color))
+        .arg(size)
+        .arg(weight);
+}
+
+QLabel *titleLabel(const QString &text, QWidget *parent)
+{
+    auto *label = new QLabel(text, parent);
+    label->setObjectName(QStringLiteral("commTitle"));
+    label->setStyleSheet(labelQss(Theme::kTextPrimary, 14, 600));
+    return label;
+}
+
+QLabel *fieldLabel(const QString &text, QWidget *parent)
+{
+    auto *label = new QLabel(text, parent);
+    label->setObjectName(QStringLiteral("commField"));
+    label->setStyleSheet(labelQss(Theme::kTextSecondary, 12, 400));
+    return label;
+}
+
+QLabel *hintLabel(const QString &text, QWidget *parent)
+{
+    auto *label = new QLabel(text, parent);
+    label->setObjectName(QStringLiteral("commHint"));
+    label->setStyleSheet(labelQss(Theme::kTextMuted, 11, 400));
+    label->setWordWrap(true);
+    return label;
+}
+
+QLabel *makeStatusDot(const QString &text, const char *color, QWidget *parent)
+{
+    auto *label = new QLabel(text, parent);
+    label->setObjectName(QStringLiteral("statusDot"));
+    label->setStyleSheet(labelQss(color, 11, 600));
+    return label;
+}
+
+QPushButton *makeSegmentButton(const QString &text, QWidget *parent)
+{
+    auto *button = new QPushButton(text, parent);
+    button->setObjectName(QStringLiteral("segmentBtn"));
+    button->setCheckable(true);
+    button->setCursor(Qt::PointingHandCursor);
+    button->setFixedHeight(34);
+    button->setStyleSheet(segmentBtnQss());
+    return button;
+}
+
+QString stepperBtnQss()
+{
+    return QStringLiteral(
+               "QPushButton { background:%1; color:%2; border:1px solid %3;"
+               " border-radius:5px; font-size:16px; font-weight:700; padding:0; min-width:34px; max-width:34px;"
+               " min-height:34px; max-height:34px; }"
+               "QPushButton:hover { background:%4; border-color:%5; }"
+               "QPushButton:pressed { background:%6; }"
+               "QPushButton:disabled { color:%7; }")
+        .arg(Theme::kControlBg, Theme::kTextPrimary, Theme::kBorder,
+             Theme::kHoverBg, Theme::markColor(), Theme::kPressedBg, Theme::kTextMuted);
+}
+
+// 方案 A：隐藏 QSpinBox 原生步进按钮，改在输入框右侧组合清晰的 − / + 按钮。
+QWidget *makeSpinStepper(QSpinBox *spin, QWidget *parent, const QString &suffix, int minWidth)
+{
+    spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    spin->setFixedHeight(34);
+    spin->setMinimumWidth(minWidth);
+    spin->setStyleSheet(spinBoxQss());
+    spin->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+    if (!suffix.isEmpty()) {
+        spin->setSuffix(suffix);
     }
-    label->setText(text);
-    label->setToolTip(detail);
-    label->setStyleSheet(QStringLiteral("font-size:16px;font-weight:700;color:%1;border:none;background:transparent;")
-                             .arg(color));
-    if (!card) {
-        for (QWidget *candidate = label->parentWidget(); candidate; candidate = candidate->parentWidget()) {
-            if (candidate->objectName() == QStringLiteral("deviceStatusRow")) {
-                card = candidate;
-                break;
-            }
-        }
+
+    auto *wrapper = new QWidget(parent);
+    auto *layout = new QHBoxLayout(wrapper);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
+
+    auto *minus = new QPushButton(QStringLiteral("−"), wrapper);
+    auto *plus = new QPushButton(QStringLiteral("+"), wrapper);
+    for (QPushButton *button : {minus, plus}) {
+        button->setFixedSize(34, 34);
+        button->setCursor(Qt::PointingHandCursor);
+        button->setFocusPolicy(Qt::NoFocus);
+        button->setObjectName(QStringLiteral("stepperBtn"));
+        button->setStyleSheet(stepperBtnQss());
     }
-    if (card) {
-        card->setStyleSheet(QStringLiteral(
-                                "QFrame#deviceStatusRow { background:%1; color:%2;"
-                                " border:1px solid %3; border-left:3px solid %4; border-radius:5px; }")
-                                .arg(Theme::kPanelBg, Theme::kTextPrimary, Theme::kBorder, color));
-    }
+    layout->addWidget(spin, 1);
+    layout->addWidget(minus);
+    layout->addWidget(plus);
+
+    QObject::connect(minus, &QPushButton::clicked, spin, [spin]() {
+        spin->setValue(spin->value() - spin->singleStep());
+    });
+    QObject::connect(plus, &QPushButton::clicked, spin, [spin]() {
+        spin->setValue(spin->value() + spin->singleStep());
+    });
+    return wrapper;
 }
 
 } // namespace
@@ -367,539 +419,602 @@ void setDeviceStatusLabel(QLabel *label, QWidget *card, const QString &text, con
 NodeCommSettingsPage::NodeCommSettingsPage(QWidget *parent)
     : SettingsSubPage(parent)
 {
-    auto *root = new QHBoxLayout(this);
-    root->setContentsMargins(0, 0, 0, 0);
+    m_config = HikCameraConfig::load(HikCameraConfig::defaultFilePath());
+    rebuildUi();
+}
+
+QString NodeCommSettingsPage::bindingSummary() const
+{
+    return QStringLiteral("核心服务启停、海康相机配置与数据存储清理策略。");
+}
+
+bool NodeCommSettingsPage::isEditable() const
+{
+    return true;
+}
+
+bool NodeCommSettingsPage::isDirty() const
+{
+    return m_dirty;
+}
+
+void NodeCommSettingsPage::rebuildUi()
+{
+    setObjectName(QStringLiteral("nodeCommPage"));
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setStyleSheet(QStringLiteral("QWidget#nodeCommPage { background:%1; }")
+                      .arg(Theme::kWindowBg));
+
+    auto *root = new QVBoxLayout(this);
+    root->setContentsMargins(0, 0, 0, 12);
     root->setSpacing(12);
 
-    auto *servicePanel = settingsGroupPanel(QStringLiteral("节点服务"),
-                                             QStringLiteral(":/img/nav_settings.svg"), this);
-    root->addWidget(servicePanel, 1);
-    servicePanel->setMinimumWidth(0);
-    servicePanel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+    // ===== 1. 后台核心服务状态条 =====
+    auto *serviceBar = new QFrame(this);
+    serviceBar->setObjectName(QStringLiteral("serviceBar"));
+    serviceBar->setStyleSheet(QStringLiteral(
+        "QFrame#serviceBar { background:%1; border:1px solid %2; border-radius:6px; }")
+        .arg(Theme::kCardBg, Theme::kBorder));
+    serviceBar->setFixedHeight(52);
+    auto *serviceLayout = new QHBoxLayout(serviceBar);
+    serviceLayout->setContentsMargins(12, 0, 12, 0);
+    serviceLayout->setSpacing(10);
+    m_serviceSummary = new QLabel(serviceBar);
+    m_serviceSummary->setObjectName(QStringLiteral("serviceSummary"));
+    m_serviceSummary->setStyleSheet(labelQss(Theme::kTextPrimary, 13, 400));
+    m_serviceSummary->setText(QStringLiteral("后台核心服务: 0/3 就绪"));
+    serviceLayout->addWidget(m_serviceSummary, 1);
+    m_startAllButton = new QPushButton(QStringLiteral("▶ 一键启动服务"), serviceBar);
+    m_startAllButton->setObjectName(QStringLiteral("primaryBtn"));
+    m_startAllButton->setCursor(Qt::PointingHandCursor);
+    m_startAllButton->setStyleSheet(primaryBtnQss());
+    serviceLayout->addWidget(m_startAllButton);
+    m_redetectButton = new QPushButton(QStringLiteral("↻ 重新检测"), serviceBar);
+    m_redetectButton->setObjectName(QStringLiteral("secondaryBtn"));
+    m_redetectButton->setCursor(Qt::PointingHandCursor);
+    m_redetectButton->setStyleSheet(secondaryBtnQss());
+    serviceLayout->addWidget(m_redetectButton);
+    root->addWidget(serviceBar);
 
-    // 节点启停：原先在顶栏，按设计方案移到设置页，顶栏只保留设备在线状态。
-    m_nodeState = makeLabel(QString());
-    m_nodeState->setStyleSheet(QStringLiteral("color:%1;font-size:16px;border:none;background:transparent;")
-                                   .arg(Theme::kTextSecondary));
-    auto *control = new QWidget(servicePanel);
-    auto *controlLayout = new QVBoxLayout(control);
-    controlLayout->setContentsMargins(0, 0, 0, 0);
-    controlLayout->setSpacing(9);
-    auto *controlHeading = new QHBoxLayout();
-    controlHeading->addWidget(settingsSectionHeading(QStringLiteral("服务运行状态"), control));
-    controlHeading->addStretch(1);
-    controlHeading->addWidget(m_nodeState);
-    controlLayout->addLayout(controlHeading);
-    auto *controlRow = new QHBoxLayout();
-    controlRow->setContentsMargins(0, 0, 0, 0);
-    controlRow->setSpacing(8);
-    m_startButton = new ElaPushButton(QStringLiteral("启动节点"), control);
-    m_startButton->setMinimumHeight(36);
-    applyPrimaryButtonStyle(m_startButton);
-    m_stopButton = new ElaPushButton(QStringLiteral("暂停节点"), control);
-    m_stopButton->setMinimumHeight(36);
-    applyOutlinedButtonStyle(m_stopButton);
-    auto *readinessHeading = new QHBoxLayout();
-    readinessHeading->setContentsMargins(0, 4, 0, 0);
-    readinessHeading->addWidget(settingsSectionHeading(QStringLiteral("节点状态"), control));
-    readinessHeading->addStretch(1);
-    m_checkButton = new ElaPushButton(QStringLiteral("重新检测"), control);
-    m_checkButton->setMinimumHeight(32);
-    applyOutlinedButtonStyle(m_checkButton);
-    controlLayout->addLayout(readinessHeading);
-    auto *readinessList = new QVBoxLayout();
-    readinessList->setContentsMargins(0, 0, 0, 0);
-    readinessList->setSpacing(8);
-    m_cameraCard = makeReadinessCard(QStringLiteral("相机服务节点"),
-                                     &m_cameraReadiness,
-                                     control);
-    m_backendCard = makeReadinessCard(QStringLiteral("后端服务节点"),
-                                      &m_backendReadiness,
-                                      control);
-    m_algorithmCard = makeReadinessCard(QStringLiteral("算法服务节点"),
-                                         &m_algorithmReadiness,
-                                         control);
-    readinessList->addWidget(m_cameraCard, 1);
-    readinessList->addWidget(m_backendCard, 1);
-    readinessList->addWidget(m_algorithmCard, 1);
-    controlLayout->addLayout(readinessList, 1);
-    m_readinessSummary = settingsHint(QString(), control);
-    m_readinessSummary->setWordWrap(false);
-    controlLayout->addWidget(m_readinessSummary);
-    controlLayout->addStretch(1);
-    controlRow->addWidget(m_startButton, 1);
-    controlRow->addWidget(m_stopButton, 1);
-    controlRow->addWidget(m_checkButton, 1);
-    controlLayout->addLayout(controlRow);
-    qobject_cast<QVBoxLayout *>(servicePanel->layout())->addWidget(control, 1);
-    connect(m_startButton, &ElaPushButton::clicked, this, &NodeCommSettingsPage::startNodesRequested);
-    connect(m_stopButton, &ElaPushButton::clicked, this, &NodeCommSettingsPage::stopNodesRequested);
-    connect(m_checkButton, &ElaPushButton::clicked, this, &NodeCommSettingsPage::checkNodeReadiness);
-    updateNodeControls();
+    connect(m_startAllButton, &QPushButton::clicked, this, [this]() {
+        if (m_running) {
+            emit stopNodesRequested();
+        } else {
+            emit startNodesRequested();
+        }
+    });
+    connect(m_redetectButton, &QPushButton::clicked, this, [this]() { refreshNodeReadiness(); });
 
-    auto *storagePanel = settingsGroupPanel(QStringLiteral("数据存储"),
-                                             QStringLiteral(":/img/kpi_check.svg"), this);
-    root->addWidget(storagePanel, 1);
-    storagePanel->setMinimumWidth(0);
-    storagePanel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
-    auto *storageLayout = qobject_cast<QVBoxLayout *>(storagePanel->layout());
-    m_databaseSummary = new QWidget(storagePanel);
-    auto *databaseLayout = new QVBoxLayout(m_databaseSummary);
-    databaseLayout->setContentsMargins(0, 0, 0, 0);
-    databaseLayout->setSpacing(7);
-    auto *tableHeading = new QHBoxLayout();
-    tableHeading->setContentsMargins(0, 0, 0, 0);
-    tableHeading->addWidget(settingsSectionHeading(QStringLiteral("数据表结构"), m_databaseSummary));
-    tableHeading->addStretch(1);
-    m_databaseStatusValue = settingsHint(QStringLiteral("读取中"), m_databaseSummary);
-    m_databaseStatusValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    tableHeading->addWidget(m_databaseStatusValue);
-    databaseLayout->addLayout(tableHeading);
+    // ===== 2. 主工作区：左 32 / 右 68 =====
+    auto *workspace = new QHBoxLayout();
+    workspace->setContentsMargins(0, 0, 0, 0);
+    workspace->setSpacing(12);
+    root->addLayout(workspace, 1);
+
+    auto *leftCard = new QFrame(this);
+    leftCard->setObjectName(QStringLiteral("commCard"));
+    leftCard->setAttribute(Qt::WA_StyledBackground, true);
+    leftCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    leftCard->setStyleSheet(cardQss());
+    auto *leftPanel = new QVBoxLayout(leftCard);
+    leftPanel->setContentsMargins(16, 16, 16, 16);
+    leftPanel->setSpacing(12);
+    auto *leftTitle = titleLabel(QStringLiteral("🖧 设备与通信节点列表"), leftCard);
+    auto *leftSub = hintLabel(QStringLiteral("点击节点切换右侧配置面板"), leftCard);
+    leftPanel->addWidget(leftTitle);
+    leftPanel->addWidget(leftSub);
+    m_nodeList = new QListWidget(leftCard);
+    m_nodeList->setObjectName(QStringLiteral("nodeList"));
+    m_nodeList->setStyleSheet(listQss());
+    m_nodeList->setIconSize(QSize(26, 26));
+    m_nodeList->setSpacing(12);
+    m_nodeList->setFrameShape(QFrame::NoFrame);
+    m_nodeList->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_nodeList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    leftPanel->addWidget(m_nodeList, 1);
+    workspace->addWidget(leftCard, 32);
+
+    // 节点项：图标 + 名称 + 状态点 + 副标题，每个节点是一张独立圆角卡片。
+    struct NodeDef {
+        const char *icon;
+        const char *name;
+        const char *subtitle;
+        QLabel **badge;
+    };
+    const NodeDef nodes[] = {
+        {"📷", "3D相机 (海康)", "海康 3D 轮廓相机", &m_cameraNodeBadge},
+        {"📡", "相机通信节点", "Topic: /camera/image_raw", &m_topicNodeBadge},
+        {"🔌", "PLC 控制系统", "西门子 S7 / Modbus", &m_plcBadge},
+        {"🤖", "修磨专机 (CNC/机械臂)", "后端下发工艺参数", &m_cncBadge},
+        {"💾", "数据与图像存储", "SQLite + 本地图像", &m_storageBadge},
+    };
+    for (const NodeDef &node : nodes) {
+        auto *itemWidget = new QWidget(m_nodeList);
+        itemWidget->setObjectName(QStringLiteral("nodeItem"));
+        itemWidget->setAttribute(Qt::WA_StyledBackground, true);
+        itemWidget->setAttribute(Qt::WA_Hover, true);
+        itemWidget->setProperty("selected", false);
+        itemWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        auto *row = new QVBoxLayout(itemWidget);
+        row->setContentsMargins(12, 8, 14, 8);
+        row->setSpacing(2);
+        auto *line1 = new QHBoxLayout();
+        line1->setContentsMargins(0, 0, 0, 0);
+        auto *icon = new QLabel(QString::fromUtf8(node.icon), itemWidget);
+        icon->setFixedWidth(30);
+        icon->setStyleSheet(QStringLiteral("font-size:20px;border:none;background:transparent;"));
+        auto *name = new QLabel(QString::fromUtf8(node.name), itemWidget);
+        name->setObjectName(QStringLiteral("nodeName"));
+        name->setStyleSheet(labelQss(Theme::kTextPrimary, 13, 600));
+        *node.badge = makeStatusDot(QStringLiteral("● 未连接"), Theme::kStateError, itemWidget);
+        line1->addWidget(icon);
+        line1->addWidget(name, 1);
+        line1->addWidget(*node.badge);
+        row->addLayout(line1);
+        if (node.subtitle && *node.subtitle) {
+            auto *sub = new QLabel(QString::fromUtf8(node.subtitle), itemWidget);
+            sub->setObjectName(QStringLiteral("nodeSub"));
+            sub->setStyleSheet(labelQss(Theme::kTextMuted, 11, 400));
+            sub->setContentsMargins(30, 0, 0, 0);
+            row->addWidget(sub);
+        }
+        auto *item = new QListWidgetItem(m_nodeList);
+        item->setSizeHint(QSize(0, 68));
+        m_nodeList->addItem(item);
+        m_nodeList->setItemWidget(item, itemWidget);
+    }
+
+    // 右侧：相机配置卡 + 数据存储卡（上下堆叠）
+    auto *rightPanel = new QVBoxLayout();
+    rightPanel->setSpacing(12);
+    workspace->addLayout(rightPanel, 68);
+
+    // ---- 相机配置卡 ----
+    m_cameraCard = new QFrame(this);
+    m_cameraCard->setObjectName(QStringLiteral("commCard"));
+    m_cameraCard->setStyleSheet(cardQss());
+    auto *cameraLayout = new QVBoxLayout(m_cameraCard);
+    cameraLayout->setContentsMargins(16, 16, 16, 16);
+    cameraLayout->setSpacing(16);
+    cameraLayout->addWidget(titleLabel(QStringLiteral("📷 海康3D相机 · 详细参数配置"), m_cameraCard));
+
+    auto *cameraForm = new QGridLayout();
+    cameraForm->setHorizontalSpacing(32);
+    cameraForm->setVerticalSpacing(16);
+    cameraForm->setColumnStretch(0, 1);
+    cameraForm->setColumnStretch(1, 1);
+
+    auto *ipRow = new QHBoxLayout();
+    ipRow->setContentsMargins(0, 0, 0, 0);
+    ipRow->setSpacing(8);
+    ipRow->addWidget(fieldLabel(QStringLiteral("设备 IP 地址"), m_cameraCard));
+    m_cameraIp = new QLineEdit(QStringLiteral("192.168.1.64"), m_cameraCard);
+    m_cameraIp->setStyleSheet(inputQss());
+    m_cameraIp->setMinimumHeight(34);
+    m_cameraTestButton = new QPushButton(QStringLiteral("连接测试"), m_cameraCard);
+    m_cameraTestButton->setObjectName(QStringLiteral("secondaryBtn"));
+    m_cameraTestButton->setFixedHeight(34);
+    m_cameraTestButton->setStyleSheet(secondaryBtnQss());
+    m_cameraPingButton = new QPushButton(QStringLiteral("Ping"), m_cameraCard);
+    m_cameraPingButton->setObjectName(QStringLiteral("secondaryBtn"));
+    m_cameraPingButton->setFixedHeight(34);
+    m_cameraPingButton->setStyleSheet(secondaryBtnQss());
+    ipRow->addWidget(m_cameraIp, 1);
+    ipRow->addWidget(m_cameraTestButton);
+    ipRow->addWidget(m_cameraPingButton);
+    cameraForm->addLayout(ipRow, 0, 0);
+
+    auto *topicRow = new QHBoxLayout();
+    topicRow->setContentsMargins(0, 0, 0, 0);
+    topicRow->setSpacing(8);
+    topicRow->addWidget(fieldLabel(QStringLiteral("绑定节点 Topic"), m_cameraCard));
+    m_cameraTopic = new QLineEdit(m_cameraCard);
+    m_cameraTopic->setStyleSheet(inputQss());
+    m_cameraTopic->setMinimumHeight(34);
+    topicRow->addWidget(m_cameraTopic, 1);
+    cameraForm->addLayout(topicRow, 0, 1);
+
+    auto *triggerRow = new QHBoxLayout();
+    triggerRow->setContentsMargins(0, 0, 0, 0);
+    triggerRow->setSpacing(8);
+    triggerRow->addWidget(fieldLabel(QStringLiteral("触发模式"), m_cameraCard));
+    m_softTriggerButton = makeSegmentButton(QStringLiteral("软触发"), m_cameraCard);
+    m_hardTriggerButton = makeSegmentButton(QStringLiteral("硬件触发(PLC)"), m_cameraCard);
+    m_triggerModeGroup = new QButtonGroup(m_cameraCard);
+    m_triggerModeGroup->setExclusive(true);
+    m_triggerModeGroup->addButton(m_softTriggerButton, 0);
+    m_triggerModeGroup->addButton(m_hardTriggerButton, 1);
+    triggerRow->addWidget(m_softTriggerButton);
+    triggerRow->addWidget(m_hardTriggerButton);
+    triggerRow->addStretch(1);
+    cameraForm->addLayout(triggerRow, 1, 0);
+
+    auto *timeoutRow = new QHBoxLayout();
+    timeoutRow->setContentsMargins(0, 0, 0, 0);
+    timeoutRow->setSpacing(8);
+    timeoutRow->addWidget(fieldLabel(QStringLiteral("连接超时"), m_cameraCard));
+    m_timeoutSpin = new QSpinBox(m_cameraCard);
+    m_timeoutSpin->setRange(500, 10000);
+    m_timeoutSpin->setSingleStep(100);
+    m_timeoutSpin->setValue(3000);
+    timeoutRow->addWidget(makeSpinStepper(m_timeoutSpin, m_cameraCard, QStringLiteral(" ms"), 120));
+    timeoutRow->addStretch(1);
+    cameraForm->addLayout(timeoutRow, 1, 1);
+
+    m_autoReconnect = new QCheckBox(QStringLiteral("断线自动重连"), m_cameraCard);
+    m_autoReconnect->setStyleSheet(checkQss());
+    cameraForm->addWidget(m_autoReconnect, 2, 0, Qt::AlignVCenter);
+
+    auto *formatRow = new QHBoxLayout();
+    formatRow->setContentsMargins(0, 0, 0, 0);
+    formatRow->setSpacing(8);
+    formatRow->addWidget(fieldLabel(QStringLiteral("像素格式 / 采集帧率"), m_cameraCard));
+    auto *formatValue = new QLineEdit(QStringLiteral("Mono8 / 3D点云 · 10 Hz"), m_cameraCard);
+    formatValue->setReadOnly(true);
+    formatValue->setStyleSheet(inputQss());
+    formatValue->setMinimumHeight(34);
+    formatRow->addWidget(formatValue, 1);
+    cameraForm->addLayout(formatRow, 2, 1);
+    cameraLayout->addLayout(cameraForm);
+
+    auto *cameraActions = new QHBoxLayout();
+    cameraActions->setContentsMargins(0, 0, 0, 0);
+    cameraActions->setSpacing(12);
+    auto *diagStrip = new QFrame(m_cameraCard);
+    diagStrip->setObjectName(QStringLiteral("diagStrip"));
+    auto *diagLayout = new QHBoxLayout(diagStrip);
+    diagLayout->setContentsMargins(10, 6, 10, 6);
+    m_cameraStateHint = hintLabel(QString(), diagStrip);
+    m_cameraStateHint->setWordWrap(false);
+    diagLayout->addWidget(m_cameraStateHint);
+    cameraActions->addWidget(diagStrip, 1);
+    m_cameraApplyButton = new QPushButton(QStringLiteral("保存并应用配置"), m_cameraCard);
+    m_cameraApplyButton->setObjectName(QStringLiteral("primaryBtn"));
+    m_cameraApplyButton->setStyleSheet(primaryBtnQss());
+    cameraActions->addWidget(m_cameraApplyButton);
+    cameraLayout->addLayout(cameraActions);
+    m_cameraCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    rightPanel->addWidget(m_cameraCard, 0);
+
+    // ---- 数据存储卡 ----
+    m_storageCard = new QFrame(this);
+    m_storageCard->setObjectName(QStringLiteral("commCard"));
+    m_storageCard->setStyleSheet(cardQss());
+    auto *storageLayout = new QVBoxLayout(m_storageCard);
+    storageLayout->setContentsMargins(16, 16, 16, 16);
+    storageLayout->setSpacing(16);
+    storageLayout->addWidget(titleLabel(QStringLiteral("💾 数据存储与磁盘自动清理策略"), m_storageCard));
+
+    // SQLite 状态
+    auto *dbRow = new QHBoxLayout();
+    dbRow->setContentsMargins(0, 0, 0, 0);
+    dbRow->addWidget(fieldLabel(QStringLiteral("本地数据库 SQLite"), m_storageCard));
+    m_dbStatusValue = makeStatusDot(QStringLiteral("● 已连接"), Theme::kStateSuccess, m_storageCard);
+    dbRow->addWidget(m_dbStatusValue);
+    dbRow->addStretch(1);
+    m_dbViewButton = new QPushButton(QStringLiteral("查看数据表 (0 张)"), m_storageCard);
+    m_dbViewButton->setObjectName(QStringLiteral("secondaryBtn"));
+    m_dbViewButton->setStyleSheet(secondaryBtnQss());
+    dbRow->addWidget(m_dbViewButton);
+    storageLayout->addLayout(dbRow);
+
+    // 图像保存根目录
+    auto *rootRow = new QHBoxLayout();
+    rootRow->setContentsMargins(0, 0, 0, 0);
+    rootRow->addWidget(fieldLabel(QStringLiteral("图像保存根目录"), m_storageCard));
+    m_imageRoot = new QLineEdit(m_storageCard);
+    m_imageRoot->setStyleSheet(inputQss());
+    m_browseButton = new QPushButton(QStringLiteral("浏览..."), m_storageCard);
+    m_browseButton->setObjectName(QStringLiteral("secondaryBtn"));
+    m_browseButton->setStyleSheet(secondaryBtnQss());
+    rootRow->addWidget(m_imageRoot, 1);
+    rootRow->addWidget(m_browseButton);
+    storageLayout->addLayout(rootRow);
+
+    // 存图模式
+    auto *saveModeRow = new QHBoxLayout();
+    saveModeRow->setContentsMargins(0, 0, 0, 0);
+    saveModeRow->addWidget(fieldLabel(QStringLiteral("存图模式"), m_storageCard));
+    m_saveNgOnlyButton = makeSegmentButton(QStringLiteral("仅保存NG/粒子图"), m_storageCard);
+    m_saveAllButton = makeSegmentButton(QStringLiteral("全部保存"), m_storageCard);
+    m_saveNoneButton = makeSegmentButton(QStringLiteral("不保存"), m_storageCard);
+    m_saveModeGroup = new QButtonGroup(m_storageCard);
+    m_saveModeGroup->setExclusive(true);
+    m_saveModeGroup->addButton(m_saveNgOnlyButton, 0);
+    m_saveModeGroup->addButton(m_saveAllButton, 1);
+    m_saveModeGroup->addButton(m_saveNoneButton, 2);
+    saveModeRow->addWidget(m_saveNgOnlyButton);
+    saveModeRow->addWidget(m_saveAllButton);
+    saveModeRow->addWidget(m_saveNoneButton);
+    saveModeRow->addStretch(1);
+    storageLayout->addLayout(saveModeRow);
+
+    // D 盘剩余空间
+    auto *diskLabel = fieldLabel(QStringLiteral("D 盘剩余空间"), m_storageCard);
+    storageLayout->addWidget(diskLabel);
+    m_diskBar = new QProgressBar(m_storageCard);
+    m_diskBar->setRange(0, 100);
+    m_diskBar->setValue(0);
+    m_diskBar->setTextVisible(true);
+    m_diskBar->setFixedHeight(24);
+    m_diskBar->setStyleSheet(progressQss(false));
+    storageLayout->addWidget(m_diskBar);
+
+    // 自动清理策略
+    m_autoClean = new QCheckBox(QStringLiteral("启用磁盘自动循环清理（防爆盘保护）"), m_storageCard);
+    m_autoClean->setStyleSheet(checkQss());
+    storageLayout->addWidget(m_autoClean);
+
+    m_cleanMinGbSpin = new QSpinBox(m_storageCard);
+    m_cleanMinGbSpin->setRange(1, 999);
+    m_cleanMinGbSpin->setValue(50);
+    m_cleanMaxDaysSpin = new QSpinBox(m_storageCard);
+    m_cleanMaxDaysSpin->setRange(1, 365);
+    m_cleanMaxDaysSpin->setValue(30);
+
+    // 参数行保持单行水平对齐，避免末尾文案折行。
+    auto *cleanRow = new QHBoxLayout();
+    cleanRow->setContentsMargins(0, 0, 0, 0);
+    cleanRow->setSpacing(6);
+    auto *cleanPrefix = hintLabel(QStringLiteral("触发条件：剩余空间低于"), m_storageCard);
+    cleanPrefix->setWordWrap(false);
+    cleanRow->addWidget(cleanPrefix);
+    cleanRow->addWidget(makeSpinStepper(m_cleanMinGbSpin, m_storageCard, QStringLiteral(" GB"), 95));
+    auto *cleanOr = hintLabel(QStringLiteral("或  保存天数超过"), m_storageCard);
+    cleanOr->setWordWrap(false);
+    cleanRow->addWidget(cleanOr);
+    cleanRow->addWidget(makeSpinStepper(m_cleanMaxDaysSpin, m_storageCard, QStringLiteral(" 天"), 95));
+    auto *cleanSuffix = hintLabel(QStringLiteral("时，自动覆盖最早数据。"), m_storageCard);
+    cleanSuffix->setWordWrap(false);
+    cleanRow->addWidget(cleanSuffix);
+    cleanRow->addStretch(1);
+    storageLayout->addLayout(cleanRow);
+    storageLayout->addStretch(1);
+    m_storageCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    rightPanel->addWidget(m_storageCard, 1);
+
+    // ---- 数据库表结构弹窗 ----
     m_databaseSchemaDialog = new QDialog(this);
     m_databaseSchemaDialog->setWindowTitle(QStringLiteral("数据表结构"));
-    m_databaseSchemaDialog->setMinimumSize(720, 420);
     m_databaseSchemaDialog->resize(900, 560);
     auto *schemaDialogLayout = new QVBoxLayout(m_databaseSchemaDialog);
     m_databaseSchemaTable = new QTableWidget(m_databaseSchemaDialog);
     m_databaseSchemaTable->setColumnCount(3);
     m_databaseSchemaTable->setHorizontalHeaderLabels(
         {QStringLiteral("数据表"), QStringLiteral("用途"), QStringLiteral("字段")});
-    m_databaseSchemaTable->setMinimumHeight(360);
+    m_databaseSchemaTable->setMinimumHeight(420);
     m_databaseSchemaTable->setColumnWidth(0, 96);
     m_databaseSchemaTable->setColumnWidth(1, 118);
-    styleSchemaTable(m_databaseSchemaTable);
     schemaDialogLayout->addWidget(m_databaseSchemaTable, 1);
-    m_databaseSchemaButton = new ElaPushButton(QStringLiteral("查看数据表"), m_databaseSummary);
-    m_databaseSchemaButton->setMinimumHeight(32);
-    applyOutlinedButtonStyle(m_databaseSchemaButton);
-    databaseLayout->addWidget(m_databaseSchemaButton, 0, Qt::AlignLeft);
-    connect(m_databaseSchemaButton, &ElaPushButton::clicked, this, [this]() {
-        refreshDatabaseSchema();
-        m_databaseSchemaDialog->exec();
-    });
-    storageLayout->addWidget(m_databaseSummary, 1);
 
-    auto *imageStorage = new QFrame(storagePanel);
-    imageStorage->setObjectName(QStringLiteral("imageStorageCard"));
-    Theme::bindStyle(imageStorage, []() {
-        return QStringLiteral("QFrame#imageStorageCard { background:%1; border:1px solid %2; border-radius:5px; }")
-            .arg(Theme::kPanelBg, Theme::kBorder);
-    });
-    auto *imageLayout = new QVBoxLayout(imageStorage);
-    imageLayout->setContentsMargins(10, 8, 10, 8);
-    imageLayout->setSpacing(6);
-    auto *imageHeader = new QHBoxLayout();
-    imageHeader->setContentsMargins(0, 0, 0, 0);
-    imageHeader->addWidget(settingsSectionHeading(QStringLiteral("图像存储"), imageStorage));
-    imageHeader->addStretch(1);
-    m_imageStorageValue = settingsHint(QStringLiteral("暂无记录"), imageStorage);
-    m_imageStorageValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    imageHeader->addWidget(m_imageStorageValue);
-    imageLayout->addLayout(imageHeader);
-    auto *imageAction = new QHBoxLayout();
-    imageAction->setContentsMargins(0, 0, 0, 0);
-    auto *imagePathHint = settingsHint(QStringLiteral("路径来自检测记录中的图像字段"), imageStorage);
-    imagePathHint->setWordWrap(false);
-    imageAction->addWidget(imagePathHint, 1);
-    m_openImageFolderButton = new ElaPushButton(QStringLiteral("查看图像目录"), imageStorage);
-    m_openImageFolderButton->setMinimumHeight(30);
-    applyOutlinedButtonStyle(m_openImageFolderButton);
-    imageAction->addWidget(m_openImageFolderButton);
-    imageLayout->addLayout(imageAction);
-    storageLayout->addWidget(imageStorage);
-    connect(m_openImageFolderButton, &ElaPushButton::clicked, this, [this]() {
-        const QString path = m_openImageFolderButton->toolTip();
-        if (!path.isEmpty() && QDir(path).exists()) {
-            QDesktopServices::openUrl(QUrl::fromLocalFile(path));
-        }
-    });
-
-    auto *commPanel = settingsGroupPanel(QStringLiteral("设备状态"),
-                                          QStringLiteral(":/img/nav_detect.svg"), this);
-    root->addWidget(commPanel, 1);
-    commPanel->setMinimumWidth(0);
-    commPanel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
-    auto *commLayout = qobject_cast<QVBoxLayout *>(commPanel->layout());
-    auto *cameraNodeRow = makeDeviceStatusRow(QStringLiteral("相机节点"),
-                                               &m_cameraNodeStatus,
-                                               &m_cameraNodeToggle,
-                                               &m_cameraNodeDetails,
-                                               commPanel,
-                                               QStringLiteral("等待"));
-    auto *hikCameraRow = makeDeviceStatusRow(QStringLiteral("海康相机"),
-                                              &m_hikCameraStatus,
-                                             &m_hikCameraToggle,
-                                             &m_hikCameraDetails,
-                                              commPanel,
-                                              QStringLiteral("未连接"));
-    auto *plcRow = makeDeviceStatusRow(QStringLiteral("PLC"),
-                                        &m_plcStatus,
-                                      &m_plcToggle,
-                                      &m_plcDetails,
-                                        commPanel,
-                                        QStringLiteral("待反馈"));
-
-    auto *cameraDetailsLayout = new QVBoxLayout(m_cameraNodeDetails);
-    cameraDetailsLayout->setContentsMargins(4, 6, 4, 2);
-    cameraDetailsLayout->setSpacing(4);
-    auto *cameraTopic = addDeviceInfoLine(cameraDetailsLayout, QStringLiteral("订阅 Topic"), m_cameraNodeDetails);
-    cameraTopic->setText(QStringLiteral("/camera/status"));
-    cameraTopic->setStyleSheet(QStringLiteral("font-family:Consolas,monospace;color:%1;font-size:11px;border:none;background:transparent;")
-                                   .arg(Theme::kTextPrimary));
-    auto *cameraNodeName = addDeviceInfoLine(cameraDetailsLayout, QStringLiteral("本机节点"), m_cameraNodeDetails);
-    cameraNodeName->setText(QStringLiteral("/mz_tlz"));
-    auto *rosDomain = addDeviceInfoLine(cameraDetailsLayout, QStringLiteral("Domain ID"), m_cameraNodeDetails);
-    rosDomain->setText(QProcessEnvironment::systemEnvironment().value(QStringLiteral("ROS_DOMAIN_ID"),
-                                                                       QStringLiteral("0")));
-    auto *cameraType = addDeviceInfoLine(cameraDetailsLayout, QStringLiteral("消息类型"), m_cameraNodeDetails);
-    cameraType->setText(QStringLiteral("mz_interfaces/msg/CameraStatus"));
-    cameraType->setToolTip(cameraType->text());
-    cameraType->setStyleSheet(QStringLiteral("font-family:Consolas,monospace;color:%1;font-size:10px;border:none;background:transparent;")
-                                  .arg(Theme::kTextPrimary));
-    auto *cameraQos = addDeviceInfoLine(cameraDetailsLayout, QStringLiteral("QoS"), m_cameraNodeDetails);
-    cameraQos->setText(QStringLiteral("Reliable · Transient Local · Depth 1"));
-    m_cameraPublisherCount = addDeviceInfoLine(cameraDetailsLayout, QStringLiteral("发布者"), m_cameraNodeDetails);
-    m_cameraLastMessage = addDeviceInfoLine(cameraDetailsLayout, QStringLiteral("最近状态"), m_cameraNodeDetails);
-    m_cameraDiagnosis = settingsHint(QString(), m_cameraNodeDetails);
-    m_cameraDiagnosis->setWordWrap(true);
-    cameraDetailsLayout->addWidget(m_cameraDiagnosis);
-
-    auto *hikDetailsLayout = new QVBoxLayout(m_hikCameraDetails);
-    hikDetailsLayout->setContentsMargins(4, 6, 4, 2);
-    hikDetailsLayout->setSpacing(4);
-    m_hikAddress = addDeviceInfoLine(hikDetailsLayout, QStringLiteral("IP 地址"), m_hikCameraDetails);
-    m_hikEndpoint = addDeviceInfoLine(hikDetailsLayout, QStringLiteral("服务端口"), m_hikCameraDetails);
-    m_hikUsername = addDeviceInfoLine(hikDetailsLayout, QStringLiteral("用户名"), m_hikCameraDetails);
-    m_hikStream = addDeviceInfoLine(hikDetailsLayout, QStringLiteral("预览参数"), m_hikCameraDetails);
-    m_hikConfigState = settingsHint(QString(), m_hikCameraDetails);
-    m_hikConfigState->setWordWrap(true);
-    hikDetailsLayout->addWidget(m_hikConfigState);
-    auto *hikActions = new QHBoxLayout();
-    hikActions->setContentsMargins(0, 3, 0, 0);
-    hikActions->addStretch(1);
-    m_hikConnectButton = new ElaPushButton(QStringLiteral("连接相机"), m_hikCameraDetails);
-    m_hikConnectButton->setMinimumHeight(30);
-    applyPrimaryButtonStyle(m_hikConnectButton);
-    m_hikDisconnectButton = new ElaPushButton(QStringLiteral("断开"), m_hikCameraDetails);
-    m_hikDisconnectButton->setMinimumHeight(30);
-    applyOutlinedButtonStyle(m_hikDisconnectButton);
-    hikActions->addWidget(m_hikConnectButton);
-    hikActions->addWidget(m_hikDisconnectButton);
-    hikDetailsLayout->addLayout(hikActions);
-
-    // PLC 暂无明细字段，占位撑开详情区，展开高度与上方海康相机卡片一致。
-    auto *plcDetailsLayout = new QVBoxLayout(m_plcDetails);
-    plcDetailsLayout->setContentsMargins(4, 6, 4, 2);
-    auto *plcPlaceholder = new QWidget(m_plcDetails);
-    plcPlaceholder->setMinimumHeight(qMax(140, hikDetailsLayout->sizeHint().height()));
-    plcDetailsLayout->addWidget(plcPlaceholder);
-
-    connect(m_cameraNodeToggle, &QToolButton::toggled, this, [this](bool expanded) {
-        m_cameraNodeToggle->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
-        animateWidgetVisibility(m_cameraNodeDetails, expanded);
-    });
-    connect(m_hikCameraToggle, &QToolButton::toggled, this, [this](bool expanded) {
-        m_hikCameraToggle->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
-        animateWidgetVisibility(m_hikCameraDetails, expanded);
-    });
-    connect(m_plcToggle, &QToolButton::toggled, this, [this](bool expanded) {
-        m_plcToggle->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
-        animateWidgetVisibility(m_plcDetails, expanded);
-    });
-    connect(m_hikConnectButton, &ElaPushButton::clicked, this, [this]() {
+    // ---- 交互连接 ----
+    connect(m_cameraTestButton, &QPushButton::clicked, this, [this]() {
+        m_cameraStateHint->setText(QStringLiteral("正在连接相机 %1 ...").arg(m_cameraIp->text().trimmed()));
         emit hikCameraConnectRequested();
     });
-    connect(m_hikDisconnectButton, &ElaPushButton::clicked, this, [this]() {
-        emit hikCameraDisconnectRequested();
-        setHikCameraStatus(false, QStringLiteral("已从设备状态中断开预览"));
-    });
-    commLayout->addWidget(cameraNodeRow);
-    commLayout->addWidget(hikCameraRow);
-    commLayout->addWidget(plcRow);
-    commLayout->addStretch(1);
-    setDeviceStatusLabel(m_cameraNodeStatus,
-                         nullptr,
-                         QStringLiteral("等待状态"),
-                         QString::fromLatin1(Theme::kStateUnknown),
-                         QStringLiteral("等待 camera/status"));
-    setHikCameraStatus(false, QStringLiteral("尚未启动海康预览"));
-    setPlcDeviceStatus(QStringLiteral("待反馈"), QStringLiteral("PLC 状态数据来源待后端补充"));
-    updateCameraNodeDiagnostics();
-    refreshHikCameraInfo();
-    reloadFromSource();
-    Theme::watch(this, [this]() {
-        applyPrimaryButtonStyle(m_startButton);
-        applyOutlinedButtonStyle(m_stopButton);
-        applyOutlinedButtonStyle(m_checkButton);
-        applyOutlinedButtonStyle(m_databaseSchemaButton);
-        applyOutlinedButtonStyle(m_openImageFolderButton);
-        applyPrimaryButtonStyle(m_hikConnectButton);
-        applyOutlinedButtonStyle(m_hikDisconnectButton);
-        styleSchemaTable(m_databaseSchemaTable);
-        setDeviceStatusLabel(m_cameraNodeStatus,
-                             nullptr,
-                             m_cameraStatusReceived
-                                 ? (m_cameraNodeConnected ? QStringLiteral("在线") : QStringLiteral("离线"))
-                                 : QStringLiteral("等待状态"),
-                             m_cameraStatusReceived
-                                 ? QString::fromLatin1(m_cameraNodeConnected ? Theme::kStateSuccess : Theme::kStateError)
-                                 : QString::fromLatin1(Theme::kStateUnknown),
-                             m_cameraStatusMessage);
-        setDeviceStatusLabel(m_hikCameraStatus,
-                             nullptr,
-                             m_hikConnected ? QStringLiteral("在线")
-                                            : (m_hikConnecting ? QStringLiteral("连接中") : QStringLiteral("未连接")),
-                             QString::fromLatin1(m_hikConnected ? Theme::kStateSuccess
-                                                                 : (m_hikConnecting ? Theme::kStateWarning
-                                                                                    : Theme::kStateError)),
-                             m_hikCameraStatus ? m_hikCameraStatus->toolTip() : QString());
-        if (m_plcStatus) {
-            setPlcDeviceStatus(m_plcStatus->text(), m_plcStatus->toolTip());
+    connect(m_cameraPingButton, &QPushButton::clicked, this, [this]() {
+        const QString host = m_cameraIp->text().trimmed();
+        if (host.isEmpty()) {
+            m_cameraStateHint->setText(QStringLiteral("IP 为空，无法 Ping。"));
+            return;
         }
-        updateCameraNodeDiagnostics();
-        refreshHikCameraInfo();
-        updateNodeControls();
-        reloadFromSource();
+        m_cameraStateHint->setText(QStringLiteral("正在 Ping %1 ...").arg(host));
+        auto *process = new QProcess(this);
+        connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, [this, host](int exitCode) {
+            m_cameraStateHint->setText(exitCode == 0
+                ? QStringLiteral("Ping %1 成功。").arg(host)
+                : QStringLiteral("Ping %1 失败（设备不可达）。").arg(host));
+        });
+        connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError) {
+            m_cameraStateHint->setText(QStringLiteral("无法执行 ping，请确认系统环境变量。"));
+            process->deleteLater();
+        });
+        process->start(QStringLiteral("ping"), {QStringLiteral("-n"), QStringLiteral("2"), QStringLiteral("-w"), QStringLiteral("1000"), host});
     });
-}
+    connect(m_cameraApplyButton, &QPushButton::clicked, this, [this]() {
+        emit saveRequested();
+    });
+    connect(m_browseButton, &QPushButton::clicked, this, [this]() {
+        // 文件夹选择：这里保持轻量，直接打开当前目录，真正选择器待接入。
+        const QString root = m_imageRoot->text().trimmed();
+        if (!root.isEmpty() && QDir(root).exists()) {
+            QDesktopServices::openUrl(QUrl::fromLocalFile(root));
+        } else {
+            m_cameraStateHint->setText(QStringLiteral("图像根目录不存在：%1").arg(root));
+        }
+    });
+    connect(m_dbViewButton, &QPushButton::clicked, this, [this]() {
+        reloadFromSource();
+        m_databaseSchemaDialog->exec();
+    });
+    connect(m_nodeList, &QListWidget::currentRowChanged, this, [this](int row) {
+        Q_UNUSED(row);
+        // 右侧相机配置卡作为默认面板，始终展示；这里只同步节点卡片的选中态。
+        for (int i = 0; i < m_nodeList->count(); ++i) {
+            auto *item = m_nodeList->item(i);
+            auto *card = item ? m_nodeList->itemWidget(item) : nullptr;
+            if (!card) {
+                continue;
+            }
+            const bool selected = (i == m_nodeList->currentRow());
+            if (card->property("selected").toBool() == selected) {
+                continue;
+            }
+            card->setProperty("selected", selected);
+            card->style()->unpolish(card);
+            card->style()->polish(card);
+            card->update();
+        }
+    });
 
-QString NodeCommSettingsPage::bindingSummary() const
-{
-    return QStringLiteral("节点启停、数据库结构与相机/PLC 设备状态；PLC 状态来源待后端补充。");
-}
+    // 配置控件变化 → 标脏
+    const auto markDirty = [this]() {
+        if (m_loading) {
+            return;
+        }
+        if (!m_dirty) {
+            m_dirty = true;
+            emit dirtyChanged(true);
+        }
+    };
+    connect(m_cameraIp, &QLineEdit::textChanged, this, markDirty);
+    connect(m_cameraTopic, &QLineEdit::textChanged, this, markDirty);
+    connect(m_timeoutSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, markDirty);
+    connect(m_autoReconnect, &QCheckBox::toggled, this, markDirty);
+    connect(m_imageRoot, &QLineEdit::textChanged, this, markDirty);
+    connect(m_cleanMinGbSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, markDirty);
+    connect(m_cleanMaxDaysSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, markDirty);
+    connect(m_autoClean, &QCheckBox::toggled, this, markDirty);
+    connect(m_triggerModeGroup, QOverload<int>::of(&QButtonGroup::idClicked), this, markDirty);
+    connect(m_saveModeGroup, QOverload<int>::of(&QButtonGroup::idClicked), this, markDirty);
 
-void NodeCommSettingsPage::setNodesRunning(bool running)
-{
-    m_running = running;
-    updateNodeControls();
-}
-
-void NodeCommSettingsPage::setNodesBusy(bool busy)
-{
-    m_busy = busy;
-    updateNodeControls();
-}
-
-void NodeCommSettingsPage::setCameraNodeStatus(bool connected, const QString &detail)
-{
-    m_cameraStatusReceived = true;
-    m_cameraNodeConnected = connected;
-    m_cameraStatusMessage = detail.trimmed();
-    m_cameraLastMessageAt = QDateTime::currentDateTime();
-    setDeviceStatusLabel(m_cameraNodeStatus,
-                         nullptr,
-                         connected ? QStringLiteral("在线") : QStringLiteral("离线"),
-                         QString::fromLatin1(connected ? Theme::kStateSuccess : Theme::kStateError),
-                         detail);
-    updateCameraNodeDiagnostics();
-}
-
-void NodeCommSettingsPage::setCameraTopicDiagnostics(bool bridgeRunning, int publisherCount)
-{
-    m_rosBridgeRunning = bridgeRunning;
-    m_cameraStatusPublisherCount = publisherCount;
-    updateCameraNodeDiagnostics();
-}
-
-void NodeCommSettingsPage::setHikCameraStatus(bool connected, const QString &detail)
-{
-    m_hikConnected = connected;
-    m_hikConnecting = !connected && detail.contains(QStringLiteral("正在连接"));
-    setDeviceStatusLabel(m_hikCameraStatus,
-                         nullptr,
-                         connected ? QStringLiteral("在线")
-                                   : (m_hikConnecting ? QStringLiteral("连接中") : QStringLiteral("未连接")),
-                         QString::fromLatin1(connected ? Theme::kStateSuccess
-                                                       : (m_hikConnecting ? Theme::kStateWarning
-                                                                          : Theme::kStateError)),
-                         detail);
-    if (m_hikConfigState) {
-        const QString text = connected
-            ? QStringLiteral("已登录并建立实时预览。最近反馈：%1").arg(detail)
-            : QStringLiteral("连接状态：%1").arg(detail.isEmpty() ? QStringLiteral("未连接") : detail);
-        m_hikConfigState->setText(text);
+    // 初始加载
+    m_loading = true;
+    const DeviceCommConfig comm = loadDeviceCommConfig();
+    m_cameraIp->setText(m_config.address.isEmpty() ? QStringLiteral("192.168.1.64") : m_config.address);
+    m_cameraTopic->setText(comm.topic);
+    m_timeoutSpin->setValue(m_config.loginTimeoutMs > 0 ? m_config.loginTimeoutMs : 3000);
+    m_autoReconnect->setChecked(comm.autoReconnect);
+    m_imageRoot->setText(comm.imageRoot);
+    m_cleanMinGbSpin->setValue(comm.cleanMinGb);
+    m_cleanMaxDaysSpin->setValue(comm.cleanMaxDays);
+    m_autoClean->setChecked(comm.autoClean);
+    (comm.triggerMode == QStringLiteral("hard") ? m_hardTriggerButton : m_softTriggerButton)->setChecked(true);
+    if (comm.saveMode == QStringLiteral("all")) {
+        m_saveAllButton->setChecked(true);
+    } else if (comm.saveMode == QStringLiteral("none")) {
+        m_saveNoneButton->setChecked(true);
+    } else {
+        m_saveNgOnlyButton->setChecked(true);
     }
-    if (m_hikConnectButton) {
-        m_hikConnectButton->setEnabled(!connected && !m_hikConnecting);
-        m_hikConnectButton->setText(connected ? QStringLiteral("已连接")
-                                              : (m_hikConnecting ? QStringLiteral("连接中…")
-                                                                 : QStringLiteral("连接相机")));
+    m_loading = false;
+
+    m_nodeList->setCurrentRow(0);
+    updateServiceStatusBar();
+    applyTheme();
+    Theme::watch(this, [this]() { applyTheme(); });
+}
+
+void NodeCommSettingsPage::applyTheme()
+{
+    setStyleSheet(QStringLiteral("QWidget#nodeCommPage { background:%1; }").arg(Theme::kWindowBg));
+    if (QFrame *bar = findChild<QFrame *>(QStringLiteral("serviceBar"))) {
+        bar->setStyleSheet(QStringLiteral(
+                               "QFrame#serviceBar { background:%1; border:1px solid %2; border-radius:6px; }")
+                               .arg(Theme::kCardBg, Theme::kBorder));
     }
-    if (m_hikDisconnectButton) {
-        m_hikDisconnectButton->setEnabled(connected);
+    const auto restyle = [](QWidget *widget, const QString &sheet) {
+        if (widget) {
+            widget->setStyleSheet(sheet);
+        }
+    };
+    for (QLabel *label : findChildren<QLabel *>(QStringLiteral("commTitle"))) {
+        restyle(label, labelQss(Theme::kTextPrimary, 14, 600));
+    }
+    for (QLabel *label : findChildren<QLabel *>(QStringLiteral("commField"))) {
+        restyle(label, labelQss(Theme::kTextSecondary, 12, 400));
+    }
+    for (QLabel *label : findChildren<QLabel *>(QStringLiteral("commHint"))) {
+        restyle(label, labelQss(Theme::kTextMuted, 11, 400));
+    }
+    for (QLabel *label : findChildren<QLabel *>(QStringLiteral("nodeName"))) {
+        restyle(label, labelQss(Theme::kTextPrimary, 13, 600));
+    }
+    for (QLabel *label : findChildren<QLabel *>(QStringLiteral("nodeSub"))) {
+        restyle(label, labelQss(Theme::kTextMuted, 11, 400));
+    }
+    restyle(m_serviceSummary, labelQss(Theme::kTextPrimary, 13, 400));
+    for (QPushButton *button : findChildren<QPushButton *>(QStringLiteral("primaryBtn"))) {
+        restyle(button, primaryBtnQss());
+    }
+    for (QPushButton *button : findChildren<QPushButton *>(QStringLiteral("secondaryBtn"))) {
+        restyle(button, secondaryBtnQss());
+    }
+    for (QPushButton *button : findChildren<QPushButton *>(QStringLiteral("segmentBtn"))) {
+        restyle(button, segmentBtnQss());
+    }
+    for (QPushButton *button : findChildren<QPushButton *>(QStringLiteral("stepperBtn"))) {
+        restyle(button, stepperBtnQss());
+    }
+    for (QFrame *card : findChildren<QFrame *>(QStringLiteral("commCard"))) {
+        restyle(card, cardQss());
+    }
+    for (QLineEdit *edit : findChildren<QLineEdit *>()) {
+        restyle(edit, inputQss());
+    }
+    for (QSpinBox *spin : findChildren<QSpinBox *>()) {
+        restyle(spin, spinBoxQss());
+    }
+    if (QFrame *strip = findChild<QFrame *>(QStringLiteral("diagStrip"))) {
+        strip->setStyleSheet(QStringLiteral(
+            "QFrame#diagStrip { background:%1; border:1px solid %2; border-radius:5px; }")
+            .arg(Theme::kControlBg, Theme::kBorder));
+    }
+    for (QCheckBox *box : findChildren<QCheckBox *>()) {
+        restyle(box, checkQss());
+    }
+    if (m_nodeList) {
+        m_nodeList->setStyleSheet(listQss());
+        for (int i = 0; i < m_nodeList->count(); ++i) {
+            QWidget *card = m_nodeList->itemWidget(m_nodeList->item(i));
+            if (!card) {
+                continue;
+            }
+            card->style()->unpolish(card);
+            card->style()->polish(card);
+            card->update();
+        }
+    }
+    if (m_diskBar) {
+        m_diskBar->setStyleSheet(QString());
+    }
+    refreshNodeReadiness();
+    reloadFromSource();
+}
+
+void NodeCommSettingsPage::updateServiceStatusBar()
+{
+    if (m_startAllButton) {
+        m_startAllButton->setText(m_running ? QStringLiteral("⏹ 停止服务") : QStringLiteral("▶ 一键启动服务"));
+        m_startAllButton->setEnabled(!m_busy);
     }
 }
 
-void NodeCommSettingsPage::setPlcDeviceStatus(const QString &status, const QString &detail)
+void NodeCommSettingsPage::updateNodeList()
 {
-    const QString normalized = status.trimmed().isEmpty() ? QStringLiteral("待反馈") : status.trimmed();
-    const bool online = normalized.contains(QStringLiteral("连接"))
-                        || normalized.contains(QStringLiteral("在线"));
-    const bool fault = normalized.contains(QStringLiteral("故障"))
-                       || normalized.contains(QStringLiteral("错误"));
-    setDeviceStatusLabel(m_plcStatus,
-                         nullptr,
-                         normalized,
-                         fault ? QString::fromLatin1(Theme::kStateError)
-                               : (online ? QString::fromLatin1(Theme::kStateSuccess)
-                                          : QString::fromLatin1(Theme::kStateUnknown)),
-                         detail);
+    auto setBadge = [](QLabel *badge, const QString &text, const QString &color) {
+        if (badge) {
+            badge->setText(text);
+            badge->setStyleSheet(QStringLiteral("color:%1;font-size:11px;font-weight:600;border:none;background:transparent;")
+                                     .arg(color));
+        }
+    };
+    if (m_cameraNodeBadge) {
+        setBadge(m_cameraNodeBadge,
+                 m_hikConnected ? QStringLiteral("● 已连接") : QStringLiteral("● 未连接"),
+                 m_hikConnected ? QLatin1String(Theme::kStateSuccess) : QLatin1String(Theme::kStateError));
+    }
+    if (m_topicNodeBadge) {
+        const bool hasPublisher = m_rosBridgeRunning && m_cameraPublisherCount > 0;
+        setBadge(m_topicNodeBadge,
+                 hasPublisher ? QStringLiteral("● 已发布") : QStringLiteral("● 无发布者"),
+                 hasPublisher ? QLatin1String(Theme::kStateSuccess) : QLatin1String(Theme::kStateError));
+    }
+    if (m_plcBadge) {
+        setBadge(m_plcBadge,
+                 QStringLiteral("● %1").arg(m_plcStatusText.isEmpty() ? QStringLiteral("待反馈") : m_plcStatusText),
+                 QLatin1String(Theme::kTextMuted));
+    }
+    if (m_cncBadge) {
+        setBadge(m_cncBadge, QStringLiteral("● 离线"), QLatin1String(Theme::kTextMuted));
+    }
+    if (m_storageBadge) {
+        setBadge(m_storageBadge, QStringLiteral("● 正常"), QLatin1String(Theme::kStateSuccess));
+    }
 }
 
 void NodeCommSettingsPage::refreshNodeReadiness()
-{
-    checkNodeReadiness();
-}
-
-void NodeCommSettingsPage::updateNodeControls()
-{
-    if (m_nodeState) {
-        QString text;
-        QString color;
-        if (m_busy) {
-            text = QStringLiteral("● 脚本执行中…");
-            color = Theme::kStateWarning;
-        } else if (m_running) {
-            text = QStringLiteral("● 节点运行中");
-            color = Theme::kStateSuccess;
-        } else {
-            text = QStringLiteral("● 节点未运行");
-            color = Theme::kStateError;
-        }
-        m_nodeState->setText(text);
-        m_nodeState->setStyleSheet(QStringLiteral("color:%1;font-size:13px;font-weight:600;border:none;background:transparent;")
-                                       .arg(color));
-    }
-    if (m_startButton) {
-        m_startButton->setEnabled(!m_busy && !m_running && m_allReady);
-        m_startButton->setToolTip(m_allReady
-                                      ? QStringLiteral("启动相机、后端和算法服务")
-                                      : QStringLiteral("启动前置检查未通过，请先查看未就绪项"));
-    }
-    if (m_stopButton) {
-        m_stopButton->setEnabled(!m_busy && m_running);
-    }
-}
-
-void NodeCommSettingsPage::updateCameraNodeDiagnostics()
-{
-    if (!m_cameraPublisherCount || !m_cameraLastMessage || !m_cameraDiagnosis) {
-        return;
-    }
-
-    if (!m_rosBridgeRunning) {
-        m_cameraPublisherCount->setText(QStringLiteral("ROS 2 订阅器未启动"));
-        m_cameraLastMessage->setText(QStringLiteral("无"));
-        m_cameraDiagnosis->setText(QStringLiteral("ROS 2 bridge 尚未启动；检查 ROS 2 初始化、工作区环境及启动日志。"));
-        setDeviceStatusLabel(m_cameraNodeStatus,
-                             nullptr,
-                             QStringLiteral("ROS 2 未启动"),
-                             QString::fromLatin1(Theme::kStateError),
-                             m_cameraDiagnosis->text());
-        return;
-    }
-
-    if (m_cameraStatusPublisherCount == 0) {
-        m_cameraPublisherCount->setText(QStringLiteral("0 个"));
-        if (m_cameraStatusReceived) {
-            m_cameraLastMessage->setText(QStringLiteral("%1 · %2")
-                                             .arg(m_cameraLastMessageAt.toString(QStringLiteral("HH:mm:ss")),
-                                                  m_cameraStatusMessage.simplified()));
-        } else {
-            m_cameraLastMessage->setText(QStringLiteral("未收到"));
-        }
-        m_cameraDiagnosis->setText(QStringLiteral(
-            "当前没有匹配的 /camera/status 发布者。检查相机节点是否启动、双方 ROS_DOMAIN_ID 是否一致，以及 topic 名称和 QoS 是否兼容。"));
-        setDeviceStatusLabel(m_cameraNodeStatus,
-                             nullptr,
-                             QStringLiteral("无发布者"),
-                             QString::fromLatin1(Theme::kStateError),
-                             m_cameraDiagnosis->text());
-        return;
-    }
-
-    if (m_cameraStatusPublisherCount > 0) {
-        m_cameraPublisherCount->setText(QStringLiteral("%1 个").arg(m_cameraStatusPublisherCount));
-    } else {
-        m_cameraPublisherCount->setText(QStringLiteral("正在查询…"));
-    }
-
-    if (!m_cameraStatusReceived) {
-        m_cameraLastMessage->setText(QStringLiteral("尚无消息"));
-        m_cameraDiagnosis->setText(QStringLiteral(
-            "topic 已有匹配发布者，但尚未收到状态消息。确认发布端持续发送 CameraStatus；本端 QoS 为 Reliable、Transient Local、Depth 1。"));
-        setDeviceStatusLabel(m_cameraNodeStatus,
-                             nullptr,
-                             QStringLiteral("等待状态"),
-                             QString::fromLatin1(Theme::kStateWarning),
-                             m_cameraDiagnosis->text());
-        return;
-    }
-
-    const QString time = m_cameraLastMessageAt.isValid()
-        ? m_cameraLastMessageAt.toString(QStringLiteral("HH:mm:ss"))
-        : QStringLiteral("—");
-    const QString lastMessage = m_cameraStatusMessage.isEmpty()
-        ? (m_cameraNodeConnected ? QStringLiteral("connected=true") : QStringLiteral("connected=false"))
-        : m_cameraStatusMessage;
-    m_cameraLastMessage->setText(QStringLiteral("%1 · %2")
-                                     .arg(time, lastMessage.simplified()));
-    m_cameraLastMessage->setToolTip(m_cameraStatusMessage);
-    m_cameraDiagnosis->setText(m_cameraNodeConnected
-        ? QStringLiteral("已收到相机状态，camera/status 报告设备在线。")
-        : QStringLiteral("已收到状态消息，但 connected=false。检查相机节点日志、设备供电/网线及相机登录参数。"));
-    setDeviceStatusLabel(m_cameraNodeStatus,
-                         nullptr,
-                         m_cameraNodeConnected ? QStringLiteral("在线") : QStringLiteral("相机离线"),
-                         QString::fromLatin1(m_cameraNodeConnected ? Theme::kStateSuccess : Theme::kStateError),
-                         m_cameraDiagnosis->text());
-}
-
-void NodeCommSettingsPage::refreshHikCameraInfo()
-{
-    QString loadError;
-    const HikCameraConfig config = HikCameraConfig::load(HikCameraConfig::defaultFilePath(), &loadError);
-    if (m_hikAddress) {
-        m_hikAddress->setText(config.address.isEmpty() ? QStringLiteral("未配置") : config.address);
-    }
-    if (m_hikEndpoint) {
-        m_hikEndpoint->setText(config.address.isEmpty()
-                                   ? QStringLiteral("未配置")
-                                   : QStringLiteral("%1:%2").arg(config.address).arg(config.port));
-    }
-    if (m_hikUsername) {
-        m_hikUsername->setText(config.username.isEmpty() ? QStringLiteral("未配置") : config.username);
-    }
-    if (m_hikStream) {
-        m_hikStream->setText(QStringLiteral("通道 %1 · %2 · %3")
-                                 .arg(config.channel)
-                                 .arg(config.streamType == 0 ? QStringLiteral("主码流") : QStringLiteral("子码流"))
-                                 .arg(config.linkMode == 0 ? QStringLiteral("TCP") : QStringLiteral("UDP")));
-    }
-    if (!m_hikConnected && m_hikConfigState) {
-        QString state;
-        if (!loadError.isEmpty()) {
-            state = loadError;
-        } else if (!config.enabled) {
-            state = QStringLiteral("网络预览未启用；「实时预览」配置入口待后续接入。配置文件：%1")
-                        .arg(QDir::toNativeSeparators(HikCameraConfig::defaultFilePath()));
-        } else {
-            QString validationError;
-            state = config.validate(&validationError)
-                ? QStringLiteral("配置已启用，可以发起连接。")
-                : validationError;
-        }
-        m_hikConfigState->setText(state);
-    }
-    if (m_hikConnectButton) {
-        m_hikConnectButton->setEnabled(!m_hikConnected && !m_hikConnecting && config.enabled);
-    }
-    if (m_hikDisconnectButton) {
-        m_hikDisconnectButton->setEnabled(m_hikConnected);
-    }
-}
-
-void NodeCommSettingsPage::checkNodeReadiness()
 {
     const QString scriptPath = resolveNodeLauncherScript(QStringLiteral("StartAll"));
     QString script;
@@ -923,72 +1038,98 @@ void NodeCommSettingsPage::checkNodeReadiness()
         script, variables, {QStringLiteral("BACKEND_EXE"),
                             QStringLiteral("BACKEND_LOCAL_SETUP"),
                             QStringLiteral("ROS_LOCAL_SETUP")});
-    const NodeReadiness algorithm = checkBatchFiles(
-        script, variables, {QStringLiteral("ALGO_EXE")});
-
-    const auto joinMissing = [](const NodeReadiness &result) {
-        return result.missing.join(QStringLiteral("；"));
-    };
-    setReadinessLabel(m_cameraReadiness, camera.ready, joinMissing(camera));
-    setReadinessLabel(m_backendReadiness, backend.ready, joinMissing(backend));
-    setReadinessLabel(m_algorithmReadiness, algorithm.ready, joinMissing(algorithm));
-    m_cameraReadiness->setToolTip(camera.ready ? QStringLiteral("前置检查已通过") : joinMissing(camera));
-    m_backendReadiness->setToolTip(backend.ready ? QStringLiteral("前置检查已通过") : joinMissing(backend));
-    m_algorithmReadiness->setToolTip(algorithm.ready ? QStringLiteral("前置检查已通过") : joinMissing(algorithm));
-    styleReadinessCard(m_cameraCard, camera.ready);
-    styleReadinessCard(m_backendCard, backend.ready);
-    styleReadinessCard(m_algorithmCard, algorithm.ready);
+    const NodeReadiness algorithm = checkBatchFiles(script, variables, {QStringLiteral("ALGO_EXE")});
 
     const int readyCount = int(camera.ready) + int(backend.ready) + int(algorithm.ready);
-    const bool allReady = readyCount == 3;
-    m_allReady = allReady;
-    if (m_readinessSummary) {
-        m_readinessSummary->setText(QStringLiteral("%1 / 3 就绪").arg(readyCount));
-        m_readinessSummary->setStyleSheet(
-            QStringLiteral("color:%1;font-size:12px;font-weight:600;border:none;background:transparent;")
-                .arg(allReady ? Theme::kStateSuccess : Theme::kStateWarning));
-    }
-    if (m_readinessSummary) {
-        QStringList diagnosticDetails;
-        diagnosticDetails << (scriptPath.isEmpty()
-                                  ? QStringLiteral("脚本：未找到")
-                                  : QStringLiteral("脚本：%1").arg(QDir::toNativeSeparators(scriptPath)));
-        diagnosticDetails.append(variableWarnings);
-        m_readinessSummary->setToolTip(diagnosticDetails.join(QStringLiteral("\n")));
-    }
-    if (m_startButton) {
-        m_startButton->setEnabled(!m_busy && !m_running && allReady);
-        m_startButton->setToolTip(allReady
-                                      ? QStringLiteral("启动相机、后端和算法服务")
-                                      : QStringLiteral("启动前置检查未通过，请先查看未就绪项"));
+    // 总状态灯：3/3 才绿色；0/3 红色；部分就绪橙色。
+    const QString dotColor = readyCount == 3 ? QLatin1String(Theme::kStateSuccess)
+                                             : (readyCount == 0 ? QLatin1String(Theme::kStateError) : QLatin1String(Theme::kStateWarning));
+    const QString readyText =
+        QStringLiteral("<span style='color:%1;font-size:13px;'>●</span> 后台核心服务: %2/3 就绪")
+            .arg(dotColor)
+            .arg(readyCount);
+    const auto readyName = [](bool ready) { return ready ? QStringLiteral("🟢已就绪") : QStringLiteral("🔴未就绪"); };
+    const QString detail = QStringLiteral(" (相机服务: %1 | 后端服务: %2 | 算法服务: %3)")
+                               .arg(readyName(camera.ready), readyName(backend.ready), readyName(algorithm.ready));
+    m_serviceSummary->setText(readyText + detail);
+    m_serviceSummary->setToolTip(
+        QStringList{
+            QStringLiteral("相机：%1").arg(camera.missing.isEmpty() ? QStringLiteral("通过") : camera.missing.join(QStringLiteral("；"))),
+            QStringLiteral("后端：%1").arg(backend.missing.isEmpty() ? QStringLiteral("通过") : backend.missing.join(QStringLiteral("；"))),
+            QStringLiteral("算法：%1").arg(algorithm.missing.isEmpty() ? QStringLiteral("通过") : algorithm.missing.join(QStringLiteral("；"))),
+        }.join(QStringLiteral("\n")));
+    if (m_startAllButton) {
+        m_startAllButton->setEnabled(!m_busy && readyCount == 3 && !m_running);
+        m_startAllButton->setToolTip(readyCount == 3
+            ? QStringLiteral("启动相机、后端和算法服务")
+            : QStringLiteral("前置检查未通过，请先查看未就绪项"));
     }
 }
 
-void NodeCommSettingsPage::refreshDatabaseSchema()
+void NodeCommSettingsPage::refreshDiskUsage()
 {
-    if (!m_databaseSchemaTable) {
+    if (!m_diskBar) {
         return;
     }
-
-    const QSqlDatabase db = Database::instance().handle();
-    if (!db.isOpen()) {
-        if (m_databaseStatusValue) {
-            m_databaseStatusValue->setText(QStringLiteral("显示内置表结构"));
-        }
+    QString root = m_imageRoot->text().trimmed();
+    QStorageInfo storage(root.isEmpty() ? QDir::rootPath() : root);
+    if (!storage.isValid() || storage.bytesTotal() <= 0) {
+        storage.setPath(QDir::rootPath());
     }
+    const qint64 total = storage.bytesTotal();
+    const qint64 available = storage.bytesAvailable();
+    const qint64 used = total - available;
+    const double usedRatio = total > 0 ? double(used) / double(total) : 0.0;
+    const int percent = int(std::lround(usedRatio * 100.0));
 
-    static const QHash<QString, QString> descriptions{
-        {QStringLiteral("AppSetting"), QStringLiteral("应用设置项")},
-        {QStringLiteral("AuditLog"), QStringLiteral("用户操作审计")},
-        {QStringLiteral("InspectionFrame"), QStringLiteral("扫描帧元数据")},
-        {QStringLiteral("InspectionRecord"), QStringLiteral("检测任务与汇总")},
-        {QStringLiteral("ParticleDetection"), QStringLiteral("颗粒位置与状态")},
-        {QStringLiteral("ProcessParameter"), QStringLiteral("当前工艺参数")},
-        {QStringLiteral("ProcessParameterHistory"), QStringLiteral("任务工艺快照")},
-        {QStringLiteral("UserAccount"), QStringLiteral("用户与角色")},
-        {QStringLiteral("UserSession"), QStringLiteral("登录会话")},
+    const auto gb = [](qint64 bytes) {
+        return QString::number(double(bytes) / (1024.0 * 1024.0 * 1024.0), 'f', 1);
     };
+    const bool warning = percent >= 85;
+    if (m_diskBar->property("warning").toBool() != warning || m_diskBar->styleSheet().isEmpty()) {
+        m_diskBar->setProperty("warning", warning);
+        m_diskBar->setStyleSheet(progressQss(warning));
+    }
+    m_diskBar->setValue(percent);
+    m_diskBar->setFormat(QStringLiteral("%1 GB / %2 GB (已用 %3%)")
+                             .arg(gb(available), gb(total))
+                             .arg(percent));
+}
 
+void NodeCommSettingsPage::refreshHikCameraInfo()
+{
+    if (m_cameraStateHint) {
+        QString validationError;
+        const bool ok = m_config.enabled && m_config.validate(&validationError);
+        m_cameraStateHint->setText(ok
+            ? QStringLiteral("配置已就绪，可以发起连接测试。")
+            : (m_config.enabled ? validationError
+                                : QStringLiteral("海康相机未启用，请填写 hik_camera.ini 后连接测试。")));
+    }
+}
+
+void NodeCommSettingsPage::updateCameraNodeDiagnostics()
+{
+    if (m_topicNodeBadge) {
+        const bool hasPublisher = m_rosBridgeRunning && m_cameraPublisherCount > 0;
+        m_topicNodeBadge->setText(hasPublisher ? QStringLiteral("● 已发布") : QStringLiteral("● 无发布者"));
+        m_topicNodeBadge->setStyleSheet(QStringLiteral("color:%1;font-size:11px;font-weight:600;border:none;background:transparent;")
+                                            .arg(hasPublisher ? QLatin1String(Theme::kStateSuccess) : QLatin1String(Theme::kStateError)));
+    }
+}
+
+void NodeCommSettingsPage::reloadFromSource()
+{
+    refreshDiskUsage();
+    refreshHikCameraInfo();
+    updateCameraNodeDiagnostics();
+    updateNodeList();
+
+    // 数据库健康与表数量
+    QString health;
+    const bool healthy = Database::instance().healthCheck(&health);
+    const QSqlDatabase db = Database::instance().handle();
+    int tableCount = 0;
     QStringList tableNames;
     if (db.isOpen()) {
         QSqlQuery tableQuery(db);
@@ -999,101 +1140,205 @@ void NodeCommSettingsPage::refreshDatabaseSchema()
                 tableNames.append(tableQuery.value(0).toString());
             }
         }
+        tableCount = tableNames.size();
     }
-
-    m_databaseSchemaTable->setRowCount(tableNames.size());
-    for (int row = 0; row < tableNames.size(); ++row) {
-        const QString &tableName = tableNames.at(row);
-        QStringList fields;
-        QSqlQuery columns(db);
-        if (db.isOpen()
-            && columns.exec(QStringLiteral("PRAGMA table_info(%1)").arg(quoteSqliteIdentifier(tableName)))) {
-            while (columns.next()) {
-                const QString name = columns.value(1).toString();
-                const QString type = columns.value(2).toString().trimmed();
-                fields.append(type.isEmpty() ? name : QStringLiteral("%1 %2").arg(name, type));
+    if (m_dbStatusValue) {
+        m_dbStatusValue->setText(healthy ? QStringLiteral("● 已连接") : QStringLiteral("● 异常"));
+        m_dbStatusValue->setStyleSheet(QStringLiteral("color:%1;font-size:11px;font-weight:600;border:none;background:transparent;")
+                                           .arg(healthy ? QLatin1String(Theme::kStateSuccess) : QLatin1String(Theme::kStateError)));
+        m_dbStatusValue->setToolTip(healthy ? QStringLiteral("SQLite 连接正常") : health);
+    }
+    if (m_dbViewButton) {
+        m_dbViewButton->setText(QStringLiteral("查看数据表 (%1 张)").arg(tableCount));
+    }
+    // 填充表结构弹窗
+    if (m_databaseSchemaTable) {
+        static const QHash<QString, QString> descriptions{
+            {QStringLiteral("AppSetting"), QStringLiteral("应用设置项")},
+            {QStringLiteral("AuditLog"), QStringLiteral("用户操作审计")},
+            {QStringLiteral("InspectionFrame"), QStringLiteral("扫描帧元数据")},
+            {QStringLiteral("InspectionRecord"), QStringLiteral("检测任务与汇总")},
+            {QStringLiteral("ParticleDetection"), QStringLiteral("颗粒位置与状态")},
+            {QStringLiteral("ProcessParameter"), QStringLiteral("当前工艺参数")},
+            {QStringLiteral("ProcessParameterHistory"), QStringLiteral("任务工艺快照")},
+            {QStringLiteral("UserAccount"), QStringLiteral("用户与角色")},
+            {QStringLiteral("UserSession"), QStringLiteral("登录会话")},
+        };
+        m_databaseSchemaTable->setRowCount(tableNames.size());
+        for (int row = 0; row < tableNames.size(); ++row) {
+            const QString &tableName = tableNames.at(row);
+            QStringList fields;
+            QSqlQuery columns(db);
+            if (db.isOpen()
+                && columns.exec(QStringLiteral("PRAGMA table_info(%1)").arg(quoteSqliteIdentifier(tableName)))) {
+                while (columns.next()) {
+                    const QString name = columns.value(1).toString();
+                    const QString type = columns.value(2).toString().trimmed();
+                    fields.append(type.isEmpty() ? name : QStringLiteral("%1 %2").arg(name, type));
+                }
             }
+            auto *tableItem = new QTableWidgetItem(tableName);
+            tableItem->setToolTip(tableName);
+            m_databaseSchemaTable->setItem(row, 0, tableItem);
+            auto *descriptionItem = new QTableWidgetItem(
+                descriptions.value(tableName, QStringLiteral("业务数据表")));
+            descriptionItem->setToolTip(descriptionItem->text());
+            m_databaseSchemaTable->setItem(row, 1, descriptionItem);
+            auto *fieldsItem = new QTableWidgetItem(fields.join(QStringLiteral("、")));
+            fieldsItem->setToolTip(fields.join(QStringLiteral("、")));
+            fieldsItem->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+            m_databaseSchemaTable->setItem(row, 2, fieldsItem);
+            m_databaseSchemaTable->setRowHeight(row, 46);
         }
-
-        auto *tableItem = new QTableWidgetItem(tableName);
-        tableItem->setFont(QFont(QString(), 10, QFont::DemiBold));
-        tableItem->setToolTip(tableName);
-        m_databaseSchemaTable->setItem(row, 0, tableItem);
-
-        auto *descriptionItem = new QTableWidgetItem(
-            descriptions.value(tableName, QStringLiteral("业务数据表")));
-        descriptionItem->setToolTip(descriptionItem->text());
-        m_databaseSchemaTable->setItem(row, 1, descriptionItem);
-
-        auto *fieldsItem = new QTableWidgetItem(fields.join(QStringLiteral("、")));
-        fieldsItem->setToolTip(fields.join(QStringLiteral("、")));
-        fieldsItem->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        m_databaseSchemaTable->setItem(row, 2, fieldsItem);
-        m_databaseSchemaTable->setRowHeight(row, 56);
-    }
-
-    if (m_databaseStatusValue) {
-        m_databaseStatusValue->setText(QStringLiteral("%1 张表 · 仅结构")
-                                           .arg(tableNames.size()));
     }
 }
 
-void NodeCommSettingsPage::reloadFromSource()
+SettingsSaveOutcome NodeCommSettingsPage::save()
 {
-    refreshHikCameraInfo();
-    updateCameraNodeDiagnostics();
-    checkNodeReadiness();
-    QString health;
-    const bool healthy = Database::instance().healthCheck(&health);
-    if (!healthy && m_databaseStatusValue) {
-        m_databaseStatusValue->setToolTip(health.isEmpty() ? QStringLiteral("数据库健康检查失败") : health);
-    }
-    refreshDatabaseSchema();
+    const DeviceCommConfig comm = loadDeviceCommConfig();
+    DeviceCommConfig next;
+    next.topic = m_cameraTopic->text().trimmed();
+    next.triggerMode = m_hardTriggerButton->isChecked() ? QStringLiteral("hard") : QStringLiteral("soft");
+    next.autoReconnect = m_autoReconnect->isChecked();
+    next.imageRoot = m_imageRoot->text().trimmed();
+    next.saveMode = m_saveAllButton->isChecked() ? QStringLiteral("all")
+                                                  : (m_saveNoneButton->isChecked() ? QStringLiteral("none")
+                                                                                   : QStringLiteral("ng"));
+    next.autoClean = m_autoClean->isChecked();
+    next.cleanMinGb = m_cleanMinGbSpin->value();
+    next.cleanMaxDays = m_cleanMaxDaysSpin->value();
+    Q_UNUSED(comm);
 
-    if (!m_imageStorageValue || !m_openImageFolderButton) {
-        return;
-    }
+    QString deviceError;
+    saveDeviceCommConfig(next, &deviceError);
 
-    int imageRecords = 0;
-    QSet<QString> availableImagePaths;
-    QString imageFolder;
-    const QSqlDatabase db = Database::instance().handle();
-    if (db.isOpen()) {
-        QSqlQuery paths(db);
-        if (paths.exec(QStringLiteral(
-                "SELECT OverviewImagePath FROM InspectionRecord "
-                "WHERE OverviewImagePath IS NOT NULL AND trim(OverviewImagePath) <> '' "
-                "ORDER BY Id DESC"))) {
-            while (paths.next()) {
-                ++imageRecords;
-                QString path = paths.value(0).toString().trimmed();
-                QFileInfo info(path);
-                if (info.isRelative()) {
-                    path = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(path);
-                    info.setFile(path);
-                }
-                if (info.exists() && info.isFile()) {
-                    availableImagePaths.insert(QDir::cleanPath(info.absoluteFilePath()).toCaseFolded());
-                }
-                if (imageFolder.isEmpty() && info.dir().exists()) {
-                    imageFolder = info.dir().absolutePath();
-                }
-            }
-        }
-    }
+    // 相机 IP 与超时写回 hik_camera.ini（保留端口/用户名/密码等未暴露字段）。
+    HikCameraConfig camera = m_config;
+    camera.address = m_cameraIp->text().trimmed();
+    camera.loginTimeoutMs = m_timeoutSpin->value();
+    QString cameraError;
+    const bool cameraOk = camera.save(HikCameraConfig::defaultFilePath(), &cameraError);
 
-    if (imageRecords > 0) {
-        m_imageStorageValue->setText(QStringLiteral("%1 条图像记录 · %2 个文件可用")
-                                         .arg(imageRecords)
-                                         .arg(availableImagePaths.size()));
+    m_dirty = false;
+    emit dirtyChanged(false);
+
+    SettingsSaveOutcome outcome;
+    if (!cameraOk && !deviceError.isEmpty()) {
+        outcome.status = SettingsSaveStatus::Rejected;
+        outcome.message = QStringLiteral("相机配置：%1；通信配置：%2").arg(cameraError, deviceError);
+    } else if (!cameraOk) {
+        outcome.status = SettingsSaveStatus::SavedWithWarning;
+        outcome.message = QStringLiteral("通信配置已保存，但相机配置写入失败：%1").arg(cameraError);
+    } else if (!deviceError.isEmpty()) {
+        outcome.status = SettingsSaveStatus::SavedWithWarning;
+        outcome.message = QStringLiteral("相机配置已保存，但通信配置写入失败：%1").arg(deviceError);
     } else {
-        m_imageStorageValue->setText(QStringLiteral("暂无图像记录"));
+        outcome.status = SettingsSaveStatus::Saved;
+        outcome.message = QStringLiteral("相机与通信配置已保存。");
     }
-    const bool folderAvailable = !imageFolder.isEmpty() && QDir(imageFolder).exists();
-    m_openImageFolderButton->setEnabled(folderAvailable);
-    m_openImageFolderButton->setToolTip(
-        folderAvailable
-            ? QDir::toNativeSeparators(imageFolder)
-            : QStringLiteral("检测记录还没有图像路径；需后端写入 OverviewImagePath 后才能定位实际目录。"));
-    m_imageStorageValue->setToolTip(m_openImageFolderButton->toolTip());
+    m_config = camera;
+    refreshHikCameraInfo();
+    return outcome;
+}
+
+void NodeCommSettingsPage::revert()
+{
+    m_loading = true;
+    m_config = HikCameraConfig::load(HikCameraConfig::defaultFilePath());
+    const DeviceCommConfig comm = loadDeviceCommConfig();
+    m_cameraIp->setText(m_config.address.isEmpty() ? QStringLiteral("192.168.1.64") : m_config.address);
+    m_cameraTopic->setText(comm.topic);
+    m_timeoutSpin->setValue(m_config.loginTimeoutMs > 0 ? m_config.loginTimeoutMs : 3000);
+    m_autoReconnect->setChecked(comm.autoReconnect);
+    m_imageRoot->setText(comm.imageRoot);
+    m_cleanMinGbSpin->setValue(comm.cleanMinGb);
+    m_cleanMaxDaysSpin->setValue(comm.cleanMaxDays);
+    m_autoClean->setChecked(comm.autoClean);
+    (comm.triggerMode == QStringLiteral("hard") ? m_hardTriggerButton : m_softTriggerButton)->setChecked(true);
+    if (comm.saveMode == QStringLiteral("all")) {
+        m_saveAllButton->setChecked(true);
+    } else if (comm.saveMode == QStringLiteral("none")) {
+        m_saveNoneButton->setChecked(true);
+    } else {
+        m_saveNgOnlyButton->setChecked(true);
+    }
+    m_loading = false;
+    m_dirty = false;
+    emit dirtyChanged(false);
+    refreshHikCameraInfo();
+}
+
+void NodeCommSettingsPage::restoreDefaults()
+{
+    m_loading = true;
+    m_cameraIp->setText(QStringLiteral("192.168.1.64"));
+    m_cameraTopic->setText(QStringLiteral("/camera/image_raw"));
+    m_timeoutSpin->setValue(3000);
+    m_autoReconnect->setChecked(true);
+    m_imageRoot->setText(QStringLiteral("D:/MZ-VISION/captured_images/"));
+    m_cleanMinGbSpin->setValue(50);
+    m_cleanMaxDaysSpin->setValue(30);
+    m_autoClean->setChecked(true);
+    m_softTriggerButton->setChecked(true);
+    m_saveNgOnlyButton->setChecked(true);
+    m_loading = false;
+    m_dirty = true;
+    emit dirtyChanged(true);
+}
+
+QString NodeCommSettingsPage::pendingChangeSummary() const
+{
+    return QStringLiteral("IP=%1，Topic=%2，超时=%3ms，存图=%4，清理阈值=%5GB/%6天")
+        .arg(m_cameraIp->text().trimmed(),
+             m_cameraTopic->text().trimmed())
+        .arg(m_timeoutSpin->value())
+        .arg(m_saveAllButton->isChecked() ? QStringLiteral("全部")
+                                          : (m_saveNoneButton->isChecked() ? QStringLiteral("不保存") : QStringLiteral("仅NG")))
+        .arg(m_cleanMinGbSpin->value())
+        .arg(m_cleanMaxDaysSpin->value());
+}
+
+void NodeCommSettingsPage::setNodesRunning(bool running)
+{
+    m_running = running;
+    updateServiceStatusBar();
+}
+
+void NodeCommSettingsPage::setNodesBusy(bool busy)
+{
+    m_busy = busy;
+    updateServiceStatusBar();
+}
+
+void NodeCommSettingsPage::setCameraNodeStatus(bool connected, const QString &detail)
+{
+    m_cameraNodeConnected = connected;
+    m_cameraStatusMessage = detail.trimmed();
+    m_cameraLastMessageAt = QDateTime::currentDateTime();
+    updateNodeList();
+}
+
+void NodeCommSettingsPage::setCameraTopicDiagnostics(bool bridgeRunning, int publisherCount)
+{
+    m_rosBridgeRunning = bridgeRunning;
+    m_cameraPublisherCount = publisherCount;
+    updateCameraNodeDiagnostics();
+}
+
+void NodeCommSettingsPage::setHikCameraStatus(bool connected, const QString &detail)
+{
+    m_hikConnected = connected;
+    if (m_cameraStateHint) {
+        m_cameraStateHint->setText(connected
+            ? QStringLiteral("海康相机已连接：%1").arg(detail)
+            : QStringLiteral("海康相机未连接：%1").arg(detail.isEmpty() ? QStringLiteral("等待连接") : detail));
+    }
+    updateNodeList();
+}
+
+void NodeCommSettingsPage::setPlcDeviceStatus(const QString &status, const QString &detail)
+{
+    m_plcStatusText = status.trimmed().isEmpty() ? QStringLiteral("待反馈") : status.trimmed();
+    m_plcStatusDetail = detail;
+    updateNodeList();
 }
