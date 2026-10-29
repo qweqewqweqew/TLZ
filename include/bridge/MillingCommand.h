@@ -8,7 +8,7 @@
 enum class MillingCommand : quint8 {
     Start = 1,
     Pause = 2,
-    Stop = 4,
+    Stop = 3,
 };
 
 inline QString millingCommandLabel(MillingCommand command)
