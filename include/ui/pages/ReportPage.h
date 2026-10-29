@@ -1,6 +1,8 @@
 #ifndef REPORTPAGE_H
 #define REPORTPAGE_H
 
+#include "data/InspectionRepository.h"
+
 #include <QDate>
 #include <QList>
 #include <QMap>
@@ -17,10 +19,8 @@ class QLabel;
 class QLineEdit;
 class QTableWidget;
 class HeightDistributionWidget;
-struct InspectionRecordRow;
-
-// 报表统计：按时间范围汇总检测记录，给出 KPI、趋势、任务结果与每日汇总表，可导出 PDF。
-// 班次、板号和单颗粒高度明细先保留前端占位，数据口径见 README。
+// 报表统计：按时间范围汇总检测记录，给出 KPI、趋势、任务结果与每日汇总表，可导出 PDF / Excel。
+// 班次和板号来自检测记录；单颗粒高度还没有入库，口径见 README。
 class ReportPage : public QWidget
 {
     Q_OBJECT
@@ -74,6 +74,7 @@ private:
     void exportExcel();
 
     ElaComboBox *m_rangeCombo{nullptr};
+    QList<InspectionRecordRow> m_lastRows;
     ElaComboBox *m_shiftCombo{nullptr};
     QLineEdit *m_plateEdit{nullptr};
     QDateEdit *m_from{nullptr};

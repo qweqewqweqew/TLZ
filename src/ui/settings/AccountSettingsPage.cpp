@@ -3,9 +3,11 @@
 #include "ElaMessageBar.h"
 #include "ElaPushButton.h"
 #include "app/RuntimeIniPaths.h"
+#include "app/ShiftConfig.h"
 #include "app/Theme.h"
 #include "app/UiHelpers.h"
 #include "auth/AuthService.h"
+#include "data/InspectionRepository.h"
 #include "auth/PasswordPolicy.h"
 #include "ui/dialogs/LoginDialog.h"
 #include "ui/settings/CraftPlaceholder.h"
@@ -19,10 +21,11 @@
 #include <QHBoxLayout>
 #include <QHash>
 #include <QHeaderView>
-#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSignalBlocker>
@@ -558,31 +561,121 @@ AccountSettingsPage::AccountSettingsPage(QWidget *parent)
     connect(m_enableButton, &ElaPushButton::clicked, this, &AccountSettingsPage::toggleEnabled);
     connect(m_deleteButton, &ElaPushButton::clicked, this, &AccountSettingsPage::deleteUser);
     connect(m_shiftButton, &ElaPushButton::clicked, this, [this]() {
-        QSettings settings(backendParamsIniPath(), QSettings::IniFormat);
-        settings.setIniCodec("UTF-8");
-        const QString current = settings.value(QStringLiteral("Report/Shift")).toString();
-        QStringList shifts = settings.value(QStringLiteral("Report/Shifts")).toStringList();
-        if (shifts.isEmpty()) {
-            shifts = QStringList{QStringLiteral("白班"), QStringLiteral("晚班")};
-        }
-        bool ok = false;
-        const QString shift = QInputDialog::getText(this,
-                                                    QStringLiteral("设置班次"),
-                                                    QStringLiteral("班次名称（如 白班、晚班，可自定义）"),
-                                                    QLineEdit::Normal,
-                                                    current,
-                                                    &ok)
-                                  .trimmed();
-        if (!ok || shift.isEmpty()) {
-            return;
-        }
-        if (!shifts.contains(shift)) {
-            shifts << shift;
-            settings.setValue(QStringLiteral("Report/Shifts"), shifts);
-        }
-        settings.setValue(QStringLiteral("Report/Shift"), shift);
-        settings.sync();
-        showResult(true, QStringLiteral("班次已设置为 %1").arg(shift));
+        QDialog dialog(this);
+        dialog.setWindowTitle(QStringLiteral("设置班次"));
+        dialog.setMinimumWidth(360);
+        auto *layout = new QVBoxLayout(&dialog);
+        auto *hint = new QLabel(QStringLiteral("默认是白班、晚班。可以改名、删除或另加。当前班次会写进之后新建的检测记录。"),
+                                &dialog);
+        hint->setWordWrap(true);
+        layout->addWidget(hint);
+        auto *currentLabel = new QLabel(&dialog);
+        layout->addWidget(currentLabel);
+        auto *list = new QListWidget(&dialog);
+        list->addItems(ShiftConfig::names());
+        list->setMinimumHeight(160);
+        layout->addWidget(list);
+        auto *nameEdit = new QLineEdit(&dialog);
+        nameEdit->setPlaceholderText(QStringLiteral("班次名称"));
+        nameEdit->setMaxLength(32);
+        layout->addWidget(nameEdit);
+
+        const auto refreshCurrent = [currentLabel]() {
+            const QString selected = ShiftConfig::current();
+            currentLabel->setText(selected.isEmpty() ? QStringLiteral("当前班次：未设置")
+                                                      : QStringLiteral("当前班次：%1").arg(selected));
+        };
+        refreshCurrent();
+
+        auto *buttons = new QHBoxLayout();
+        auto *addButton = new QPushButton(QStringLiteral("添加"), &dialog);
+        auto *renameButton = new QPushButton(QStringLiteral("改名"), &dialog);
+        auto *removeButton = new QPushButton(QStringLiteral("删除"), &dialog);
+        auto *useButton = new QPushButton(QStringLiteral("设为当前"), &dialog);
+        buttons->addWidget(addButton);
+        buttons->addWidget(renameButton);
+        buttons->addWidget(removeButton);
+        buttons->addWidget(useButton);
+        layout->addLayout(buttons);
+        auto *closeButton = new QPushButton(QStringLiteral("关闭"), &dialog);
+        layout->addWidget(closeButton);
+
+        const auto persist = [list]() {
+            QStringList names;
+            QString current = ShiftConfig::current();
+            for (int i = 0; i < list->count(); ++i) {
+                names << list->item(i)->text();
+            }
+            if (!names.contains(current)) {
+                current.clear();
+            }
+            ShiftConfig::save(names, current);
+        };
+
+        connect(addButton, &QPushButton::clicked, &dialog, [list, nameEdit, refreshCurrent, persist]() {
+            const QString name = nameEdit->text().trimmed();
+            if (name.isEmpty() || name == QStringLiteral("未设置") || name == QStringLiteral("全部班次")) {
+                return;
+            }
+            for (int i = 0; i < list->count(); ++i) {
+                if (list->item(i)->text() == name) {
+                    return;
+                }
+            }
+            list->addItem(name);
+            nameEdit->clear();
+            persist();
+            if (ShiftConfig::current().isEmpty()) {
+                ShiftConfig::setCurrent(name);
+            }
+            refreshCurrent();
+        });
+        connect(renameButton, &QPushButton::clicked, &dialog, [list, nameEdit, refreshCurrent, persist, &dialog]() {
+            auto *item = list->currentItem();
+            const QString name = nameEdit->text().trimmed();
+            if (!item || name.isEmpty() || name == QStringLiteral("未设置") || name == QStringLiteral("全部班次")) {
+                return;
+            }
+            const QString previous = item->text();
+            if (previous == name) {
+                return;
+            }
+            for (int i = 0; i < list->count(); ++i) {
+                if (list->item(i)->text() == name) {
+                    return;
+                }
+            }
+            const bool wasCurrent = ShiftConfig::current() == previous;
+            QString error;
+            if (!InspectionRepository::renameShift(previous, name, &error)) {
+                QMessageBox::warning(&dialog, QStringLiteral("设置班次"), error);
+                return;
+            }
+            item->setText(name);
+            persist();
+            if (wasCurrent) {
+                ShiftConfig::setCurrent(name);
+            }
+            refreshCurrent();
+        });
+        connect(removeButton, &QPushButton::clicked, &dialog, [list, refreshCurrent, persist]() {
+            delete list->takeItem(list->currentRow());
+            persist();
+            refreshCurrent();
+        });
+        connect(useButton, &QPushButton::clicked, &dialog, [list, refreshCurrent]() {
+            auto *item = list->currentItem();
+            if (!item) {
+                return;
+            }
+            ShiftConfig::setCurrent(item->text());
+            refreshCurrent();
+        });
+        connect(closeButton, &QPushButton::clicked, &dialog, &QDialog::accept);
+        dialog.exec();
+        const QString selected = ShiftConfig::current();
+        showResult(true, selected.isEmpty() ? QStringLiteral("当前未设置班次")
+                                            : QStringLiteral("当前班次：%1").arg(selected));
     });
     connect(m_auditRefreshButton, &ElaPushButton::clicked, this, &AccountSettingsPage::refreshAudit);
 

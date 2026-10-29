@@ -96,6 +96,8 @@ bool ensureBaseSchema(QSqlDatabase &db, QString *errorMessage)
         " MaxParticleHeight REAL NOT NULL DEFAULT 0,"
         " OverviewImagePath TEXT NULL,"
         " Remark TEXT NULL,"
+        " PlateNo TEXT NOT NULL DEFAULT '',"
+        " Shift TEXT NOT NULL DEFAULT '',"
         " CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),"
         " UpdatedAt TEXT NOT NULL DEFAULT (datetime('now'))"
         ")",

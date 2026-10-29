@@ -462,6 +462,15 @@ void MainWindow::buildMainView()
     m_imagePanel = new ImageDisplayPanel(middle);
     m_imagePanel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     middleLayout->addWidget(m_imagePanel, 1);
+    connect(m_imagePanel, &ImageDisplayPanel::plateNumberEdited, this, [this](const QString &plateNo) {
+        if (m_debugFakeActive || m_currentBackendTaskId == 0 || m_currentBackendTaskId == 9001) {
+            return;
+        }
+        QString error;
+        if (!InspectionRepository::setPlateNoForTask(m_currentBackendTaskId, plateNo, &error)) {
+            appendEventLog(QStringLiteral("ERROR"), QStringLiteral("保存板号失败: %1").arg(error));
+        }
+    });
 
     // 左图与整个右侧 1:1。右侧内部也是 1:1。点云和实时画面上下各占一半，一样大。
     auto *rightColumn = new QWidget(middle);
@@ -1165,6 +1174,7 @@ void MainWindow::startRos2Bridge()
                    const QString &particleBoardGrade,
                    const QString &drawimagePath,
                    const QVector<MillingPathVM> &paths) {
+                const quint64 previousTaskId = m_currentBackendTaskId;
                 m_currentBackendTaskId = taskId;
                 m_activeBackendTaskId = taskId;
                 m_activeTaskFinished = false;
@@ -1178,9 +1188,32 @@ void MainWindow::startRos2Bridge()
                 m_activeCompletedPath = 0;
                 m_activeBoardGrade = particleBoardGrade.trimmed();
                 if (m_imagePanel) {
+                    const QString typedPlate = m_imagePanel->plateNumber();
                     m_imagePanel->setMillingPaths(paths);
                     m_imagePanel->setAlgorithmImagePath(drawimagePath);
                     m_imagePanel->setTaskId(taskId);
+                    if (previousTaskId != taskId) {
+                        QString plate;
+                        if (!m_debugFakeActive && previousTaskId != 0 && previousTaskId != 9001) {
+                            QString error;
+                            if (!InspectionRepository::setPlateNoForTask(previousTaskId, typedPlate, &error)) {
+                                appendEventLog(QStringLiteral("ERROR"),
+                                               QStringLiteral("保存板号失败: %1").arg(error));
+                            }
+                        }
+                        if (!m_debugFakeActive && taskId != 0 && taskId != 9001) {
+                            QString error;
+                            plate = InspectionRepository::plateNoForTask(taskId, &error);
+                            if (plate.isEmpty() && previousTaskId == 0 && !typedPlate.isEmpty()) {
+                                plate = typedPlate;
+                                if (!InspectionRepository::setPlateNoForTask(taskId, plate, &error)) {
+                                    appendEventLog(QStringLiteral("ERROR"),
+                                                   QStringLiteral("保存板号失败: %1").arg(error));
+                                }
+                            }
+                        }
+                        m_imagePanel->setPlateNumber(plate);
+                    }
                     m_imagePanel->setProgressSummary(0, pathTotal, 0.0f);
                 }
                 if (m_particlePanel) {

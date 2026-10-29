@@ -22,6 +22,8 @@ struct InspectionRecordRow
     double     maxParticleHeight = 0.0;
     QString    overviewImagePath;
     QString    remark;
+    QString    plateNo;           // 用户填写的板号；空表示未编号
+    QString    shift;             // 建记录时的当前班次；空表示当时未选班次
     QDateTime  createdAt;
 };
 
@@ -88,6 +90,8 @@ struct InspectionQuery
 {
     int        limit = 100;
     QString    recipe;        // 空则不筛选
+    QString    plate;         // 空则不筛选，按板号精确匹配（忽略大小写）
+    QString    shift;         // 空则不筛选
     QDateTime  createdFrom;   // 无效则不筛选（应传入 UTC）
     QDateTime  createdTo;     // 半开区间上界（应传入 UTC），无效则不筛选
 };
@@ -118,6 +122,18 @@ public:
     // 返回 InspectionRecord.Id；失败返回 0 并填 errorMessage。
     static int ensureRecordForTask(quint64 backendTaskId,
                                    QString *errorMessage = nullptr);
+
+    // 已有记录返回板号；没有记录时返回空，不新建。
+    static QString plateNoForTask(quint64 backendTaskId,
+                                  QString *errorMessage = nullptr);
+
+    // 写入板号。只保留字母和数字，空字符串表示未编号。记录不存在时会先创建。
+    static bool setPlateNoForTask(quint64 backendTaskId,
+                                  const QString &plateNo,
+                                  QString *errorMessage = nullptr);
+
+    // 把已经写入记录的班次名称改成新名称。历史行跟着改，避免汇总表对不上。
+    static bool renameShift(const QString &from, const QString &to, QString *errorMessage = nullptr);
 
     // 保存一帧扫描映射（task_id + frame_id 唯一，重发时补全 HasRange/HasIntensity）。
     // task_id 对应的 InspectionRecord 不存在时会先自动创建。

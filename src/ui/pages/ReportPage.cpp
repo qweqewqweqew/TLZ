@@ -2,7 +2,7 @@
 
 #include "ElaComboBox.h"
 #include "ElaPushButton.h"
-#include "app/RuntimeIniPaths.h"
+#include "app/ShiftConfig.h"
 #include "app/Theme.h"
 #include "app/UiHelpers.h"
 #include "data/InspectionRepository.h"
@@ -19,13 +19,16 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPainter>
+#include <QRegularExpression>
+#include <QRegularExpressionValidator>
 #include <QPrinter>
-#include <QSettings>
 #include <QSignalBlocker>
 #include <QStandardPaths>
 #include <QTableWidget>
 #include <QTextDocument>
 #include <QVBoxLayout>
+
+#include "xlsxdocument.h"
 
 #include <algorithm>
 
@@ -258,6 +261,11 @@ QList<InspectionRecordRow> makeDemoRows(int count, const QDate &from, const QDat
             row.maxParticleHeight = pattern % 4 == 0 ? 0.6 : pattern % 4 == 1 ? 1.8 : pattern % 4 == 2 ? 3.8 : 5.8;
         }
         row.remark = QStringLiteral("界面预览用演示数据");
+        const QStringList demoShifts = ShiftConfig::names();
+        if (!demoShifts.isEmpty()) {
+            row.shift = demoShifts.at(i % demoShifts.size());
+        }
+        row.plateNo = QStringLiteral("D%1").arg(i + 1, 2, 10, QLatin1Char('0'));
         demo.append(row);
     }
     return demo;
@@ -334,18 +342,20 @@ QWidget *ReportPage::buildFilterBar()
 
     layout->addWidget(makeLabel(QStringLiteral("班次"), QStringLiteral("sectionHint")));
     m_shiftCombo = new ElaComboBox(bar);
-    m_shiftCombo->setEditable(true);
     m_shiftCombo->addItem(QStringLiteral("全部班次"));
     m_shiftCombo->addItems(shiftNames());
     m_shiftCombo->setMinimumWidth(106);
-    m_shiftCombo->setToolTip(QStringLiteral("班次可在「设置 → 账号管理 → 设置班次」中自定义"));
+    m_shiftCombo->setToolTip(QStringLiteral("按已保存的班次筛选。名单在「设置 → 账号管理 → 设置班次」中维护。"));
     layout->addWidget(m_shiftCombo);
 
     layout->addWidget(makeLabel(QStringLiteral("板号"), QStringLiteral("sectionHint")));
     m_plateEdit = new QLineEdit(bar);
-    m_plateEdit->setPlaceholderText(QStringLiteral("输入铜板编号"));
+    m_plateEdit->setPlaceholderText(QStringLiteral("字母或数字"));
     m_plateEdit->setFixedWidth(132);
-    m_plateEdit->setToolTip(QStringLiteral("板号字段待后端补齐，当前不参与查询"));
+    m_plateEdit->setMaxLength(32);
+    m_plateEdit->setValidator(new QRegularExpressionValidator(
+        QRegularExpression(QStringLiteral("[A-Za-z0-9]*")), m_plateEdit));
+    m_plateEdit->setToolTip(QStringLiteral("按铜板粒子分布卡头填写的板号筛选。留空表示不限。"));
     layout->addWidget(m_plateEdit);
 
     const QDate today = QDate::currentDate();
@@ -377,8 +387,7 @@ QWidget *ReportPage::buildFilterBar()
     m_excelButton = new ElaPushButton(QStringLiteral("导出 Excel"), bar);
     m_excelButton->setFixedSize(104, 32);
     applySecondaryButtonStyle(m_excelButton);
-    m_excelButton->setEnabled(false);
-    m_excelButton->setToolTip(QStringLiteral("等待接入 QXlsx 库后开放"));
+    m_excelButton->setToolTip(QStringLiteral("导出当前查询结果"));
     layout->addWidget(m_excelButton);
     m_pdfButton = new ElaPushButton(QStringLiteral("导出 PDF"), bar);
     m_pdfButton->setFixedSize(96, 32);
@@ -568,13 +577,12 @@ QWidget *ReportPage::buildDailyTable()
     auto *tablePanel = createPanel(QStringLiteral("每日班次汇总"), m_tableCaption, host);
     m_dailyTable = new QTableWidget(tablePanel);
     m_dailyTable->setObjectName(QStringLiteral("reportTable"));
-    m_dailyTable->setColumnCount(6);
-    m_dailyTable->setHorizontalHeaderLabels({QStringLiteral("日期"),
-                                             QStringLiteral("甲班"),
-                                             QStringLiteral("乙班"),
-                                             QStringLiteral("丙班"),
-                                             QStringLiteral("检测合计"),
-                                             QStringLiteral("修磨合计")});
+    const QStringList initialShifts = shiftNames();
+    m_dailyTable->setColumnCount(1 + initialShifts.size() + 2);
+    QStringList initialHeaders{QStringLiteral("日期")};
+    initialHeaders += initialShifts;
+    initialHeaders << QStringLiteral("检测合计") << QStringLiteral("修磨合计");
+    m_dailyTable->setHorizontalHeaderLabels(initialHeaders);
     m_dailyTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_dailyTable->setSelectionMode(QAbstractItemView::NoSelection);
     m_dailyTable->setAlternatingRowColors(true);
@@ -750,42 +758,26 @@ void ReportPage::setDemoMode(bool active)
 
 QStringList ReportPage::shiftNames() const
 {
-    QSettings settings(backendParamsIniPath(), QSettings::IniFormat);
-    settings.setIniCodec("UTF-8");
-    QStringList names = settings.value(QStringLiteral("Report/Shifts")).toStringList();
-    names.removeAll(QString());
-    if (names.isEmpty()) {
-        names = QStringList{QStringLiteral("白班"), QStringLiteral("晚班")};
-    }
-    return names;
+    return ShiftConfig::names();
 }
 
 void ReportPage::reload()
 {
-    // 同步「账号管理 → 设置班次」保存的班次与自定义班次列表。
     const QStringList shifts = shiftNames();
     if (m_shiftCombo) {
-        QStringList existing;
-        for (int i = 1; i < m_shiftCombo->count(); ++i) {
-            existing << m_shiftCombo->itemText(i);
-        }
-        for (const QString &name : shifts) {
-            if (!existing.contains(name)) {
-                m_shiftCombo->addItem(name);
-            }
-        }
-        QSettings settings(backendParamsIniPath(), QSettings::IniFormat);
-        settings.setIniCodec("UTF-8");
-        const QString shift = settings.value(QStringLiteral("Report/Shift")).toString().trimmed();
-        if (!shift.isEmpty()) {
-            int index = m_shiftCombo->findText(shift);
+        const QString selected = m_shiftCombo->currentIndex() > 0 ? m_shiftCombo->currentText() : QString();
+        const QSignalBlocker blocker(m_shiftCombo);
+        m_shiftCombo->clear();
+        m_shiftCombo->addItem(QStringLiteral("全部班次"));
+        m_shiftCombo->addItems(shifts);
+        int index = 0;
+        if (!selected.isEmpty()) {
+            index = m_shiftCombo->findText(selected);
             if (index < 0) {
-                m_shiftCombo->addItem(shift);
-                index = m_shiftCombo->count() - 1;
+                index = 0;
             }
-            const QSignalBlocker blocker(m_shiftCombo);
-            m_shiftCombo->setCurrentIndex(index);
         }
+        m_shiftCombo->setCurrentIndex(index);
     }
 
     QDate from;
@@ -794,6 +786,12 @@ void ReportPage::reload()
 
     InspectionQuery query;
     query.limit = kMaxRows;
+    if (m_shiftCombo && m_shiftCombo->currentIndex() > 0) {
+        query.shift = m_shiftCombo->currentText();
+    }
+    if (m_plateEdit) {
+        query.plate = m_plateEdit->text().trimmed();
+    }
     if (from.isValid()) {
         query.createdFrom = QDateTime(from, QTime(0, 0)).toUTC();
     }
@@ -816,7 +814,22 @@ void ReportPage::reload()
     if (m_demoModeActive && rows.size() < kDemoMinimumRows) {
         rows.append(makeDemoRows(kDemoMinimumRows - rows.size(), from, to));
         m_demoDataActive = true;
+        if (!query.shift.isEmpty() || !query.plate.isEmpty()) {
+            QList<InspectionRecordRow> matched;
+            for (const InspectionRecordRow &row : rows) {
+                if (!query.shift.isEmpty() && row.shift != query.shift) {
+                    continue;
+                }
+                if (!query.plate.isEmpty()
+                    && row.plateNo.compare(query.plate, Qt::CaseInsensitive) != 0) {
+                    continue;
+                }
+                matched.append(row);
+            }
+            rows = matched;
+        }
     }
+    m_lastRows = rows;
 
     m_lastRangeText = from.isValid()
                           ? QStringLiteral("%1 至 %2").arg(from.toString(QStringLiteral("yyyy/MM/dd")),
@@ -844,12 +857,10 @@ void ReportPage::reload()
                 ++stat.boardsCompleted;
             }
         }
-        if (isDemoRow(row) && !shifts.isEmpty()) {
-            const int demoIndex = -row.id - 100000;
-            const QString shift = shifts.at(demoIndex % shifts.size());
-            ++stat.shiftBoards[shift];
+        if (!row.shift.isEmpty()) {
+            ++stat.shiftBoards[row.shift];
             if (row.particleCount > 0 && row.clearedCount >= row.particleCount) {
-                ++stat.shiftCompleted[shift];
+                ++stat.shiftCompleted[row.shift];
             }
         }
         if (row.processStartAt.isValid() && row.processEndAt.isValid()) {
@@ -950,7 +961,7 @@ void ReportPage::updateHeightChart(const QList<InspectionRecordRow> &rows)
     // 非演示模式不展示高度分片，按「≤ 1 mm 占 100%」显示完整圆环。
     if (!m_demoModeActive) {
         m_heightPie->setPlaceholder(true);
-        m_heightCaption->setText(QStringLiteral("演示模式下显示"));
+        m_heightCaption->setText(QStringLiteral("还没有每个粒子的高度，暂不按颗粒统计"));
         m_lastHeightBuckets.clear();
         return;
     }
@@ -976,8 +987,8 @@ void ReportPage::updateHeightChart(const QList<InspectionRecordRow> &rows)
     }
     m_heightPie->setValues({int(values[0]), int(values[1]), int(values[2]), int(values[3])});
     m_heightCaption->setText(measured > 0
-                                 ? QStringLiteral("%1 条有高度记录 · 任务级最大高度").arg(measured)
-                                 : QStringLiteral("暂无高度数据 · 待后端补齐明细接口"));
+                                 ? QStringLiteral("%1 条 · 按任务最大高度，不是每个粒子").arg(measured)
+                                 : QStringLiteral("暂无高度数据 · 还没有每个粒子的高度"));
     m_lastHeightBuckets = {int(values[0]), int(values[1]), int(values[2]), int(values[3])};
 }
 
@@ -1086,9 +1097,12 @@ void ReportPage::renderDailyPage()
         }
     }
     if (m_tableCaption) {
+        const QString realCaption = shifts.isEmpty()
+                                        ? QStringLiteral("还没有配置班次。合计来自检测记录")
+                                        : QStringLiteral("格式：检测 / 修磨。未填班次的记录只计入合计");
         m_tableCaption->setText(m_demoDataActive
                                     ? QStringLiteral("格式：检测 / 修磨 · 演示班次数据仅供界面预览")
-                                    : QStringLiteral("班次数据待后端 · 合计来自现有检测记录"));
+                                    : realCaption);
     }
     if (m_dailyPageLabel) {
         m_dailyPageLabel->setText(QStringLiteral("共 %1 条 · 每页 %2 条")
@@ -1105,7 +1119,85 @@ void ReportPage::renderDailyPage()
 
 void ReportPage::exportExcel()
 {
-    emit logRequested(QStringLiteral("WARN"), QStringLiteral("导出 Excel 需要 QXlsx 库，尚未接入。"));
+    if (m_lastRows.isEmpty() && m_lastKpis.isEmpty()) {
+        reload();
+    }
+    const QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString defaultName = QStringLiteral("修磨报表_%1.xlsx")
+                                    .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmm")));
+    const QString path = QFileDialog::getSaveFileName(this,
+                                                      QStringLiteral("导出 Excel"),
+                                                      QDir(defaultDir).filePath(defaultName),
+                                                      QStringLiteral("Excel (*.xlsx)"));
+    if (path.isEmpty()) {
+        return;
+    }
+
+    QXlsx::Document xlsx;
+    xlsx.renameSheet(QStringLiteral("Sheet1"), QStringLiteral("每日汇总"));
+    const QStringList shifts = shiftNames();
+    xlsx.write(1, 1, QStringLiteral("日期"));
+    int column = 2;
+    for (const QString &name : shifts) {
+        xlsx.write(1, column, name);
+        ++column;
+    }
+    xlsx.write(1, column, QStringLiteral("检测合计"));
+    xlsx.write(1, column + 1, QStringLiteral("修磨合计"));
+    int excelRow = 2;
+    for (const DailyRow &entry : m_dailyRows) {
+        xlsx.write(excelRow, 1, entry.date.toString(QStringLiteral("yyyy-MM-dd")));
+        column = 2;
+        for (const QString &name : shifts) {
+            const int boards = entry.stat.shiftBoards.value(name, 0);
+            const int completed = entry.stat.shiftCompleted.value(name, 0);
+            xlsx.write(excelRow,
+                       column,
+                       boards <= 0 ? QStringLiteral("--")
+                                   : QStringLiteral("%1 / %2").arg(boards).arg(completed));
+            ++column;
+        }
+        xlsx.write(excelRow, column, entry.stat.boards);
+        xlsx.write(excelRow, column + 1, entry.stat.boardsCompleted);
+        ++excelRow;
+    }
+
+    xlsx.addSheet(QStringLiteral("检测记录"));
+    xlsx.selectSheet(QStringLiteral("检测记录"));
+    const QStringList recordHeaders{QStringLiteral("时间"),
+                                    QStringLiteral("班次"),
+                                    QStringLiteral("板号"),
+                                    QStringLiteral("粒子数"),
+                                    QStringLiteral("已清除"),
+                                    QStringLiteral("最大高度 mm"),
+                                    QStringLiteral("配方")};
+    for (int i = 0; i < recordHeaders.size(); ++i) {
+        xlsx.write(1, i + 1, recordHeaders.at(i));
+    }
+    excelRow = 2;
+    for (const InspectionRecordRow &row : m_lastRows) {
+        QDateTime created = row.createdAt;
+        if (created.timeSpec() == Qt::UTC) {
+            created = created.toLocalTime();
+        }
+        xlsx.write(excelRow, 1, created.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
+        xlsx.write(excelRow, 2, row.shift.isEmpty() ? QStringLiteral("未设置") : row.shift);
+        xlsx.write(excelRow, 3, row.plateNo.isEmpty() ? QStringLiteral("未编号") : row.plateNo);
+        xlsx.write(excelRow, 4, row.particleCount);
+        xlsx.write(excelRow, 5, row.clearedCount);
+        xlsx.write(excelRow, 6, row.maxParticleHeight);
+        xlsx.write(excelRow, 7, row.recipeName);
+        ++excelRow;
+    }
+
+    if (!xlsx.saveAs(path)) {
+        emit logRequested(QStringLiteral("ERROR"), QStringLiteral("导出 Excel 失败：%1").arg(path));
+        return;
+    }
+    emit logRequested(QStringLiteral("INFO"),
+                      QStringLiteral("报表已导出：%1%2")
+                          .arg(QDir::toNativeSeparators(path),
+                               m_demoDataActive ? QStringLiteral("（含演示数据，仅供界面预览）") : QString()));
 }
 
 void ReportPage::exportPdf()
@@ -1173,7 +1265,7 @@ void ReportPage::exportPdf()
         html += QStringLiteral("<tr><td>%1</td><td>%2</td></tr>")
                     .arg(heightLabels.at(i), QString::number(count));
     }
-    html += QStringLiteral("</table><p style='color:#666;'>该分布按任务级最大高度汇总；单颗粒明细分布待后端接口补齐。</p>");
+    html += QStringLiteral("</table><p style='color:#666;'>按每条任务的最大粒子高度汇总。每个粒子各自的高度还没有入库，所以这不是单颗粒高度占比。</p>");
 
     QTextDocument document;
     document.setDefaultFont(QFont(QStringLiteral("Microsoft YaHei"), 10));

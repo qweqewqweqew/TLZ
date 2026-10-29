@@ -9,11 +9,14 @@
 #include <QVector>
 #include <QtGui/qwindowdefs.h>
 
+class ElaComboBox;
 class ElaPushButton;
 class HeightMap3DFrame;
 class HikLiveView;
 class ImageViewFrame;
 class QLabel;
+class QLineEdit;
+class QShowEvent;
 class QStackedWidget;
 class QToolButton;
 
@@ -49,8 +52,11 @@ public:
     void setAlgorithmImagePath(const QString &path);
     void clearAlgorithmImage();
 
-    // 卡头「板号」与页脚任务摘要
+    // 卡头板号、当前班次与页脚任务摘要。板号为空时输入框显示「未编号」。
     void setTaskId(quint64 taskId);
+    void setPlateNumber(const QString &plateNo);
+    QString plateNumber() const;
+    void reloadShifts();
     void setProgressSummary(int completedPath, int pathTotal, float progressPercent);
     void clearTask();
 
@@ -62,6 +68,11 @@ signals:
     void livePreviewExpandRequested();
     // 2D 图上单击路径线：0-based。
     void millingPathClicked(int pathIndex);
+    // 用户离开板号输入框。空字符串表示未编号。
+    void plateNumberEdited(const QString &plateNo);
+
+protected:
+    void showEvent(QShowEvent *event) override;
 
 private:
     enum class ViewMode { View2D, LiveVideo, AlgorithmImage, PointCloud3D };
@@ -80,7 +91,8 @@ private:
     ElaPushButton *m_liveViewButton{nullptr};
     ElaPushButton *m_algorithmImageButton{nullptr};
     ElaPushButton *m_pointCloudButton{nullptr};
-    QLabel *m_boardLabel{nullptr};
+    QLineEdit *m_plateEdit{nullptr};
+    ElaComboBox *m_shiftCombo{nullptr};
 
     QImage m_rangeImage;      // Range，Mono16 → Grayscale8（拉伸后）
     QImage m_intensityImage;  // Intensity，Mono8

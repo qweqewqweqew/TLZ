@@ -1,5 +1,6 @@
 #include "data/InspectionRepository.h"
 
+#include "app/ShiftConfig.h"
 #include "data/Database.h"
 
 #include <QSqlDatabase>
@@ -138,21 +139,71 @@ bool execSql(QSqlDatabase &db, const QString &sql, QString *errorMessage)
     return true;
 }
 
-QString buildRecentSql(const InspectionQuery &q, bool &hasRecipe, bool &hasFrom, bool &hasTo)
+void fillRecord(const QSqlQuery &query, InspectionRecordRow &row)
+{
+    row.id = query.value(QStringLiteral("Id")).toInt();
+    row.backendTaskId = static_cast<quint64>(query.value(QStringLiteral("BackendTaskId")).toLongLong());
+    row.recipeName = query.value(QStringLiteral("RecipeName")).toString();
+    row.processStartAt = query.value(QStringLiteral("ProcessStartAt")).toDateTime();
+    row.processEndAt = query.value(QStringLiteral("ProcessEndAt")).toDateTime();
+    row.inspectStartAt = query.value(QStringLiteral("InspectStartAt")).toDateTime();
+    row.inspectEndAt = query.value(QStringLiteral("InspectEndAt")).toDateTime();
+    row.particleCount = query.value(QStringLiteral("ParticleCount")).toInt();
+    row.clearedCount = query.value(QStringLiteral("ClearedCount")).toInt();
+    row.maxParticleHeight = query.value(QStringLiteral("MaxParticleHeight")).toDouble();
+    row.overviewImagePath = query.value(QStringLiteral("OverviewImagePath")).toString();
+    row.remark = query.value(QStringLiteral("Remark")).toString();
+    row.plateNo = query.value(QStringLiteral("PlateNo")).toString();
+    row.shift = query.value(QStringLiteral("Shift")).toString();
+    row.createdAt = query.value(QStringLiteral("CreatedAt")).toDateTime();
+}
+
+QString normalizePlateNo(const QString &plateNo)
+{
+    QString normalized;
+    normalized.reserve(plateNo.size());
+    for (const QChar ch : plateNo) {
+        const bool digit = ch.isDigit();
+        const bool letter = (ch >= QLatin1Char('A') && ch <= QLatin1Char('Z'))
+                            || (ch >= QLatin1Char('a') && ch <= QLatin1Char('z'));
+        if (digit || letter) {
+            normalized.append(ch);
+        }
+        if (normalized.size() >= 32) {
+            break;
+        }
+    }
+    return normalized;
+}
+
+QString buildRecentSql(const InspectionQuery &q,
+                       bool &hasRecipe,
+                       bool &hasFrom,
+                       bool &hasTo,
+                       bool &hasPlate,
+                       bool &hasShift)
 {
     QString sql =
         "SELECT Id, BackendTaskId, RecipeName, ProcessStartAt, ProcessEndAt, "
         "       InspectStartAt, InspectEndAt, ParticleCount, ClearedCount, "
-        "       MaxParticleHeight, OverviewImagePath, Remark, CreatedAt "
+        "       MaxParticleHeight, OverviewImagePath, Remark, PlateNo, Shift, CreatedAt "
         "FROM InspectionRecord ";
 
     QStringList clauses;
     hasRecipe = !q.recipe.isEmpty();
+    hasPlate = !q.plate.isEmpty();
+    hasShift = !q.shift.isEmpty();
     hasFrom = q.createdFrom.isValid();
     hasTo = q.createdTo.isValid();
 
     if (hasRecipe) {
         clauses << "RecipeName = ?";
+    }
+    if (hasPlate) {
+        clauses << "PlateNo = ? COLLATE NOCASE";
+    }
+    if (hasShift) {
+        clauses << "Shift = ?";
     }
     if (hasFrom) {
         clauses << "CreatedAt >= ?";
@@ -196,12 +247,20 @@ QList<InspectionRecordRow> InspectionRepository::loadFiltered(const InspectionQu
     bool hasRecipe = false;
     bool hasFrom = false;
     bool hasTo = false;
-    const QString sql = buildRecentSql(q, hasRecipe, hasFrom, hasTo);
+    bool hasPlate = false;
+    bool hasShift = false;
+    const QString sql = buildRecentSql(q, hasRecipe, hasFrom, hasTo, hasPlate, hasShift);
 
     QSqlQuery query(db);
     query.prepare(sql);
     if (hasRecipe) {
         query.addBindValue(q.recipe);
+    }
+    if (hasPlate) {
+        query.addBindValue(q.plate);
+    }
+    if (hasShift) {
+        query.addBindValue(q.shift);
     }
     if (hasFrom) {
         query.addBindValue(q.createdFrom);
@@ -219,19 +278,7 @@ QList<InspectionRecordRow> InspectionRepository::loadFiltered(const InspectionQu
 
     while (query.next()) {
         InspectionRecordRow row;
-        row.id = query.value("Id").toInt();
-        row.backendTaskId = static_cast<quint64>(query.value("BackendTaskId").toLongLong());
-        row.recipeName = query.value("RecipeName").toString();
-        row.processStartAt = query.value("ProcessStartAt").toDateTime();
-        row.processEndAt = query.value("ProcessEndAt").toDateTime();
-        row.inspectStartAt = query.value("InspectStartAt").toDateTime();
-        row.inspectEndAt = query.value("InspectEndAt").toDateTime();
-        row.particleCount = query.value("ParticleCount").toInt();
-        row.clearedCount = query.value("ClearedCount").toInt();
-        row.maxParticleHeight = query.value("MaxParticleHeight").toDouble();
-        row.overviewImagePath = query.value("OverviewImagePath").toString();
-        row.remark = query.value("Remark").toString();
-        row.createdAt = query.value("CreatedAt").toDateTime();
+        fillRecord(query, row);
         rows.append(row);
     }
     return rows;
@@ -281,7 +328,7 @@ InspectionDetail InspectionRepository::loadDetail(int inspectionRecordId,
         QSqlQuery q(db);
         q.prepare("SELECT Id, BackendTaskId, RecipeName, ProcessStartAt, ProcessEndAt, "
                   "       InspectStartAt, InspectEndAt, ParticleCount, ClearedCount, "
-                  "       MaxParticleHeight, OverviewImagePath, Remark, CreatedAt "
+                  "       MaxParticleHeight, OverviewImagePath, Remark, PlateNo, Shift, CreatedAt "
                   "FROM InspectionRecord WHERE Id = ?");
         q.addBindValue(inspectionRecordId);
         if (!q.exec()) {
@@ -293,20 +340,7 @@ InspectionDetail InspectionRepository::loadDetail(int inspectionRecordId,
             reportError(errorMessage, QStringLiteral("找不到该检测记录"));
             return detail;
         }
-        auto &row = detail.head;
-        row.id = q.value("Id").toInt();
-        row.backendTaskId = static_cast<quint64>(q.value("BackendTaskId").toLongLong());
-        row.recipeName = q.value("RecipeName").toString();
-        row.processStartAt = q.value("ProcessStartAt").toDateTime();
-        row.processEndAt = q.value("ProcessEndAt").toDateTime();
-        row.inspectStartAt = q.value("InspectStartAt").toDateTime();
-        row.inspectEndAt = q.value("InspectEndAt").toDateTime();
-        row.particleCount = q.value("ParticleCount").toInt();
-        row.clearedCount = q.value("ClearedCount").toInt();
-        row.maxParticleHeight = q.value("MaxParticleHeight").toDouble();
-        row.overviewImagePath = q.value("OverviewImagePath").toString();
-        row.remark = q.value("Remark").toString();
-        row.createdAt = q.value("CreatedAt").toDateTime();
+        fillRecord(q, detail.head);
     }
 
     {
@@ -492,6 +526,24 @@ bool InspectionRepository::ensureSchema(QString *errorMessage)
         }
     }
 
+    if (!columnExists(db, QStringLiteral("InspectionRecord"), QStringLiteral("PlateNo"))) {
+        if (!execSql(db,
+                     QStringLiteral(
+                         "ALTER TABLE InspectionRecord ADD COLUMN PlateNo TEXT NOT NULL DEFAULT ''"),
+                     errorMessage)) {
+            return false;
+        }
+    }
+
+    if (!columnExists(db, QStringLiteral("InspectionRecord"), QStringLiteral("Shift"))) {
+        if (!execSql(db,
+                     QStringLiteral(
+                         "ALTER TABLE InspectionRecord ADD COLUMN Shift TEXT NOT NULL DEFAULT ''"),
+                     errorMessage)) {
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -534,9 +586,10 @@ int InspectionRepository::ensureRecordForTask(quint64 backendTaskId,
     {
         QSqlQuery q(db);
         q.prepare("INSERT INTO InspectionRecord "
-                  "(BackendTaskId, RecipeName, CreatedAt, UpdatedAt) "
-                  "VALUES (?, '', datetime('now'), datetime('now'))");
+                  "(BackendTaskId, RecipeName, Shift, CreatedAt, UpdatedAt) "
+                  "VALUES (?, '', ?, datetime('now'), datetime('now'))");
         q.addBindValue(taskVar);
+        q.addBindValue(ShiftConfig::current());
         if (q.exec()) {
             const QVariant id = q.lastInsertId();
             if (id.isValid()) {
@@ -554,6 +607,90 @@ int InspectionRepository::ensureRecordForTask(quint64 backendTaskId,
                     QStringLiteral("创建检测任务记录失败: %1").arg(takeError(q)));
         return 0;
     }
+}
+
+QString InspectionRepository::plateNoForTask(quint64 backendTaskId, QString *errorMessage)
+{
+    if (backendTaskId == 0) {
+        return QString();
+    }
+
+    QSqlDatabase db = Database::instance().handle();
+    if (!db.isOpen()) {
+        reportError(errorMessage, QStringLiteral("数据库未连接"));
+        return QString();
+    }
+    if (!ensureSchema(errorMessage)) {
+        return QString();
+    }
+
+    QVariant taskVar;
+    if (!toSqlBigIntVariant(backendTaskId, QStringLiteral("task_id"), &taskVar, errorMessage)) {
+        return QString();
+    }
+
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("SELECT PlateNo FROM InspectionRecord WHERE BackendTaskId = ?"));
+    q.addBindValue(taskVar);
+    if (!q.exec()) {
+        reportError(errorMessage, QStringLiteral("查询板号失败: %1").arg(takeError(q)));
+        return QString();
+    }
+    if (!q.next()) {
+        return QString();
+    }
+    return q.value(QStringLiteral("PlateNo")).toString();
+}
+
+bool InspectionRepository::setPlateNoForTask(quint64 backendTaskId,
+                                             const QString &plateNo,
+                                             QString *errorMessage)
+{
+    const int recordId = ensureRecordForTask(backendTaskId, errorMessage);
+    if (recordId <= 0) {
+        return false;
+    }
+
+    QSqlDatabase db = Database::instance().handle();
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "UPDATE InspectionRecord SET PlateNo = ?, UpdatedAt = datetime('now') WHERE Id = ?"));
+    q.addBindValue(normalizePlateNo(plateNo));
+    q.addBindValue(recordId);
+    if (!q.exec()) {
+        reportError(errorMessage, QStringLiteral("保存板号失败: %1").arg(takeError(q)));
+        return false;
+    }
+    return true;
+}
+
+bool InspectionRepository::renameShift(const QString &from, const QString &to, QString *errorMessage)
+{
+    const QString oldName = from.trimmed();
+    const QString newName = to.trimmed();
+    if (oldName.isEmpty() || newName.isEmpty() || oldName == newName) {
+        return true;
+    }
+
+    QSqlDatabase db = Database::instance().handle();
+    if (!db.isOpen()) {
+        reportError(errorMessage, QStringLiteral("数据库未连接"));
+        return false;
+    }
+    if (!ensureSchema(errorMessage)) {
+        return false;
+    }
+
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "UPDATE InspectionRecord SET Shift = ?, UpdatedAt = datetime('now') WHERE Shift = ?"));
+    q.addBindValue(newName);
+    q.addBindValue(oldName);
+    if (!q.exec()) {
+        reportError(errorMessage, QStringLiteral("更新历史班次失败: %1").arg(takeError(q)));
+        return false;
+    }
+    return true;
 }
 
 bool InspectionRepository::saveFrameForTask(quint64 backendTaskId,

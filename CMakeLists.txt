@@ -293,12 +293,18 @@ add_executable(MzTLZ
     resources.qrc
 )
 
+set(QT_VERSION_MAJOR 5)
+set(QXLSX_HEADERPATH "${CMAKE_CURRENT_SOURCE_DIR}/third_party/QXlsx/header")
+set(QXLSX_SOURCEPATH "${CMAKE_CURRENT_SOURCE_DIR}/third_party/QXlsx/source")
+add_subdirectory(third_party/QXlsx)
+
 target_link_libraries(MzTLZ
     PRIVATE
         Qt5::Core
         Qt5::Widgets
         Qt5::PrintSupport
         Qt5::Sql
+        QXlsx
         ElaWidgetTools
         ${OpenCV_LIBS}
         ${rclcpp_LIBRARIES}

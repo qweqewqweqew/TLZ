@@ -1,9 +1,11 @@
 #include "ui/panels/ImageDisplayPanel.h"
 
+#include "ElaComboBox.h"
 #include "ElaPushButton.h"
 #include "camera/HikLiveView.h"
 #include "vision/HeightMap3DFrame.h"
 #include "vision/ImageViewFrame.h"
+#include "app/ShiftConfig.h"
 #include "app/Theme.h"
 #include "app/UiHelpers.h"
 
@@ -15,6 +17,11 @@
 #include <QImageReader>
 #include <QLabel>
 #include <QLayout>
+#include <QLineEdit>
+#include <QRegularExpression>
+#include <QRegularExpressionValidator>
+#include <QShowEvent>
+#include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QStackedWidget>
 #include <QToolButton>
@@ -46,16 +53,38 @@ QLabel *legendItem(const QString &text, const QString &color, QWidget *parent)
 ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
     : QFrame(parent)
 {
-    // ---- 卡头右侧：板号 + 图例 ----
+    // ---- 卡头右侧：班次 + 板号 + 图例 ----
     auto *header = new QWidget(this);
     auto *headerLayout = new QHBoxLayout(header);
     headerLayout->setContentsMargins(0, 0, 0, 0);
-    headerLayout->setSpacing(14);
-    m_boardLabel = new QLabel(header);
-    m_boardLabel->setStyleSheet(QStringLiteral("color:%1;font-size:13px;background:%2;border:1px solid %3;"
-                                               "border-radius:4px;padding:2px 10px;")
-                                    .arg(Theme::kTextSecondary, Theme::kControlBg, Theme::kBorder));
-    headerLayout->addWidget(m_boardLabel);
+    headerLayout->setSpacing(8);
+
+    auto *shiftLabel = new QLabel(QStringLiteral("班次"), header);
+    shiftLabel->setStyleSheet(QStringLiteral("color:%1;font-size:12px;background:transparent;border:none;")
+                                   .arg(Theme::kTextSecondary));
+    m_shiftCombo = new ElaComboBox(header);
+    m_shiftCombo->setFixedSize(108, 28);
+    m_shiftCombo->setToolTip(QStringLiteral("当前班次。名单在「设置 → 账号管理 → 设置班次」里维护，这里只选择。"));
+    headerLayout->addWidget(shiftLabel);
+    headerLayout->addWidget(m_shiftCombo);
+
+    auto *plateLabel = new QLabel(QStringLiteral("板号"), header);
+    plateLabel->setStyleSheet(shiftLabel->styleSheet());
+    m_plateEdit = new QLineEdit(header);
+    m_plateEdit->setPlaceholderText(QStringLiteral("未编号"));
+    m_plateEdit->setMaxLength(32);
+    m_plateEdit->setFixedSize(128, 28);
+    m_plateEdit->setValidator(new QRegularExpressionValidator(
+        QRegularExpression(QStringLiteral("[A-Za-z0-9]*")), m_plateEdit));
+    m_plateEdit->setToolTip(QStringLiteral("选填。只允许字母和数字；留空显示未编号，不会提醒填写。"));
+    m_plateEdit->setStyleSheet(QStringLiteral(
+                                    "QLineEdit { color:%1; font-size:13px; background:%2; border:1px solid %3;"
+                                    " border-radius:4px; padding:2px 8px; }"
+                                    "QLineEdit:focus { border:1px solid %4; }")
+                                    .arg(Theme::kTextSecondary, Theme::kControlBg, Theme::kBorder, Theme::kAccent));
+    headerLayout->addWidget(plateLabel);
+    headerLayout->addWidget(m_plateEdit);
+    headerLayout->addSpacing(6);
     headerLayout->addWidget(legendItem(QStringLiteral("切削路径"), kCutColor, header));
     headerLayout->addWidget(legendItem(QStringLiteral("空移"), kMoveColor, header));
 
@@ -84,6 +113,18 @@ ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
         toolbarLayout->addWidget(button);
     }
     m_view2dButton->setChecked(true);
+
+    connect(m_plateEdit, &QLineEdit::editingFinished, this, [this]() {
+        emit plateNumberEdited(m_plateEdit->text().trimmed());
+    });
+    connect(m_shiftCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
+        const QString selected = index <= 0 ? QString() : m_shiftCombo->itemText(index);
+        if (selected == ShiftConfig::current()) {
+            return;
+        }
+        ShiftConfig::setCurrent(selected);
+    });
+    reloadShifts();
 
     toolbarLayout->addStretch(1);
 
@@ -157,10 +198,12 @@ ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
     applyViewButtonStyles();
     clearTask();
     Theme::watch(this, [this]() {
-        if (m_boardLabel) {
-            m_boardLabel->setStyleSheet(QStringLiteral("color:%1;font-size:13px;background:%2;border:1px solid %3;"
-                                                       "border-radius:4px;padding:2px 10px;")
-                                            .arg(Theme::kTextSecondary, Theme::kControlBg, Theme::kBorder));
+        if (m_plateEdit) {
+            m_plateEdit->setStyleSheet(QStringLiteral(
+                                           "QLineEdit { color:%1; font-size:13px; background:%2; border:1px solid %3;"
+                                           " border-radius:4px; padding:2px 8px; }"
+                                           "QLineEdit:focus { border:1px solid %4; }")
+                                           .arg(Theme::kTextSecondary, Theme::kControlBg, Theme::kBorder, Theme::kAccent));
         }
         const auto paintFrame = [](QFrame *frame, const char *name) {
             if (!frame) {
@@ -280,9 +323,42 @@ void ImageDisplayPanel::clearAlgorithmImage()
 void ImageDisplayPanel::setTaskId(quint64 taskId)
 {
     m_taskId = taskId;
-    m_boardLabel->setText(taskId == 0 ? QStringLiteral("板号：--")
-                                      : QStringLiteral("板号：#%1").arg(taskId));
     refreshPathSummary();
+}
+
+void ImageDisplayPanel::setPlateNumber(const QString &plateNo)
+{
+    if (!m_plateEdit) {
+        return;
+    }
+    const QSignalBlocker blocker(m_plateEdit);
+    m_plateEdit->setText(plateNo);
+}
+
+QString ImageDisplayPanel::plateNumber() const
+{
+    return m_plateEdit ? m_plateEdit->text().trimmed() : QString();
+}
+
+void ImageDisplayPanel::reloadShifts()
+{
+    if (!m_shiftCombo) {
+        return;
+    }
+    const QStringList shiftNames = ShiftConfig::names();
+    const QString selected = ShiftConfig::current();
+    const QSignalBlocker blocker(m_shiftCombo);
+    m_shiftCombo->clear();
+    m_shiftCombo->addItem(QStringLiteral("未设置"));
+    m_shiftCombo->addItems(shiftNames);
+    const int index = selected.isEmpty() ? 0 : m_shiftCombo->findText(selected);
+    m_shiftCombo->setCurrentIndex(index < 0 ? 0 : index);
+}
+
+void ImageDisplayPanel::showEvent(QShowEvent *event)
+{
+    QFrame::showEvent(event);
+    reloadShifts();
 }
 
 void ImageDisplayPanel::setProgressSummary(int completedPath, int pathTotal, float progressPercent)
@@ -295,7 +371,7 @@ void ImageDisplayPanel::setProgressSummary(int completedPath, int pathTotal, flo
 void ImageDisplayPanel::clearTask()
 {
     m_taskId = 0;
-    m_boardLabel->setText(QStringLiteral("板号：--"));
+    setPlateNumber(QString());
     refreshPathSummary();
 }
 
