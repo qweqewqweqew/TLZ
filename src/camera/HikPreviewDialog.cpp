@@ -21,7 +21,6 @@ HikPreviewDialog::HikPreviewDialog(QWidget *parent)
     layout->setContentsMargins(10, 10, 10, 10);
     layout->setSpacing(0);
     m_liveView = new HikLiveView(this);
-    m_liveView->setExpandButtonVisible(false);
     layout->addWidget(m_liveView, 1);
 }
 

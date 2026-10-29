@@ -4,6 +4,8 @@
 #include "ui/settings/SettingsSubPage.h"
 
 #include "camera/HikCameraConfig.h"
+#include "camera/HikCameraParameters.h"
+#include "bridge/SickCameraParametersVM.h"
 
 #include <QDateTime>
 #include <QString>
@@ -11,21 +13,23 @@
 class ElaPushButton;
 class QButtonGroup;
 class QCheckBox;
+class QComboBox;
 class QDialog;
+class QDoubleSpinBox;
 class QFrame;
 class QLabel;
 class QLineEdit;
-class QListWidget;
 class QProgressBar;
 class QPushButton;
 class QSpinBox;
+class QSlider;
 class QStackedWidget;
 class QTableWidget;
 class QWidget;
 
 // 「设备与通信」设置页。
-// 顶部核心服务状态条 + 左窄右宽主从面板
-// （左侧设备节点列表，右侧海康相机配置 + 数据存储策略）。
+// 顶部核心服务状态条 + 左窄右宽主从面板。
+// 左侧四个节点分别切换相机、通信、PLC 与存储页面。
 // 配色跟随 Theme，切换深色/浅色时重刷。
 class NodeCommSettingsPage : public SettingsSubPage
 {
@@ -49,6 +53,11 @@ public slots:
     void setCameraNodeStatus(bool connected, const QString &detail);
     void setCameraTopicDiagnostics(bool bridgeRunning, int publisherCount);
     void setHikCameraStatus(bool connected, const QString &detail);
+    void setHikCameraParameters(const HikCameraParameters &parameters);
+    void setSickCameraParameters(const SickCameraParametersVM &parameters);
+    void setSickCameraParameterResult(bool success,
+                                      const QString &message,
+                                      const SickCameraParametersVM &parameters);
     void setPlcDeviceStatus(const QString &status, const QString &detail = QString());
     void refreshNodeReadiness();
 
@@ -57,6 +66,9 @@ signals:
     void stopNodesRequested();
     void hikCameraConnectRequested();
     void hikCameraDisconnectRequested();
+    void hikCameraRefreshParametersRequested();
+    void hikCameraParametersUpdateRequested(const HikCameraParameters &parameters);
+    void sickCameraParametersUpdateRequested(const SickCameraParametersVM &parameters);
 
 protected:
     void reloadFromSource() override;
@@ -67,6 +79,9 @@ private:
     void updateServiceStatusBar();
     void updateNodeList();
     void updateCameraNodeDiagnostics();
+    void updateHikParameterStates();
+    void updateSickParameterStates();
+    void updateSickScanLength();
     void refreshDiskUsage();
     void refreshHikCameraInfo();
 
@@ -75,27 +90,54 @@ private:
     QPushButton *m_startAllButton{nullptr};
     QPushButton *m_redetectButton{nullptr};
 
-    // 左侧节点列表
-    QListWidget *m_nodeList{nullptr};
+    // 左侧节点状态
     QLabel *m_cameraNodeBadge{nullptr};
     QLabel *m_topicNodeBadge{nullptr};
     QLabel *m_plcBadge{nullptr};
-    QLabel *m_cncBadge{nullptr};
     QLabel *m_storageBadge{nullptr};
 
     // 右侧相机配置
     QFrame *m_cameraCard{nullptr};
     QLineEdit *m_cameraIp{nullptr};
-    QLineEdit *m_cameraTopic{nullptr};
-    QButtonGroup *m_triggerModeGroup{nullptr};
-    QPushButton *m_softTriggerButton{nullptr};
-    QPushButton *m_hardTriggerButton{nullptr};
     QSpinBox *m_timeoutSpin{nullptr};
     QCheckBox *m_autoReconnect{nullptr};
     QPushButton *m_cameraTestButton{nullptr};
     QPushButton *m_cameraPingButton{nullptr};
     QPushButton *m_cameraApplyButton{nullptr};
     QLabel *m_cameraStateHint{nullptr};
+    QLabel *m_hikHeaderStatus{nullptr};
+    QPushButton *m_hikRefreshButton{nullptr};
+    QWidget *m_hikStreamType{nullptr};
+    QWidget *m_hikFrameRate{nullptr};
+    QSlider *m_hikBrightnessSlider{nullptr};
+    QSlider *m_hikContrastSlider{nullptr};
+    QSlider *m_hikExposureSlider{nullptr};
+    QSpinBox *m_hikBrightness{nullptr};
+    QSpinBox *m_hikContrast{nullptr};
+    QWidget *m_hikExposureMode{nullptr};
+    QSpinBox *m_hikExposureTime{nullptr};
+    QCheckBox *m_hikHighlightEnabled{nullptr};
+    QWidget *m_hikHighlightLevel{nullptr};
+    QLabel *m_hikHighlightStateLabel{nullptr};
+    QLabel *m_hikParameterHint{nullptr};
+
+    // SICK 3D 相机：节点状态与真实采集参数。
+    QFrame *m_sickCard{nullptr};
+    QLabel *m_sickHeaderStatus{nullptr};
+    QLabel *m_sickNodeDetail{nullptr};
+    QLabel *m_sickPublisherValue{nullptr};
+    QLabel *m_sickLastMessageValue{nullptr};
+    QSpinBox *m_sickScanLines{nullptr};
+    QDoubleSpinBox *m_sickExposureTime{nullptr};
+    QDoubleSpinBox *m_sickYResolution{nullptr};
+    QWidget *m_sickHdrMode{nullptr};
+    QLabel *m_sickScanLength{nullptr};
+    QLabel *m_sickParameterHint{nullptr};
+    QPushButton *m_sickApplyButton{nullptr};
+    SickCameraParametersVM m_sickParameters;
+    bool m_sickParametersReceived{false};
+    bool m_sickWritePending{false};
+    bool m_updatingSickParameters{false};
 
     // 右侧数据存储
     QFrame *m_storageCard{nullptr};
@@ -120,6 +162,9 @@ private:
     bool m_cameraNodeConnected{false};
     bool m_rosBridgeRunning{false};
     bool m_hikConnected{false};
+    bool m_hikParametersReceived{false};
+    bool m_updatingHikParameters{false};
+    HikCameraParameters m_hikParameters;
     bool m_dirty{false};
     bool m_loading{false};
     QDateTime m_cameraLastMessageAt;

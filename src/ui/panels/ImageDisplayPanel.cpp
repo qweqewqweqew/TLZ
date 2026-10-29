@@ -14,6 +14,7 @@
 #include <QIcon>
 #include <QImageReader>
 #include <QLabel>
+#include <QLayout>
 #include <QSizePolicy>
 #include <QStackedWidget>
 #include <QToolButton>
@@ -29,7 +30,7 @@ constexpr const char *kMoveColor = "#27AE60";
 
 const char *distributionCanvas()
 {
-    return Theme::current() == Theme::Id::Light ? "#F8FAFC" : Theme::kCanvasBg;
+    return Theme::kCanvasBg;
 }
 
 QLabel *legendItem(const QString &text, const QString &color, QWidget *parent)
@@ -77,7 +78,7 @@ ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
     auto *viewModeGroup = new QButtonGroup(this);
     viewModeGroup->setExclusive(true);
     for (ElaPushButton *button : {m_view2dButton, m_liveViewButton, m_algorithmImageButton, m_pointCloudButton}) {
-        button->setFixedSize(84, 28);
+        button->setFixedSize(84, 32);
         button->setCheckable(true);
         viewModeGroup->addButton(button);
         toolbarLayout->addWidget(button);
@@ -97,7 +98,7 @@ ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
     // ---- 视图区 ----
     m_viewStack = new QStackedWidget(panel);
     m_viewStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    m_viewStack->setMinimumSize(480, 320);
+    m_viewStack->setMinimumSize(0, 0);
 
     m_imageArea = new ImageViewFrame(m_viewStack);
     m_imageArea->setObjectName("imageArea");
@@ -131,22 +132,6 @@ ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
     m_pointCloudArea->setProperty("mztlzNoFade", true);
     m_viewStack->addWidget(m_pointCloudArea);
     panelLayout->addWidget(m_viewStack, 1);
-
-    // ---- 页脚：任务摘要 ----
-    auto *footer = new QWidget(panel);
-    auto *footerLayout = new QHBoxLayout(footer);
-    footerLayout->setContentsMargins(2, 0, 2, 0);
-    footerLayout->setSpacing(8);
-    m_footerLeft = new QLabel(footer);
-    m_footerRight = new QLabel(footer);
-    for (QLabel *label : {m_footerLeft, m_footerRight}) {
-        label->setStyleSheet(QStringLiteral("color:%1;font-size:12px;background:transparent;border:none;")
-                                 .arg(Theme::kTextSecondary));
-    }
-    footerLayout->addWidget(m_footerLeft);
-    footerLayout->addStretch(1);
-    footerLayout->addWidget(m_footerRight);
-    panelLayout->addWidget(footer);
 
     connect(m_view2dButton, &ElaPushButton::clicked, this, [this]() { setViewMode(ViewMode::View2D); });
     connect(m_liveViewButton, &ElaPushButton::clicked, this, [this]() { setViewMode(ViewMode::LiveVideo); });
@@ -186,12 +171,6 @@ ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
         };
         paintFrame(m_imageArea, "imageArea");
         paintFrame(m_algorithmImageArea, "algorithmImageArea");
-        for (QLabel *label : {m_footerLeft, m_footerRight}) {
-            if (label) {
-                label->setStyleSheet(QStringLiteral("color:%1;font-size:12px;background:transparent;border:none;")
-                                         .arg(Theme::kTextSecondary));
-            }
-        }
         for (QToolButton *button : findChildren<QToolButton *>()) {
             const QString resource = button->property("iconResource").toString();
             if (!resource.isEmpty()) {
@@ -210,7 +189,7 @@ ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
 QToolButton *ImageDisplayPanel::makeToolButton(const QString &iconResource, const QString &tooltip, QWidget *parent)
 {
     auto *button = new QToolButton(parent);
-    button->setFixedSize(28, 28);
+    button->setFixedSize(32, 32);
     button->setCursor(Qt::PointingHandCursor);
     button->setToolTip(tooltip);
     button->setProperty("iconResource", iconResource);
@@ -308,50 +287,20 @@ void ImageDisplayPanel::setTaskId(quint64 taskId)
 
 void ImageDisplayPanel::setProgressSummary(int completedPath, int pathTotal, float progressPercent)
 {
-    if (pathTotal <= 0 && completedPath <= 0 && progressPercent < 0.0f) {
-        m_footerLeft->setText(QStringLiteral("等待任务"));
-        return;
-    }
-    QString text = m_taskId == 0 ? QStringLiteral("任务") : QStringLiteral("任务 #%1").arg(m_taskId);
-    if (pathTotal > 0) {
-        text += QStringLiteral(" · 已完成 %1/%2 条路径").arg(qBound(0, completedPath, pathTotal)).arg(pathTotal);
-    }
-    if (progressPercent >= 0.0f) {
-        text += QStringLiteral(" · 进度 %1%").arg(int(std::lround(progressPercent)));
-    }
-    m_footerLeft->setText(text);
+    Q_UNUSED(completedPath)
+    Q_UNUSED(pathTotal)
+    Q_UNUSED(progressPercent)
 }
 
 void ImageDisplayPanel::clearTask()
 {
     m_taskId = 0;
     m_boardLabel->setText(QStringLiteral("板号：--"));
-    m_footerLeft->setText(QStringLiteral("等待任务"));
     refreshPathSummary();
 }
 
 void ImageDisplayPanel::refreshPathSummary()
 {
-    if (m_paths.isEmpty()) {
-        m_footerRight->setText(QString());
-        return;
-    }
-    int cut = 0;
-    int rapid = 0;
-    double lengthPx = 0.0;
-    for (const MillingPathVM &path : m_paths) {
-        (path.doCut ? cut : rapid) += 1;
-        lengthPx += std::hypot(double(path.uEnd - path.uStart), double(path.vEnd - path.vStart));
-    }
-    QString text = QStringLiteral("切削 %1 条 · 空移 %2 条").arg(cut).arg(rapid);
-    if (m_pointCloudFrame.hasMetricGeometry) {
-        // 像素步距按 X / Y 比例取均值估算路径长度
-        const double scale = (std::abs(m_pointCloudFrame.xScaleMm) + std::abs(m_pointCloudFrame.yScaleMm)) / 2.0;
-        const double lengthMm = lengthPx * scale;
-        text += lengthMm >= 1000.0 ? QStringLiteral(" · 路径 %1 m").arg(lengthMm / 1000.0, 0, 'f', 2)
-                                   : QStringLiteral(" · 路径 %1 mm").arg(lengthMm, 0, 'f', 0);
-    }
-    m_footerRight->setText(text);
 }
 
 QString ImageDisplayPanel::currentViewModeName() const
@@ -420,6 +369,31 @@ WId ImageDisplayPanel::liveVideoWindowId()
     return m_liveViewArea ? m_liveViewArea->videoWindowId() : WId();
 }
 
+QWidget *ImageDisplayPanel::detachLiveView()
+{
+    if (!m_liveViewArea) {
+        return nullptr;
+    }
+    if (m_viewStack) {
+        m_viewStack->removeWidget(m_liveViewArea);
+    }
+    m_liveViewArea->setParent(nullptr);
+    if (m_liveViewButton) {
+        if (QWidget *toolbar = m_liveViewButton->parentWidget()) {
+            if (QLayout *layout = toolbar->layout()) {
+                layout->removeWidget(m_liveViewButton);
+            }
+        }
+        m_liveViewButton->hide();
+    }
+    if (m_mode == ViewMode::LiveVideo) {
+        m_mode = ViewMode::View2D;
+        applyViewButtonStyles();
+        refreshView();
+    }
+    return m_liveViewArea;
+}
+
 void ImageDisplayPanel::setViewMode(ViewMode mode)
 {
     if (m_mode == mode) {
@@ -449,7 +423,9 @@ void ImageDisplayPanel::applyViewButtonStyles()
         button->update();
     };
     style(m_view2dButton, m_mode == ViewMode::View2D);
-    style(m_liveViewButton, m_mode == ViewMode::LiveVideo);
+    if (m_liveViewButton) {
+        style(m_liveViewButton, m_mode == ViewMode::LiveVideo);
+    }
     style(m_algorithmImageButton, m_mode == ViewMode::AlgorithmImage);
     style(m_pointCloudButton, m_mode == ViewMode::PointCloud3D);
 }

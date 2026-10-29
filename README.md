@@ -12,28 +12,42 @@ build.bat
 
 这将自动：
 - 配置 Visual Studio 2019 环境
-- 使用 CMake 生成构建文件到 `build-local/`
+- 使用 CMake 生成构建文件到 `build/`
 - 编译 Release 版本
-- 部署可执行文件到 `deploy/MzTLZ/`
+- 部署可执行文件及运行依赖到 `deploy/MzTLZ/`
 
 ### 运行程序
 
-**方法1：从部署目录运行（推荐）**
+**方法1：通过运行脚本启动（推荐）**
 ```cmd
-deploy\MzTLZ\MzTLZ.exe
+config\run.bat
 ```
-或双击 `config/run.bat`
+
+脚本会先设置 Qt、OpenCV、ROS2 和本地 `mz_interfaces` 运行环境，再启动 `deploy/MzTLZ/MzTLZ.exe`。直接双击 EXE 可能缺少 ROS2 环境，不作为首选启动方式。
 
 **方法2：从构建目录运行（开发调试）**
 ```cmd
-build-local\Release\MzTLZ.exe
+build\Release\MzTLZ.exe
 ```
 
+此方式同样需要自行准备 Qt、OpenCV、ROS2 和接口 DLL 环境。
+
 ### 注意
-- 编译前请关闭正在运行的 MzTLZ.exe，否则链接器无法覆盖文件
-- 确保已安装 Visual Studio 2019、Qt 5.15.2、OpenCV 和 ROS2 Foxy
+- 编译前请关闭正在运行的 `MzTLZ.exe`，否则链接或部署覆盖可能失败。
+- 确保已安装 Visual Studio 2019、Qt 5.15.2、OpenCV 和 ROS2 Foxy。
+- 主工程使用工作区 `.deps/install` 中的 `mz_interfaces`，部署时复制其中的接口 DLL，避免加载旧接口导致 SICK 消息符号缺失。
+- 仅当 `.deps/src/mz_interfaces` 的消息定义变化或 `.deps/install` 缺失时，先执行 `.deps\build_interfaces.bat`，再执行 `build.bat`；普通 UI 修改不需要重复构建接口。
+- 当前构建和运行脚本包含本机绝对路径（Qt、OpenCV、ROS2 及 `D:\TLZ\MZTLZ`）。迁移工作区或换机时必须同步修改，不能只复制 EXE。
 
 ---
+
+## 数据接入约定（后续修改必须遵守）
+
+1. **真实来源优先**：设备、ROS2、数据库或配置文件没有返回值时，界面保持“未获取／未设置／未采集／未标定”，不得用示例值代替。
+2. **代码默认值不等于现场当前值**：需求或算法代码中的初始值只能标注为“代码默认值”，不得伪装成已回读数据。
+3. **读写边界一致**：只有显示用途的页面必须只读；没有确认写入链路、权限、失败反馈和安全约束前，不开放编辑、保存或下发。
+4. **接入留痕**：每接通一项数据，都要记录字段、单位、来源 topic／文件／表、读写方向、空值策略和负责模块，并同步删除对应待办。
+5. **演示数据隔离**：演示功能只能在明确的调试模式下启用，不得写入生产 SQLite，也不得在正常查询中自动补数据。
 
 ## 数据库：SQLite（非 SQL Server）
 
@@ -44,7 +58,132 @@ build-local\Release\MzTLZ.exe
 - 启动时由 DatabaseBootstrap 创建/迁移表结构，再由 Database 单例打开连接
 - 设置页“数据与存储”只展示 SQLite 数据表名称、表用途和字段定义，不读取或呈现任何业务记录内容；结构表固定高度且不显示滚动条。
 - 图像目录通过 `InspectionRecord.OverviewImagePath` 的实际值定位。当前前端只读取该字段供历史详情显示，没有负责保存生产图像或写入该字段的逻辑；后端需在保存检测总览图时一并写入可访问的绝对路径（或相对于程序目录的路径）。当数据库没有图像路径记录时，设置页会显示“暂无图像记录”并禁用目录按钮，不会自行猜测生产目录；已有记录若指向测试素材目录，也会按记录中的实际路径打开。
-- 设置页“设备状态”显示相机节点、海康相机和 PLC 三项状态，三项均可展开查看详情。相机节点详情展示 `/camera/status`、消息类型、QoS、ROS_DOMAIN_ID、发布者数量、最近状态消息和排查建议；ROS 2 bridge 每秒查询该 topic 的发布者数量。海康相机详情读取 `hik_camera.ini` 中的 IP、端口、用户名和预览参数，可从详情区调用现有 HCNetSDK 预览客户端连接或断开，密码不在界面展示。PLC 状态目前只在收到后端转发的 PLC 反馈时更新，展开内容暂留空并显示“待反馈”。PLC 状态字、故障码和连接判定的正式数据来源与接口由后端补充。
+
+## 设备与通信
+
+- 左侧为海康实时预览相机、SICK 3D 相机节点、PLC 控制系统、数据与图像存储四项。海康仅用于实时查看修磨过程；SICK 为线扫 3D 相机，通过独立相机节点采集数据。
+- 海康页面不显示或修改 Topic、采集触发方式和 3D 点云参数；保存其他设置时保留 SICK 内部 Topic 与触发配置。主／子码流、预览帧率、亮度、对比度、曝光和强光抑制均在连接后通过 HCNetSDK 读取设备真实值，修改立即写入并回读，不经过底部“保存／应用”按钮。帧率使用 `NET_DVR_COMPRESSIONCFG_V30.dwVideoFrameRate` 原始枚举；图像参数使用 `NET_DVR_CAMERAPARAMCFG`。未连接、等待首次回读、读取失败或设备不支持时对应控件禁用，不用占位值代替设备值。
+- SICK 页面已接入节点状态监控与四项真实采集参数：单帧采集行数、曝光时间、HDR 模式、Y 分辨率。状态来自 `camera/status`；参数通过 `sick_camera/parameters` 回读，通过 `sick_camera/set_parameters` 请求修改，并以 `sick_camera/parameter_result` 的结果和回读值为准。未收到回读时显示等待状态并禁用编辑，不使用模拟默认值；扫描采集期间不允许修改参数。
+- PLC 页面因配置内容尚未确认而保持空白。未收到反馈时只显示“待反馈”，不生成模拟状态。
+
+## 检测与标定、修磨工艺（空状态与真实来源待接入清单）
+
+> **无真实来源的数据已经清空，禁止再用示例值伪装成现场有效数据。**
+
+2026-10-28 已执行空状态清理：无来源数值显示“未设置”，无来源模式不默认选中，坐标点对为 0 行，转换矩阵显示“—”，点云显示“未采集”；铜板假示意、一键 `+20 mm`、调试 `±50 mm` 和未确认的安全余量公式均已删除。下面的历史占位值仅用于追溯，不得重新填入界面。
+
+这两页仍未读取或写入 `m_sJggyPara`，未读取相机采集配置、`sListPPtsImage` / `sListPPtsRobot` 或标定结果，也不会写 ini、发 ROS topic 或下发 PLC。保存、取消、恢复默认不对这两页开放。
+
+- “工艺规划”中的数字只是下文列出的代码默认值，不是现场当前值；所有数值框、下拉框和模式按钮均已锁定为只读，不能通过界面修改。刀盘方向进给等界面换算只使用这些初始值，不代表设备实测结果。
+- “标定与点云”只保留点云、坐标点对、转换模式和矩阵的空状态；原先三个无实时来源的算法阈值输入框已移除，算法参数统一放到独立“算法”标签。转换模式名称来自需求，但当前选择未绑定算法枚举，不会保存、重算矩阵或下发。
+
+### 算法只读参数：`program_param.json` 待接入
+
+- “检测与标定”使用独立的“标定与点云 / 算法”标签，“修磨工艺”使用独立的“工艺规划 / 算法”标签。算法页只显示参数中文名称、用途、当前值和单位，不提供编辑、保存或下发功能。
+- **当前尚未提供 `program_param.json` 的实际文件路径，也尚未实现文件读取器。** 两页所有算法值均显示“未获取”，不读取说明文档充当配置，不使用界面副本或模拟默认值。`program_param参数说明.txt` 仅用于核对字段含义和选择适合展示的参数。
+- 待提供实际路径后，使用 `QJsonDocument` 等实现只读加载，并可在文件变化时刷新界面；界面不得写回 JSON。加载失败、字段缺失或文件尚不存在时继续显示“未获取”，不得回退到假数据。
+- 每个值标签的对象名为 `craftReadOnlyValue`，JSON 字段名保存在 `algorithmJsonKey` 属性中，后续读取器据此回填，不另建一套界面参数副本。
+- `region_x1 / region_y1 / region_x2 / region_y2` 应组合为一个 ROI 显示；`robot_wait_x / robot_wait_y / robot_wait_z` 应组合为一个等待坐标显示。布尔值显示“开 / 关”，枚举显示对应中文含义；`stepover <= 0` 的自动步距、`edge_feather_depth_step_mm = 0` 的自动级距等情况必须明确标注“自动”，不能只显示原始数字。
+- `r_speed / x_speed / y_speed / z_speed / no_load_speed` 的单位尚未由说明文档确认，界面只提示“速度单位以算法配置为准”，接入时不得擅自标为 mm/min。
+- `src_save`、`video_save`、`max_output_folders` 属于输出存储策略，按需求不在两个算法页展示。
+- 检测算法映射字段：`target_extraction_method`、`targetsize_height_thresh`、`kmeans_distance`、`bspline_min_particle_area_mm2`、`grinding_strictness_level`、`isolated_mosaic_min_particle_area_mm2`、`isolated_mosaic_neighbor_distance_mm`、`plate_edge_safety_margin_px`、`plate_boundary_exclusion_px`、`enable_plate_lower_edge_line_detection`、`plate_lower_edge_search_px`、`region_x1 / region_y1 / region_x2 / region_y2`、`bspline_control_points_x`、`bspline_control_points_y`、`bspline_smoothing`、`bspline_fit_sample_step`、`bspline_refinement_iterations`、`bspline_outlier_rejection_ratio`、`bspline_baseline_low_quantile`、`bspline_max_particle_width_pixels`、`bspline_max_particle_aspect_ratio`。
+- 修磨算法映射字段：`tool_size`、`tool_center_dead_zone_diameter_mm`、`stepover`、`single_down`、`grinding_pass_strategy`、`r_speed`、`x_speed`、`y_speed`、`z_speed`、`no_load_speed`、`enable_target_mask_scan`、`target_mask_run_merge_gap_mm`、`enableContinuousYTransition`、`enable_edge_feathering`、`edge_feather_width_mm`、`edge_feather_depth_step_mm`、`safetyZ`、`rapid_clearance_margin_mm`、`offset`、`robot_wait_x / robot_wait_y / robot_wait_z`、`enable_min_robot_y_path_filter`、`min_robot_path_y`、`force_nearest_first_region`、`enable_genetic_path_optimization`、`genetic_population_size`、`genetic_generations`。
+
+“安全与权限”已接入 `AccountSettingsPage`，使用真实账户服务显示当前身份、用户列表、角色权限矩阵、会话超时、登录锁定策略和操作审计。用户列表在未登录和无管理权限时也可只读查看；账户写操作仍要求管理员权限，审计无权限时保持空状态，不生成示例用户或日志。
+
+对应实现文件：
+
+- `src/ui/settings/CalibrationPlaceholderPage.cpp`：检测与标定。
+- `src/ui/settings/ProcessCraftPlaceholderPage.cpp`：修磨工艺。
+- `src/ui/settings/CraftPlaceholder.cpp`：两页共享控件样式，不是数据来源。
+- `src/ui/settings/AccountSettingsPage.cpp`：真实账户、权限和审计数据。
+
+### 1. 已清除的无来源占位值
+
+下表记录曾经用于展示控件和布局的默认值，**这些值现已从界面清除**。后续确认真实字段时，必须重新核对默认值、单位、取值范围和模式枚举，不能直接沿用界面按钮序号。
+
+| 页面 | 控件 / 数据 | 原占位值或行为（已清除） | 后续真实来源与处理 |
+| --- | --- | --- | --- |
+| 检测与标定 | 单帧采集行数 | `2500` 行 | 相机或采集节点的真实配置；未提供默认值依据 |
+| 检测与标定 | 相机曝光时间 | `450.0 μs` | 相机或采集节点的真实配置；未提供默认值依据 |
+| 检测与标定 | Y 轴步进分辨率 | `0.05128 mm/行`，显示 5 位小数 | 实际运动／采集标定参数；5 位小数需求已明确，但当前数值没有来源 |
+| 检测与标定 | HDR 模式 | 默认选中“自动切换（复检）”，界面序号 `1` | 后续复检真实 HDR 控制字段；初检关闭、复检开启的逻辑尚未接入 |
+| 检测与标定 | 扫描物理长度 | 初始显示 `128.20000 mm` | 由占位的 `2500 × 0.05128` 即时计算，不是独立测量值 |
+| 检测与标定 | 粒子轴尖高度阈值 | `0.0 mm` | 粒子识别算法阈值，当前无来源 |
+| 检测与标定 | 粒子最小识别面积 | `4.0 mm²` | 粒子识别算法阈值，当前无来源 |
+| 检测与标定 | 点云 Z 向滤波 | `15.0 mm` | 点云滤波算法参数，当前无来源 |
+| 检测与标定 | 3D 点云预览 | 固定文案“等待粒子区域数据”，没有点云 | 接入真实粒子区域和扫描点云；无数据时继续明确显示空状态 |
+| 检测与标定 | 坐标转换模式 | 默认“刚性”，界面序号 `0` | 标定算法真实转换模式；等比／非等比／仿射目前均未接入 |
+| 修磨工艺 | 主轴转速 | `0 rpm` | 主轴工艺参数；用户清单只列出字段名称，未提供默认值 |
+| 修磨工艺 | 空跑最大速度 X / Y / Z | `15000 / 15000 / 6000 mm/min` | 各轴真实空跑速度限制；当前数值无工艺或设备依据 |
+| 修磨工艺 | 加工最大速度 X / Y / Z | `3000 / 3000 / 800 mm/min` | 各轴真实加工速度限制；当前数值无工艺或设备依据 |
+| 修磨工艺 | XY 速度规划模式 | 默认“轴比例”，界面序号 `1` | 真实 XY 速度规划 `mode`；模式名称和枚举值均待确认 |
+| 修磨工艺 | Z 速度规划模式 | 默认“恒定”，界面序号 `0` | 真实 Z 速度规划 `mode`；模式名称和枚举值均待确认 |
+| 修磨工艺 | XY、Z 两组 K1 / K2 / K3 / K4 | 两组均为 `1.50 / 0.85 / 0.50 / 0.20` | 两组真实速度规划系数；当前数值无来源，不是用户提供的工艺默认值 |
+| 修磨工艺 | Z 补偿生产／调试模式 | 默认“生产精调”；生产范围 `±2 mm`，调试范围 `±50 mm` | 生产精调 `±2 mm` 有需求描述；模式状态、调试范围和持久化均未接入 |
+| 修磨工艺 | 一键抬高 Z | 仅在调试模式可用，点击后界面值 `+20 mm` | `+20 mm` 是 UI 占位动作，没有真实字段或设备动作依据，不下发机床 |
+| 修磨工艺 | 铜板剖面图 | 固定绘制的铜板、粒子和虚线 | 纯示意图，不是扫描点云、粒子高度或实际加工位置 |
+
+### 2. 原硬编码坐标点对（已清除）
+
+`CalibrationPlaceholderPage.cpp` 曾通过 `samples[6][6]` 写入以下 6 行示例，现数组和示例行均已删除，表格为 0 行并显示“未采集坐标点对”。以下仅保留历史记录，列顺序为 `Img X/Y/Z`、`Rob X/Y/Z`：
+
+```text
+#   Img X   Img Y   Img Z   Rob X   Rob Y   Rob Z
+1   101.45   88.20   -0.12  880.20   86.00    0.00
+2   883.10   86.06   -0.19  880.20   86.20    0.18
+3   883.30  860.40   -1.30  881.50  858.00    0.21
+4   118.90  858.16   -1.45  119.00  858.00    0.16
+5   500.20  472.40   -0.80  500.20  472.50    0.10
+6   500.18  472.55   -0.40  500.00  472.50   20.00
+```
+
+这些点从未读取 `std::vector<s_PPts> sListPPtsImage` 或 `std::vector<s_PPts> sListPPtsRobot`，也不是标定文件中的记录。原残差公式和红／绿阈值显示逻辑也已随示例数据移除。后续应接入真实点对、标定算法的误差定义和写回方式；没有数据时保持空表，不得恢复示例点。
+
+### 3. 原硬编码 4×4 转换矩阵（已清除）
+
+`CalibrationPlaceholderPage.cpp` 的 `values[4][4]` 曾固定为以下矩阵，现数组已删除，所有矩阵单元格显示“—”：
+
+```text
+ 0.999982   0.000841  -0.005981   12.45010
+-0.000812   0.999981   0.004950   -4.18230
+ 0.006041  -0.004942   0.999977    1.24040
+ 0.000000   0.000000   0.000000    1.000000
+```
+
+该矩阵从未由坐标点计算，也没有读取标定算法输出。后续应显示真实 3D 转换矩阵，并明确矩阵方向、单位、是否允许编辑以及结果发送目标；未标定前保持“未标定”和空单元格，不得恢复这份示例矩阵。
+
+### 4. 有用户提供的代码默认值，但仍未实时绑定
+
+下列数值来自用户提供的 `m_sJggyPara` 赋值或说明，因此有代码默认值依据；但当前页面只是把这些值重新写成只读控件的初始值，**仍没有读取结构体，也不能证明它们已经过现场工艺验证，更不能视为设备当前值**。后续接入实时读取前不得解除只读限制。
+
+| 控件 | 当前初始值 | 后续应绑定的字段 |
+| --- | --- | --- |
+| 刀具直径 | `80 mm` | `m_sJggyPara.fDjDiamiter` |
+| 粒子最高点上抬 | `2.0 mm` | `m_sJggyPara.fJgLzUpOffset` |
+| 铜板上平面上抬 | `0.0 mm` | `m_sJggyPara.fJgDpUpOffset` |
+| Z 路径进给模式 | 默认“线性进给” | `m_sJggyPara.iModeJgPPZStepMode`（`0` 等距、`1` 线性） |
+| 固定 Z 向进给 | `2.0 mm` | `m_sJggyPara.fJgPPZStepFix` |
+| 线性 Z 进给 K / B | `0.5 / 1.5` | `m_sJggyPara.fJgPPZStepK` / `fJgPPZStepB` |
+| 线性 Z 进给 Min / Max | `3 / 10` | `m_sJggyPara.fJgPPZStepMin` / `fJgPPZStepMax` |
+| Y 路径进给模式 | 默认“固定进给” | `m_sJggyPara.iModeJgPPYStepMode`（需求说明为 `0` 固定、`2` 按刀盘大小；界面内部按钮序号不是实际枚举） |
+| 固定 Y 向进给 | `70 mm` | `m_sJggyPara.fJgPPYStepFix` |
+| 刀盘比例系数 K | `0.8` | `m_sJggyPara.fJgPPYStepK` |
+| 粒子加工排序 | 默认“局部最近” | `m_sJggyPara.iModeJgPPSort`（`0–5`；界面当前仅设置下拉索引 `4`） |
+| 气缸侧安全距离 | `60 mm` | `m_sJggyPara.fQgSafeDis` |
+| 完工抬刀高度 | `5 mm` | `m_sJggyPara.fJgTdZUp` |
+| 下刀位置偏移 | `50 mm` | `m_sJggyPara.fOffsetCutStartPos` |
+| 路径段左 / 右偏移 | `0 / 0 mm` | `m_sJggyPara.fOffsetBothEndsL` / `fOffsetBothEndsR` |
+| 路径点整体偏移 X / Y / Z | `0 / 0 / 0 mm` | `m_sJggyPara.fOffsetPtsX` / `fOffsetPtsY` / `fOffsetPtsZ` |
+
+刀盘方向进给仍根据上述控件值做界面换算。原“安全距离 − 刀具直径 / 2”安全余量公式已删除；页面只保留用户原注释中的定义：`fQgSafeDis` 是加工中心到气缸的距离，未考虑刀盘直径。后续如需显示安全余量，必须先由后端确认公式，不能直接作为安全验收依据。
+
+### 5. 后续接入要求
+
+- 沿用现有设置页的保存、撤销、权限和审计，不要在占位页里另写一套写文件逻辑。
+- 接入真实数据后，逐项删除本清单中的占位说明，并记录真实字段、单位、来源 topic／文件和读写方向。
+- 没有真实数据时显示“未采集／未标定／无数据”，不要用示例值伪装成有效结果。
+- 原先已经接上的坐标补偿（`backend_params.ini` 的 `OffsetX/Y/Z`，以及 `plc/coordinate_offset`）和现场示教仍在 `ProcessSettingsPage` / `BackendParamsDialog`；如果合并到“修磨工艺”，必须复用原有存储与下发链路，不能只把控件值写进新界面。
 
 ## 注意事项
 
@@ -82,10 +221,11 @@ build-local\Release\MzTLZ.exe
 
 生产构建中仍保留调试快捷键：
 
-- Ctrl+T：切换演示/假数据模式（可隐藏实时扫描画面、注入假 PLC 状态，并向数据库写入 task 9001 等）
-- Ctrl+Shift+T：在假数据模式下模拟任务完成
+- Ctrl+T：切换演示/假数据模式，可隐藏实时扫描画面、注入假 PLC 状态，并使用演示任务 `9001`。
+- Ctrl+Shift+T：在假数据模式下模拟任务完成。
+- `MainWindow::persistTaskRecord` 已明确跳过演示模式和任务 `9001`，**演示任务不会写入 SQLite**。
 
-正式发布前必须移除，或用编译宏/配置开关关掉，避免误触污染现场数据。
+正式发布前必须移除这些快捷键，或用编译宏/配置开关关闭，避免误触覆盖真实界面状态或造成误判。
 
 ### config/start_all.bat（需保留，路径写死）
 
@@ -135,27 +275,28 @@ CMake 从 third_party/HCNetSDK/库文件 链接，并在 POST_BUILD 用 *.dll gl
 
 ## 脚本说明
 
-项目根目录仅保留以下构建脚本：
+项目使用以下脚本：
 
-- **build.bat** - 统一的构建脚本（清理、配置、编译、部署）
-- **config/run.bat** - 从部署目录运行程序
-- **config/start_all.bat** - 启动相机/算法/后台节点
-- **config/stop_all.bat** - 停止所有节点
+- **build.bat** - 主工程统一配置、编译和部署，不执行全量清理。
+- **.deps/build_interfaces.bat** - 仅在本地 ROS2 接口变化或接口安装目录缺失时重建 `mz_interfaces`。
+- **config/run.bat** - 设置运行环境并从部署目录启动程序。
+- **config/start_all.bat** - 启动相机/算法/后台节点。
+- **config/stop_all.bat** - 停止所有节点。
 
 **⚠️ 禁止创建临时脚本**：如必须生成临时脚本（如调试），使用后立即删除。
 
 ## 报表统计页：字段与数据来源
 
-报表页当前优先使用 SQLite 已有的 `InspectionRecord` 数据，时间范围、检测铜板数、有粒子铜板数、修磨完成数、粒子总数、完成率、平均修磨节拍和任务级最大粒子高度均来自现有记录。
+正常模式下，报表只使用 SQLite 已有的 `InspectionRecord` 数据。时间范围、检测铜板数、有粒子铜板数、修磨完成数、粒子总数、完成率、平均修磨节拍和任务级最大粒子高度均来自现有记录，**不会自动补充演示数据**。
 
-为了便于在后端数据量不足时检查页面布局，报表页会在当前查询结果少于 36 条时补充内存中的演示数据。演示数据不会写入 SQLite，状态栏、班次汇总和 PDF 导出会标记“含演示数据，仅供界面预览”；当真实记录达到 36 条时，页面自动只展示真实查询结果。
+只有 Ctrl+T 演示模式开启且当前查询结果少于 36 条时，报表才补充内存中的演示数据。演示数据不会写入 SQLite，状态栏、班次汇总和 PDF 导出会标记“含演示数据，仅供界面预览”；演示模式下真实记录达到 36 条时，不再补充演示记录。
 
 以下字段本轮已在界面中预留，但数据库暂时没有可靠来源：
 
 - **班次**：当前只有“全部班次 / 甲班 / 乙班 / 丙班”界面选项，查询暂不按班次过滤，每日表和 PDF 中显示 `--`。
 - **铜板编号**：当前数据库没有板号字段，输入框只作为界面占位，不参与查询。
 - **粒子高度明细分布**：当前报表使用 `InspectionRecord.MaxParticleHeight` 按任务分段绘制环形占比图，单颗粒 `ParticleDetection.Height` 的时间范围聚合接口尚未接入。
-- **统一任务状态**：界面预留“复测通过、待复核、异常、修磨中、待修磨”五类状态；当前只能根据 `ParticleCount` 与 `ClearedCount` 推导修磨中和待修磨，其余状态暂显示为 0，需要后端提供统一状态字段。
+- **统一任务状态**：界面预留“复测通过、待复核、异常、修磨中、待修磨”五类状态。正常模式下不根据其他字段推测状态，状态分布图保持空白并提示“状态字段待后端”；只有演示模式才根据演示记录填充分布。需要后端提供统一状态字段后才能用于真实统计。
 - **班次汇总**：每日班次汇总表预留甲班、乙班、丙班三列，暂显示 `--`；检测合计和修磨合计仍来自现有记录。
 - **Excel 导出**：项目尚未接入 QXlsx，按钮保持禁用；PDF 导出已包含班次占位列。
 

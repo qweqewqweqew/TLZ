@@ -734,13 +734,12 @@ void ImageViewFrame::ensureViewCache()
     painter.setRenderHint(QPainter::Antialiasing, false);
 
     const QRect area = rect().adjusted(1, 1, -2, -2);
-    const bool light = Theme::current() == Theme::Id::Light;
-    const QColor canvasColor = light ? QColor(QStringLiteral("#F8FAFC")) : QColor(Theme::kCanvasBg);
+    const QColor canvasColor(Theme::kCanvasBg);
     painter.fillRect(rect(), canvasColor);
     painter.fillRect(area, canvasColor);
 
     if (m_image.isNull()) {
-        const QColor gridColor = light ? QColor(QStringLiteral("#E2E8F0")) : QColor(Theme::kBorder);
+        const QColor gridColor(Theme::kDivider);
         QPen gridPen(gridColor);
         gridPen.setWidth(1);
         painter.setPen(gridPen);
@@ -753,7 +752,7 @@ void ImageViewFrame::ensureViewCache()
             painter.drawLine(area.left(), y, area.right(), y);
         }
 
-        const QColor centerColor = light ? QColor(QStringLiteral("#94A3B8")) : QColor(Theme::markColor());
+        const QColor centerColor(Theme::kTextMuted);
         QPen centerPen(centerColor);
         centerPen.setWidth(1);
         painter.setPen(centerPen);

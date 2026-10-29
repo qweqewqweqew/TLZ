@@ -52,19 +52,25 @@ public:
     int currentPage() const { return m_current; }
     void setUserIdentity(const QString &username, Role role);
     void applyTheme();
+    // 修磨进行中时，开始按钮显示为暂停。
+    void setMillingRunning(bool running);
 
 signals:
     // 用户点击导航；MainWindow 决定是否真的切换（设置页可能有未保存修改）。
     void pageRequested(int page);
     // 点击底部用户块；参数为弹出菜单的全局锚点。
     void userRequested(const QPoint &menuAnchor);
+    void millingStartRequested();
+    void millingPauseRequested();
+    void millingStopRequested();
 
 private:
-    QWidget *createUserBlock();
     QPushButton *createThemeButton();
 
     QVector<NavItemButton *> m_items;
     QPushButton *m_themeButton{nullptr};
+    QPushButton *m_startButton{nullptr};
+    QPushButton *m_stopButton{nullptr};
     QPushButton *m_userButton{nullptr};
     QLabel *m_userAvatar{nullptr};
     QLabel *m_userName{nullptr};
@@ -72,6 +78,7 @@ private:
     int m_current{0};
     QString m_username;
     Role m_role{Role::None};
+    bool m_millingRunning{false};
 };
 
 #endif // NAVIGATIONBAR_H

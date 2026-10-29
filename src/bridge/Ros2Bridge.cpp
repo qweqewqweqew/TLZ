@@ -10,6 +10,8 @@
 #include <mz_interfaces/msg/plc_feedback.hpp>
 #include <mz_interfaces/msg/scan_geometry.hpp>
 #include <mz_interfaces/msg/scan_result.hpp>
+#include <mz_interfaces/msg/sick_camera_parameter_result.hpp>
+#include <mz_interfaces/msg/sick_camera_parameters.hpp>
 #include <rclcpp/executors/single_threaded_executor.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/bool.hpp>
@@ -32,6 +34,9 @@ namespace {
 
 constexpr char kNodeName[] = "mz_tlz";
 constexpr char kCameraStatusTopic[] = "camera/status";
+constexpr char kSickParametersTopic[] = "sick_camera/parameters";
+constexpr char kSickSetParametersTopic[] = "sick_camera/set_parameters";
+constexpr char kSickParameterResultTopic[] = "sick_camera/parameter_result";
 constexpr char kScanRangeTopic[] = "scan_range";
 constexpr char kScanIntensityTopic[] = "scan_intensity";
 constexpr char kScanGeometryTopic[] = "scan_geometry";
@@ -233,6 +238,9 @@ struct Ros2BridgeEntities final
     rclcpp::Subscription<mz_interfaces::msg::MillingPaths>::SharedPtr millingPaths;
     rclcpp::Subscription<mz_interfaces::msg::MillingProgress>::SharedPtr millingProgress;
     rclcpp::Subscription<mz_interfaces::msg::PlcFeedback>::SharedPtr plcFeedback;
+    rclcpp::Subscription<mz_interfaces::msg::SickCameraParameters>::SharedPtr sickParameters;
+    rclcpp::Subscription<mz_interfaces::msg::SickCameraParameterResult>::SharedPtr sickParameterResult;
+    rclcpp::Publisher<mz_interfaces::msg::SickCameraParameters>::SharedPtr sickSetParameters;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr teachRequest;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr coordinateOffset;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr dispatchPathsToPlc;
@@ -269,6 +277,7 @@ Ros2Bridge::Ros2Bridge(QObject *parent)
     qRegisterMetaType<QVector<MillingPathVM>>("QVector<MillingPathVM>");
     qRegisterMetaType<PlcFeedbackVM>("PlcFeedbackVM");
     qRegisterMetaType<PointCloudFrame>("PointCloudFrame");
+    qRegisterMetaType<SickCameraParametersVM>("SickCameraParametersVM");
 }
 
 Ros2Bridge::~Ros2Bridge()
@@ -604,6 +613,36 @@ bool Ros2Bridge::start()
                 }
             });
 
+        const auto toSickVm = [](const mz_interfaces::msg::SickCameraParameters &message) {
+            SickCameraParametersVM vm;
+            vm.scanLines = message.scan_lines;
+            vm.exposureTimeUs = message.exposure_time_us;
+            vm.hdrMode = QString::fromStdString(message.hdr_mode);
+            vm.yResolutionMm = message.y_resolution_mm;
+            return vm;
+        };
+        m_entities->sickParameters =
+            m_node->create_subscription<mz_interfaces::msg::SickCameraParameters>(
+                kSickParametersTopic,
+                statusQos,
+                [this, toSickVm](const mz_interfaces::msg::SickCameraParameters::SharedPtr msg) {
+                    if (msg) {
+                        emit sickCameraParametersReceived(toSickVm(*msg));
+                    }
+                });
+        m_entities->sickParameterResult =
+            m_node->create_subscription<mz_interfaces::msg::SickCameraParameterResult>(
+                kSickParameterResultTopic,
+                qos,
+                [this, toSickVm](const mz_interfaces::msg::SickCameraParameterResult::SharedPtr msg) {
+                    if (msg) {
+                        emit sickCameraParameterResultReceived(
+                            msg->success,
+                            QString::fromStdString(msg->message),
+                            toSickVm(msg->parameters));
+                    }
+                });
+
         m_entities->millingPaths = m_node->create_subscription<mz_interfaces::msg::MillingPaths>(
             kMillingPathsTopic,
             qos,
@@ -734,6 +773,10 @@ bool Ros2Bridge::start()
             kCoordinateOffsetTopic, qos);
         m_entities->dispatchPathsToPlc = m_node->create_publisher<std_msgs::msg::Bool>(
             kDispatchPathsToPlcTopic, qos);
+        m_entities->sickSetParameters =
+            m_node->create_publisher<mz_interfaces::msg::SickCameraParameters>(
+                kSickSetParametersTopic,
+                rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
 
         m_executor = std::make_unique<rclcpp::executors::SingleThreadedExecutor>();
         m_executor->add_node(m_node);
@@ -943,4 +986,23 @@ void Ros2Bridge::publishDispatchPathsToPlc(bool enabled)
     const QString flag = enabled ? QStringLiteral("true") : QStringLiteral("false");
     LOG("[设置参数] 已发送 plc/dispatch_paths_to_plc: %s", flag.toUtf8().constData());
     emit infoMessage(QStringLiteral("已发送下发路径开关 (plc/dispatch_paths_to_plc): %1").arg(flag));
+}
+
+void Ros2Bridge::publishSickCameraParameters(const SickCameraParametersVM &parameters)
+{
+    if (!m_running || !m_entities || !m_entities->sickSetParameters) {
+        emit errorMessage(QStringLiteral("ROS2 节点未运行，无法写入 SICK 采集参数"));
+        return;
+    }
+    mz_interfaces::msg::SickCameraParameters message;
+    message.scan_lines = parameters.scanLines;
+    message.exposure_time_us = parameters.exposureTimeUs;
+    message.hdr_mode = parameters.hdrMode.toStdString();
+    message.y_resolution_mm = parameters.yResolutionMm;
+    m_entities->sickSetParameters->publish(message);
+    emit infoMessage(QStringLiteral("已发送 SICK 采集参数：行数=%1，曝光=%2 μs，HDR=%3，Y 分辨率=%4 mm/行")
+        .arg(parameters.scanLines)
+        .arg(parameters.exposureTimeUs)
+        .arg(parameters.hdrMode)
+        .arg(parameters.yResolutionMm));
 }

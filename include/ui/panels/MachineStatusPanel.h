@@ -5,7 +5,7 @@
 
 class QPushButton;
 class QLabel;
-class QProgressBar;
+class QWidget;
 struct PlcFeedbackVM;
 
 // 「修磨实时状态」卡：PLC 状态、任务进度、主轴 / 进给 / 坐标实时值。
@@ -39,7 +39,7 @@ private:
     QWidget *m_metricColumn{nullptr};
     QLabel *m_plcPill{nullptr};
     QLabel *m_taskLine{nullptr};
-    QProgressBar *m_progress{nullptr};
+    QWidget *m_progress{nullptr};
     QLabel *m_percent{nullptr};
     QPushButton *m_startButton{nullptr};
     QPushButton *m_pauseButton{nullptr};

@@ -138,7 +138,7 @@ QFrame *createPanel(const QString &title, QWidget *headerWidget, QWidget *parent
     auto *panel = new QFrame(parent);
     panel->setObjectName("panel");
     auto *layout = new QVBoxLayout(panel);
-    layout->setContentsMargins(12, 10, 12, 12);
+    layout->setContentsMargins(12, 12, 12, 12);
     layout->setSpacing(8);
 
     auto *titleRow = new QHBoxLayout();

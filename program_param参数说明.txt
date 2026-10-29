@@ -1,0 +1,188 @@
+program_param.json 参数说明
+============================
+
+说明：单位中的 mm 为毫米，px 为像素，mm² 为平方毫米。修改 JSON 后须保持合法格式；
+copper_node 会在每一对深度图/灰度图处理前重新读取该文件。
+
+一、基本工艺与目标提取
+----------------------
+name
+  配置名称/标识文本；当前算法不使用它控制计算。
+
+tool_size
+  刀具直径（mm）。用于计算覆盖范围、默认扫描步距等规划几何量。
+
+tool_center_dead_zone_diameter_mm
+  刀具中心无有效磨削能力的直径（mm）。规划时会为目标留出相应的中心补偿。
+
+stepover
+  相邻扫描线的 Y 向间距（mm）。小于等于 0 时按刀具直径的一半自动设置。
+
+single_down
+  单层最大下刀/去除深度（mm）。较大的目标高度会按该值拆分为多层。
+
+kmeans_distance
+  平面提取模式下目标点二维连通聚类距离（mm），决定相邻高点是否合为同一打磨区域。
+
+targetsize_height_thresh
+  判为待磨粒子的最小凸起高度（mm）。B 样条模式中为深度实测值相对拟合基准面的正残差阈值。
+
+target_extraction_method
+  目标提取方法："bspline" 为三次 B 样条基准面残差法；"plane" 为局部平面拟合法。
+
+二、B 样条提取参数
+--------------------
+bspline_control_points_x / bspline_control_points_y
+  B 样条曲面 X、Y 两方向的控制点数量；均不得小于 4。数值增大可拟合更细的板面形变，过大可能把粒子也拟合进去。
+
+bspline_smoothing
+  B 样条拟合平滑系数，必须非负。增大使基准面更平滑，减小使其更贴近原始板面。
+
+bspline_fit_sample_step
+  用于拟合基准面的深度点抽样步长（像素间隔），不得小于 1。增大可降低计算量。
+
+bspline_refinement_iterations
+  基准面鲁棒重拟合次数，至少为 1。每次会进一步减少凸起粒子对基准面的影响。
+
+bspline_outlier_rejection_ratio
+  基准面重拟合时保留的低残差样本比例，范围为 (0, 1]。越小，越严格排除疑似凸起样本。
+
+bspline_baseline_low_quantile
+  初始基准样本使用的低高度分位比例，范围为 (0, 1]。用于优先选择较低、较可能是铜板本体的点。
+
+bspline_min_particle_area_mm2
+  B 样条残差连通域的最小物理面积（mm²）。小于该面积的连通域在目标提取阶段即被视作噪声丢弃。
+
+bspline_max_particle_width_pixels
+  B 样条残差连通域的最大允许宽度（px）。与长宽比条件同时满足时，过宽长条会被排除；设为 0 可关闭宽度判断。
+
+bspline_max_particle_aspect_ratio
+  过宽长条判定所用的最小长宽比，必须大于 1。
+
+三、严格度与马赛克块筛选
+--------------------------
+isolated_mosaic_min_particle_area_mm2
+  “小马赛克块”的面积阈值（mm²）。仅在 grinding_strictness_level=2 时参与剔除判断；设为 0 可不按面积剔除。
+
+isolated_mosaic_neighbor_distance_mm
+  判断马赛克块是否有邻居的最大边缘间距（mm）。块在该距离内有另一块时不视为孤立。
+
+grinding_strictness_level
+  打磨严格度。1：保留所有已通过基础目标提取条件的粒子；2：在马赛克块生成后、轨迹规划前，剔除“面积小于 isolated_mosaic_min_particle_area_mm2 且无邻居”的小块。仅允许 1 或 2。
+
+四、输出与速度
+--------------
+src_save
+  是否保存原始输入图像的开关。当前归档流程仍会保存任务所需的源图，建议保持与部署策略一致。
+
+video_save
+  是否生成打磨路径视频。
+
+max_output_folders
+  输出结果目录保留的最大数量。大于 0 时会清理较旧目录；小于 0 会被当作关闭自动清理。
+
+r_speed
+  机器人旋转/姿态相关速度参数，随轨迹输出传递给执行端。
+
+x_speed / y_speed / z_speed
+  机器人在 X、Y、Z 方向的加工运动速度。
+
+no_load_speed
+  非加工（空行程、抬刀等）速度。
+
+五、路径与刀具覆盖策略
+------------------------
+enableAreaSanitization
+  是否启用规划区域清理/规整逻辑。
+
+enableCircularFootprintConstraint
+  是否按圆形刀具实际覆盖范围约束规划区域，而非只按外接矩形处理。
+
+enable_target_mask_scan
+  是否根据目标掩膜生成扫描行，减少无目标区域的切削行程。
+
+target_mask_run_merge_gap_mm
+  同一扫描线内相邻目标段允许合并的最大间隙（mm）。增大可减少抬刀和分段，但会增加无效覆盖。
+
+enableContinuousYTransition
+  是否允许相邻扫描行之间连续 Y 向过渡，减少回退或抬刀动作。
+
+grinding_pass_strategy
+  多层打磨策略："per_run" 为每条扫描段完成全部层数；"by_layer" 为按层遍历全部扫描段。
+
+enable_edge_feathering
+  是否启用区域边界羽化，降低目标区域边缘的去除深度以减小台阶。
+
+edge_feather_width_mm
+  羽化带从区域边界向内的宽度（mm）。小于等于区域尺寸限制时可能自动关闭该区域羽化。
+
+edge_feather_depth_step_mm
+  羽化带中相邻深度级别的最大间隔（mm）；为 0 时自动使用 single_down / 10。
+
+enable_genetic_path_optimization
+  是否启用遗传算法优化区域访问顺序。
+
+force_nearest_first_region
+  是否强制优先加工距离当前位置最近的区域。
+
+enable_interior_cross_mosaic_cut
+  是否允许切削路径连续跨越内部相邻马赛克块；靠近铜板边缘的块仍会保留安全避让。
+
+force_robot_z_depth_scale_unity
+  使用像素到机器人矩阵时，是否临时强制原始深度到机器人 Z 的比例为 1。主要用于线扫相机诊断，通常关闭。
+
+genetic_population_size
+  遗传路径优化的种群大小。增大通常提高搜索质量并增加耗时。
+
+genetic_generations
+  遗传路径优化迭代代数。增大通常提高搜索质量并增加耗时。
+
+genetic_mutation_rate
+  遗传算法变异概率，通常取 0 到 1。
+
+genetic_random_seed
+  遗传算法随机种子。0 表示使用默认随机行为；固定非零值便于复现实验。
+
+六、铜板边界与安全区
+----------------------
+plate_edge_safety_margin_px
+  检测到铜板轮廓后向内收缩的安全边距（px）。该边缘带不参与基准面拟合、粒子判定或输出。
+
+enable_plate_lower_edge_line_detection
+  是否启用铜板下边缘黑线检测。成功后以拟合线校正真实下边界。
+
+plate_lower_edge_search_px
+  在铜板轮廓底部向上搜索下边缘线的高度范围（px）。
+
+plate_lower_edge_min_contrast
+  下边缘黑线候选点相对于上下邻域所需的最小灰度对比度。
+
+plate_boundary_exclusion_px
+  安全铜板区域内部、紧贴四周边界的额外排除带宽（px），用于抑制边缘台阶误检。
+
+七、坐标、Z 高度与工作区域
+----------------------------
+safetyZ
+  规划坐标系中的安全抬刀高度/安全余量（mm）。
+
+rapid_clearance_margin_mm
+  快速移动时，相对最高待磨粒子的额外安全净空（mm）。
+
+base_height
+  基准高度（mm）。平面提取模式中用于计算目标相对高度；其坐标系必须与深度点一致。
+
+offset
+  加工深度或坐标换算使用的 Z 向偏置（mm）。应结合标定与实际刀具接触面设定。
+
+region_x1 / region_y1 / region_x2 / region_y2
+  配置工作 ROI 的左上角与右下角像素坐标。只在此矩形范围内进行铜板/粒子处理。
+
+robot_wait_x / robot_wait_y / robot_wait_z
+  机器人等待/待机位置的 X、Y、Z 坐标（mm）。
+
+enable_min_robot_y_path_filter
+  是否启用机器人坐标系 Y 下限过滤。开启后，任一端点低于 min_robot_path_y 的整条路径段会被丢弃。
+
+min_robot_path_y
+  允许发布路径的最小机器人 Y 坐标（mm）；仅在 enable_min_robot_y_path_filter=true 时生效。
+

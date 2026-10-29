@@ -5,7 +5,6 @@
 #include <QtGui/qwindowdefs.h>
 
 class QLabel;
-class QToolButton;
 
 class HikLiveView : public QFrame
 {
@@ -16,18 +15,18 @@ public:
 
     WId videoWindowId();
     void setConnectionStatus(bool connected, const QString &message);
-    void setExpandButtonVisible(bool visible);
 
 signals:
     void expandRequested();
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
+    void mouseDoubleClickEvent(QMouseEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     QWidget *m_videoSurface{nullptr};
     QLabel *m_statusLabel{nullptr};
-    QToolButton *m_expandButton{nullptr};
 };
 
 #endif // HIKLIVEVIEW_H

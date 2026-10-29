@@ -232,6 +232,12 @@ add_executable(MzTLZ
     include/ui/settings/SettingsPage.h
     src/ui/settings/ProcessSettingsPage.cpp
     include/ui/settings/ProcessSettingsPage.h
+    src/ui/settings/CraftPlaceholder.cpp
+    include/ui/settings/CraftPlaceholder.h
+    src/ui/settings/CalibrationPlaceholderPage.cpp
+    include/ui/settings/CalibrationPlaceholderPage.h
+    src/ui/settings/ProcessCraftPlaceholderPage.cpp
+    include/ui/settings/ProcessCraftPlaceholderPage.h
     src/ui/settings/VisionSettingsPage.cpp
     include/ui/settings/VisionSettingsPage.h
     src/ui/settings/DisplaySettingsPage.cpp
@@ -255,6 +261,7 @@ add_executable(MzTLZ
     include/camera/HikCameraClient.h
     src/camera/HikCameraConfig.cpp
     include/camera/HikCameraConfig.h
+    include/camera/HikCameraParameters.h
     src/camera/HikLiveView.cpp
     include/camera/HikLiveView.h
     src/camera/HikPreviewDialog.cpp
@@ -267,6 +274,7 @@ add_executable(MzTLZ
     include/bridge/NodeLifecycleMonitor.h
     include/bridge/MillingPathVM.h
     include/bridge/PlcFeedbackVM.h
+    include/bridge/SickCameraParametersVM.h
     include/bridge/PlcStatusPresentation.h
     src/data/Database.cpp
     include/data/Database.h

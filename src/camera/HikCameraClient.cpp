@@ -47,19 +47,24 @@ class HikCameraWorker : public QObject
 public:
     using StatusReporter = std::function<void(bool, const QString &)>;
     using MessageReporter = std::function<void(const QString &)>;
+    using ParametersReporter = std::function<void(const HikCameraParameters &)>;
 
     HikCameraWorker(StatusReporter statusReporter,
                     MessageReporter infoReporter,
-                    MessageReporter errorReporter)
+                    MessageReporter errorReporter,
+                    ParametersReporter parametersReporter)
         : m_statusReporter(std::move(statusReporter))
         , m_infoReporter(std::move(infoReporter))
         , m_errorReporter(std::move(errorReporter))
+        , m_parametersReporter(std::move(parametersReporter))
     {
     }
 
     void startPreview(const HikCameraConfig &config, WId targetWindow)
     {
         stopPreview();
+        m_config = config;
+        m_targetWindow = targetWindow;
 
         if (!initializeSdk(config)) {
             return;
@@ -76,49 +81,178 @@ public:
 
         m_userId = NET_DVR_Login_V40(&loginInfo, &deviceInfo);
         if (m_userId < 0) {
-            const QString message = sdkErrorMessage(QStringLiteral("登录海康相机"));
-            reportFailure(message);
+            reportFailure(sdkErrorMessage(QStringLiteral("登录海康相机")));
             return;
         }
 
-        NET_DVR_PREVIEWINFO previewInfo{};
-        previewInfo.lChannel = config.channel;
-        previewInfo.dwStreamType = DWORD(config.streamType);
-        previewInfo.dwLinkMode = DWORD(config.linkMode);
-        previewInfo.hPlayWnd = reinterpret_cast<HWND>(targetWindow);
-        previewInfo.bBlocked = FALSE;
-        previewInfo.dwDisplayBufNum = 1;
-
-        const LONG previewHandle = NET_DVR_RealPlay_V40(
-            m_userId, &previewInfo, nullptr, this);
-        if (previewHandle < 0) {
+        if (!openPreview()) {
             const QString message = sdkErrorMessage(QStringLiteral("启动海康实时预览"));
             NET_DVR_Logout(m_userId);
             m_userId = -1;
             reportFailure(message);
             return;
         }
-        m_previewHandle.store(previewHandle);
 
-        m_statusReporter(true, QStringLiteral("实时画面已连接"));
+        m_statusReporter(true, QStringLiteral("实时画面已连接，正在读取预览参数"));
         m_infoReporter(QStringLiteral("海康网络相机实时预览已启动：%1:%2，通道 %3，%4")
                            .arg(config.address)
                            .arg(config.port)
                            .arg(config.channel)
                            .arg(config.streamType == 0 ? QStringLiteral("主码流")
                                                        : QStringLiteral("子码流")));
+        readPreviewParameters();
     }
 
     void stopPreview()
     {
-        const LONG previewHandle = m_previewHandle.exchange(-1);
-        if (previewHandle >= 0) {
-            NET_DVR_StopRealPlay(previewHandle);
-        }
+        closePreview();
         if (m_userId >= 0) {
             NET_DVR_Logout(m_userId);
             m_userId = -1;
         }
+    }
+
+    void updatePreviewParameters(const HikCameraParameters &parameters)
+    {
+        if (m_userId < 0 || m_previewHandle.load() < 0) {
+            m_errorReporter(QStringLiteral("海康相机未连接，不能修改预览参数"));
+            return;
+        }
+
+        bool updated = false;
+        bool streamChanged = false;
+        if (parameters.streamTypeValid
+            && (parameters.streamType == 0 || parameters.streamType == 1)
+            && parameters.streamType != m_config.streamType) {
+            const int previousStreamType = m_config.streamType;
+            closePreview();
+            m_config.streamType = parameters.streamType;
+            if (openPreview()) {
+                updated = true;
+                streamChanged = true;
+                m_statusReporter(true, QStringLiteral("预览码流已切换"));
+                QString persistenceError;
+                if (!m_config.save(HikCameraConfig::defaultFilePath(), &persistenceError)) {
+                    m_errorReporter(QStringLiteral("码流已切换，但本地配置未保存：%1").arg(persistenceError));
+                }
+            } else {
+                m_errorReporter(sdkErrorMessage(QStringLiteral("切换海康预览码流")));
+                m_config.streamType = previousStreamType;
+                if (openPreview()) {
+                    m_statusReporter(true, QStringLiteral("已恢复原预览码流"));
+                } else {
+                    reportFailure(sdkErrorMessage(QStringLiteral("恢复原预览码流")));
+                }
+                readPreviewParameters();
+                return;
+            }
+        }
+
+        // 码流切换后先回读新码流帧率，不能把旧码流的 UI 快照写入新码流。
+        if (parameters.frameRateValid && !streamChanged) {
+            NET_DVR_COMPRESSIONCFG_V30 config{};
+            config.dwSize = sizeof(config);
+            DWORD returnedBytes = 0;
+            if (NET_DVR_GetDVRConfig(m_userId, NET_DVR_GET_COMPRESSCFG_V30,
+                                     m_config.channel, &config, sizeof(config), &returnedBytes)) {
+                auto &stream = m_config.streamType == 0 ? config.struNormHighRecordPara
+                                                        : config.struNetPara;
+                if (stream.dwVideoFrameRate != DWORD(parameters.frameRateCode)) {
+                    stream.dwVideoFrameRate = DWORD(parameters.frameRateCode);
+                    if (NET_DVR_SetDVRConfig(m_userId, NET_DVR_SET_COMPRESSCFG_V30,
+                                             m_config.channel, &config, sizeof(config))) {
+                        updated = true;
+                    } else {
+                        m_errorReporter(sdkErrorMessage(QStringLiteral("设置海康预览帧率")));
+                    }
+                }
+            } else {
+                m_errorReporter(sdkErrorMessage(QStringLiteral("读取海康码流配置")));
+            }
+        }
+
+        if (parameters.imageParametersValid) {
+            NET_DVR_CAMERAPARAMCFG config{};
+            config.dwSize = sizeof(config);
+            DWORD returnedBytes = 0;
+            if (NET_DVR_GetDVRConfig(m_userId, NET_DVR_GET_CCDPARAMCFG,
+                                     m_config.channel, &config, sizeof(config), &returnedBytes)) {
+                config.struVideoEffect.byBrightnessLevel = BYTE(std::clamp(parameters.brightness, 0, 100));
+                config.struVideoEffect.byContrastLevel = BYTE(std::clamp(parameters.contrast, 0, 100));
+                if (parameters.exposureValid) {
+                    config.struExposure.byExposureMode = BYTE(parameters.exposureMode == 0 ? 0 : 1);
+                    config.struExposure.dwVideoExposureSet = DWORD(
+                        std::clamp(parameters.exposureTimeUs, 20, 1000000));
+                }
+                if (parameters.highlightValid) {
+                    constexpr BYTE highlightMask = BYTE(1 << 2);
+                    if (parameters.highlightEnabled) {
+                        config.struVideoEffect.byEnableFunc |= highlightMask;
+                    } else {
+                        config.struVideoEffect.byEnableFunc &= BYTE(~highlightMask);
+                    }
+                    config.struVideoEffect.byLightInhibitLevel = BYTE(
+                        std::clamp(parameters.highlightLevel, 1, 3));
+                }
+                if (NET_DVR_SetDVRConfig(m_userId, NET_DVR_SET_CCDPARAMCFG,
+                                         m_config.channel, &config, sizeof(config))) {
+                    updated = true;
+                } else {
+                    m_errorReporter(sdkErrorMessage(QStringLiteral("设置海康图像参数")));
+                }
+            } else {
+                m_errorReporter(sdkErrorMessage(QStringLiteral("读取海康图像配置")));
+            }
+        }
+
+        // 无论写入成功或失败，都以设备回读值刷新 UI，避免显示未生效的目标值。
+        readPreviewParameters();
+        if (updated) {
+            m_infoReporter(QStringLiteral("海康预览参数已更新并重新读取"));
+        }
+    }
+
+    void readPreviewParameters()
+    {
+        if (m_userId < 0) {
+            m_parametersReporter(HikCameraParameters{});
+            return;
+        }
+
+        HikCameraParameters parameters;
+        parameters.streamTypeValid = true;
+        parameters.streamType = m_config.streamType;
+
+        NET_DVR_COMPRESSIONCFG_V30 compression{};
+        compression.dwSize = sizeof(compression);
+        DWORD returnedBytes = 0;
+        if (NET_DVR_GetDVRConfig(m_userId, NET_DVR_GET_COMPRESSCFG_V30,
+                                 m_config.channel, &compression, sizeof(compression), &returnedBytes)) {
+            const auto &stream = m_config.streamType == 0 ? compression.struNormHighRecordPara
+                                                          : compression.struNetPara;
+            parameters.frameRateValid = true;
+            parameters.frameRateCode = int(stream.dwVideoFrameRate);
+        }
+
+        NET_DVR_CAMERAPARAMCFG camera{};
+        camera.dwSize = sizeof(camera);
+        returnedBytes = 0;
+        if (NET_DVR_GetDVRConfig(m_userId, NET_DVR_GET_CCDPARAMCFG,
+                                 m_config.channel, &camera, sizeof(camera), &returnedBytes)) {
+            parameters.imageParametersValid = true;
+            parameters.brightness = camera.struVideoEffect.byBrightnessLevel;
+            parameters.contrast = camera.struVideoEffect.byContrastLevel;
+            parameters.exposureValid = camera.struExposure.byExposureMode <= 1
+                && camera.struExposure.dwVideoExposureSet >= 20
+                && camera.struExposure.dwVideoExposureSet <= 1000000;
+            parameters.exposureMode = camera.struExposure.byExposureMode;
+            parameters.exposureTimeUs = int(camera.struExposure.dwVideoExposureSet);
+            parameters.highlightValid = camera.struVideoEffect.byLightInhibitLevel >= 1
+                && camera.struVideoEffect.byLightInhibitLevel <= 3;
+            parameters.highlightEnabled = (camera.struVideoEffect.byEnableFunc & BYTE(1 << 2)) != 0;
+            parameters.highlightLevel = camera.struVideoEffect.byLightInhibitLevel;
+        }
+        m_parametersReporter(parameters);
     }
 
     void shutdown()
@@ -147,6 +281,33 @@ private:
         return true;
     }
 
+    bool openPreview()
+    {
+        NET_DVR_PREVIEWINFO previewInfo{};
+        previewInfo.lChannel = m_config.channel;
+        previewInfo.dwStreamType = DWORD(m_config.streamType);
+        previewInfo.dwLinkMode = DWORD(m_config.linkMode);
+        previewInfo.hPlayWnd = reinterpret_cast<HWND>(m_targetWindow);
+        previewInfo.bBlocked = FALSE;
+        previewInfo.dwDisplayBufNum = 1;
+
+        const LONG previewHandle = NET_DVR_RealPlay_V40(
+            m_userId, &previewInfo, nullptr, this);
+        if (previewHandle < 0) {
+            return false;
+        }
+        m_previewHandle.store(previewHandle);
+        return true;
+    }
+
+    void closePreview()
+    {
+        const LONG previewHandle = m_previewHandle.exchange(-1);
+        if (previewHandle >= 0) {
+            NET_DVR_StopRealPlay(previewHandle);
+        }
+    }
+
     void reportFailure(const QString &message)
     {
         m_statusReporter(false, message);
@@ -168,15 +329,21 @@ private:
             worker->m_statusReporter(false, message);
             worker->m_errorReporter(message);
         } else if (type == PREVIEW_RECONNECTSUCCESS) {
-            const QString message = QStringLiteral("海康实时画面连接已恢复");
+            const QString message = QStringLiteral("海康实时画面连接已恢复，正在重新读取参数");
             worker->m_statusReporter(true, message);
             worker->m_infoReporter(message);
+            QMetaObject::invokeMethod(worker, [worker]() {
+                worker->readPreviewParameters();
+            }, Qt::QueuedConnection);
         }
     }
 
     StatusReporter m_statusReporter;
     MessageReporter m_infoReporter;
     MessageReporter m_errorReporter;
+    ParametersReporter m_parametersReporter;
+    HikCameraConfig m_config;
+    WId m_targetWindow{0};
     LONG m_userId{-1};
     std::atomic<LONG> m_previewHandle{-1};
     bool m_sdkInitialized{false};
@@ -185,6 +352,7 @@ private:
 HikCameraClient::HikCameraClient(QObject *parent)
     : QObject(parent)
 {
+    qRegisterMetaType<HikCameraParameters>("HikCameraParameters");
     const QPointer<HikCameraClient> guard(this);
     auto statusReporter = [guard](bool connected, const QString &message) {
         if (!guard) {
@@ -216,8 +384,18 @@ HikCameraClient::HikCameraClient(QObject *parent)
             }
         }, Qt::QueuedConnection);
     };
+    auto parametersReporter = [guard](const HikCameraParameters &parameters) {
+        if (!guard) {
+            return;
+        }
+        QMetaObject::invokeMethod(guard, [guard, parameters]() {
+            if (guard) {
+                emit guard->parametersUpdated(parameters);
+            }
+        }, Qt::QueuedConnection);
+    };
 
-    m_worker = new HikCameraWorker(statusReporter, infoReporter, errorReporter);
+    m_worker = new HikCameraWorker(statusReporter, infoReporter, errorReporter, parametersReporter);
     m_worker->moveToThread(&m_workerThread);
     connect(&m_workerThread, &QThread::finished, m_worker, &QObject::deleteLater);
     m_workerThread.setObjectName(QStringLiteral("HikCameraWorker"));
@@ -262,6 +440,28 @@ void HikCameraClient::stopPreview()
         worker->stopPreview();
     }, Qt::QueuedConnection);
     emit connectionStatusChanged(false, QStringLiteral("实时预览已停止"));
+}
+
+void HikCameraClient::refreshPreviewParameters()
+{
+    if (m_shutdown || !m_worker) {
+        return;
+    }
+    HikCameraWorker *worker = m_worker;
+    QMetaObject::invokeMethod(worker, [worker]() {
+        worker->readPreviewParameters();
+    }, Qt::QueuedConnection);
+}
+
+void HikCameraClient::updatePreviewParameters(const HikCameraParameters &parameters)
+{
+    if (m_shutdown || !m_worker) {
+        return;
+    }
+    HikCameraWorker *worker = m_worker;
+    QMetaObject::invokeMethod(worker, [worker, parameters]() {
+        worker->updatePreviewParameters(parameters);
+    }, Qt::QueuedConnection);
 }
 
 void HikCameraClient::shutdown()

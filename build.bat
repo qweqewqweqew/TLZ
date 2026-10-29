@@ -81,11 +81,11 @@ if errorlevel 1 goto fail
 echo.
 echo [info] Configuring...
 "%CMAKE_EXE%" -G "Visual Studio 16 2019" -A x64 ^
-  -DCMAKE_PREFIX_PATH="D:/Qt/5.15.2/msvc2019_64;D:/opencv/build;C:/opt/ros/foxy/x64;D:/TLZ/Camera_Node/install/mz_interfaces" ^
+  -DCMAKE_PREFIX_PATH="D:/Qt/5.15.2/msvc2019_64;D:/opencv/build;C:/opt/ros/foxy/x64;%SRC:\=/%/.deps/install" ^
   -DQt5_DIR="D:/Qt/5.15.2/msvc2019_64/lib/cmake/Qt5" ^
   -DOpenCV_DIR="D:/opencv/build" ^
   -DMZ_ROS_PREFIX="C:/opt/ros/foxy/x64" ^
-  -DMZ_INTERFACES_PREFIX="D:/TLZ/Camera_Node/install/mz_interfaces" ^
+  -DMZ_INTERFACES_PREFIX="%SRC:\=/%/.deps/install" ^
   -DHIKVISION_HCNETSDK_ROOT="%SRC:\=/%/third_party/HCNetSDK" ^
   -DPYTHON_EXECUTABLE="C:/opt/ros/foxy/x64/python.exe" ^
   -DPython3_EXECUTABLE="C:/opt/ros/foxy/x64/python.exe" ^
@@ -196,6 +196,13 @@ del /f /q "%DEPLOY%\builtin_interfaces*.dll" "%DEPLOY%\rcl_interfaces*.dll" "%DE
 del /f /q "%DEPLOY%\rosgraph_msgs*.dll" "%DEPLOY%\statistics_msgs*.dll" "%DEPLOY%\std_msgs*.dll" >nul 2>nul
 del /f /q "%DEPLOY%\unique_identifier_msgs*.dll" "%DEPLOY%\action_msgs*.dll" "%DEPLOY%\foonathan_memory*.dll" >nul 2>nul
 del /f /q "%DEPLOY%\mz_interfaces*.dll" >nul 2>nul
+REM Use the workspace mz_interfaces runtime with the SICK parameter messages.
+copy /Y "%SRC%\.deps\install\bin\mz_interfaces__*.dll" "%DEPLOY%\" >nul
+if errorlevel 1 (
+  echo [error] Failed to copy local mz_interfaces runtime. Build .deps interfaces first.
+  goto fail
+)
+del /f /q "%DEPLOY%\mz_interfaces__python.dll" >nul 2>nul
 if exist "%DEPLOY%\share" rd /s /q "%DEPLOY%\share"
 
 echo.

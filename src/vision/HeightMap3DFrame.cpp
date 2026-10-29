@@ -277,7 +277,7 @@ void HeightMap3DFrame::Window::paintGL()
     }
 
     const bool light = Theme::current() == Theme::Id::Light;
-    const QColor backdrop(light ? QStringLiteral("#E4E9EF") : QStringLiteral("#000000"));
+    const QColor backdrop(Theme::kCanvasBg);
     const bool hasCloud = m_program && m_vertexBuffer.isCreated() && !m_vertices.isEmpty();
 
     auto drawCloud = [this]() {
@@ -329,7 +329,7 @@ void HeightMap3DFrame::Window::paintGL()
     painter.fillRect(viewRect(), backdrop);
     if (light) {
         const QRect area = viewRect().adjusted(1, 1, -2, -2);
-        painter.setPen(QPen(QColor(QStringLiteral("#D3DAE4")), 1));
+        painter.setPen(QPen(QColor(Theme::kDivider), 1));
         constexpr int gridSize = 32;
         for (int x = area.left() + gridSize; x < area.right(); x += gridSize) {
             painter.drawLine(x, area.top(), x, area.bottom());
@@ -338,7 +338,7 @@ void HeightMap3DFrame::Window::paintGL()
             painter.drawLine(area.left(), y, area.right(), y);
         }
     }
-    painter.setPen(QPen(light ? QColor(QStringLiteral("#C5CED9")) : QColor(QStringLiteral("#3A4456")), 1));
+    painter.setPen(QPen(QColor(Theme::kBorder), 1));
     painter.setBrush(Qt::NoBrush);
     painter.drawRect(viewRect().adjusted(0, 0, -1, -1));
 
@@ -353,10 +353,10 @@ void HeightMap3DFrame::Window::paintGL()
         QFont font = painter.font();
         font.setPixelSize(13);
         painter.setFont(font);
-        painter.setPen(light ? QColor(QStringLiteral("#64748B")) : QColor(QStringLiteral("#8B98A8")));
+        painter.setPen(QColor(Theme::kTextMuted));
         painter.drawText(viewRect().adjusted(12, 12, -12, -12),
                          Qt::AlignCenter | Qt::TextWordWrap,
-                         QStringLiteral("暂未选中粒子 / 暂无点云数据"));
+                         QStringLiteral("无点云"));
         return;
     }
 
@@ -711,10 +711,8 @@ HeightMap3DFrame::HeightMap3DFrame(QWidget *parent)
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setAutoFillBackground(true);
     Theme::watch(this, [this]() {
-        const bool light = Theme::current() == Theme::Id::Light;
         QPalette pal = palette();
-        pal.setColor(QPalette::Window,
-                     QColor(light ? QStringLiteral("#E4E9EF") : QStringLiteral("#000000")));
+        pal.setColor(QPalette::Window, QColor(Theme::kCanvasBg));
         setPalette(pal);
     });
 }

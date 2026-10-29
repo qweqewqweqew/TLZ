@@ -469,13 +469,8 @@ AuthResult AuthService::setSessionTimeoutMinutes(int minutes)
 
 QVector<UserRecord> AuthService::listUsers(QString *errorMessage) const
 {
+    // 用户列表用于登录前的只读展示；所有写操作仍分别由 requireAdmin 保护。
     QVector<UserRecord> users;
-    if (!can(Permission::ManageAccounts)) {
-        if (errorMessage) {
-            *errorMessage = QStringLiteral("需要管理员权限。");
-        }
-        return users;
-    }
     QSqlQuery query(database());
     if (!query.exec(QStringLiteral("SELECT %1 FROM UserAccount ORDER BY Username COLLATE NOCASE")
                         .arg(QLatin1String(kUserColumns)))) {

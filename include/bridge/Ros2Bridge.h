@@ -3,6 +3,7 @@
 
 #include "bridge/MillingPathVM.h"
 #include "bridge/PlcFeedbackVM.h"
+#include "bridge/SickCameraParametersVM.h"
 #include "vision/PointCloudFrame.h"
 
 #include <QImage>
@@ -45,6 +46,8 @@ public:
     void publishCoordinateOffset(double xMm, double yMm, double zMm);
     // 是否下发路径到 PLC（true=写 PLC，false=只发 milling/paths）
     void publishDispatchPathsToPlc(bool enabled);
+    // 写入 SICK 采集参数，实际结果由 sickCameraParameterResultReceived 返回。
+    void publishSickCameraParameters(const SickCameraParametersVM &parameters);
 
 signals:
     void infoMessage(const QString &message);
@@ -66,6 +69,10 @@ signals:
                               const QString &cameraId,
                               const QString &message);
     void cameraStatusDiagnosticsChanged(bool bridgeRunning, int publisherCount);
+    void sickCameraParametersReceived(const SickCameraParametersVM &parameters);
+    void sickCameraParameterResultReceived(bool success,
+                                           const QString &message,
+                                           const SickCameraParametersVM &parameters);
 
     // 打磨路径全量下发（后端 → 前端）。
     void millingPathsReceived(quint64 taskId,

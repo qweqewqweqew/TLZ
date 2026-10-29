@@ -38,6 +38,7 @@
 #include <QFileInfo>
 #include <QFrame>
 #include <QProcess>
+#include <QSizePolicy>
 #include <QStringList>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -416,7 +417,7 @@ void MainWindow::buildMainView()
 
     auto *root = new QWidget(this);
     auto *rootLayout = new QVBoxLayout(root);
-    rootLayout->setContentsMargins(10, 10, 10, 8);
+    rootLayout->setContentsMargins(8, 8, 8, 8);
     rootLayout->setSpacing(8);
     setCentralWidget(root);
 
@@ -445,7 +446,7 @@ void MainWindow::buildMainView()
     m_monitorPage = new QWidget(m_contentStack);
     auto *monitorLayout = new QVBoxLayout(m_monitorPage);
     monitorLayout->setContentsMargins(0, 0, 0, 0);
-    monitorLayout->setSpacing(10);
+    monitorLayout->setSpacing(8);
 
     m_kpiPanel = new KpiStripPanel(m_monitorPage);
     monitorLayout->addWidget(m_kpiPanel, 0);
@@ -455,34 +456,75 @@ void MainWindow::buildMainView()
     auto *middle = new QWidget(m_monitorPage);
     auto *middleLayout = new QHBoxLayout(middle);
     middleLayout->setContentsMargins(0, 0, 0, 0);
-    middleLayout->setSpacing(10);
+    middleLayout->setSpacing(8);
 
     m_imagePanel = new ImageDisplayPanel(middle);
-    // 上限贴近扫描图宽高比，避免卡片比画面宽、两侧留白。
-    m_imagePanel->setMinimumWidth(640);
-    m_imagePanel->setMaximumWidth(980);
+    m_imagePanel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     middleLayout->addWidget(m_imagePanel, 1);
 
+    // 左图与整个右侧 1:1。右侧内部也是 1:1。点云和实时画面上下各占一半，一样大。
     auto *rightColumn = new QWidget(middle);
-    rightColumn->setMinimumWidth(640);
-    auto *rightColumnLayout = new QVBoxLayout(rightColumn);
+    rightColumn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+    auto *rightColumnLayout = new QHBoxLayout(rightColumn);
     rightColumnLayout->setContentsMargins(0, 0, 0, 0);
-    rightColumnLayout->setSpacing(10);
-    m_particlePanel = new ParticleDetailPanel(rightColumn);
-    rightColumnLayout->addWidget(m_particlePanel, 8);
-    m_machinePanel = new MachineStatusPanel(rightColumn);
-    m_particlePanel->setSideContent(m_machinePanel->metricColumn());
-    rightColumnLayout->addWidget(m_machinePanel, 3);
-    connect(m_machinePanel, &MachineStatusPanel::startMillingRequested,
+    rightColumnLayout->setSpacing(8);
+
+    auto *visualColumn = new QWidget(rightColumn);
+    visualColumn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+    auto *visualLayout = new QVBoxLayout(visualColumn);
+    visualLayout->setContentsMargins(0, 0, 0, 0);
+    visualLayout->setSpacing(8);
+    m_particlePanel = new ParticleDetailPanel(visualColumn);
+    m_particlePanel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    m_particlePanel->setMinimumHeight(120);
+    visualLayout->addWidget(m_particlePanel, 1);
+    auto *livePanel = createPanel(QStringLiteral("实时画面"), nullptr, visualColumn);
+    livePanel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    livePanel->setMinimumHeight(120);
+    QWidget *liveView = m_imagePanel->detachLiveView();
+    if (liveView) {
+        liveView->setParent(livePanel);
+        liveView->setMinimumSize(0, 80);
+        liveView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        if (auto *liveLayout = qobject_cast<QVBoxLayout *>(livePanel->layout())) {
+            liveLayout->addWidget(liveView, 1);
+        }
+        // 从左侧堆叠页拆出来时控件是隐藏的，不 show 的话卡片里只剩标题。
+        liveView->show();
+    }
+    visualLayout->addWidget(livePanel, 1);
+    rightColumnLayout->addWidget(visualColumn, 1);
+
+    auto *infoColumn = new QWidget(rightColumn);
+    infoColumn->setMinimumWidth(0);
+    infoColumn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+    auto *infoLayout = new QVBoxLayout(infoColumn);
+    infoLayout->setContentsMargins(0, 0, 0, 0);
+    infoLayout->setSpacing(8);
+
+    m_machinePanel = new MachineStatusPanel(infoColumn);
+    auto *metricsPanel = createPanel(QStringLiteral("实时数据"), nullptr, infoColumn);
+    metricsPanel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    if (QWidget *metrics = m_machinePanel->metricColumn()) {
+        metrics->setParent(metricsPanel);
+        if (auto *metricsLayout = qobject_cast<QVBoxLayout *>(metricsPanel->layout())) {
+            metricsLayout->addWidget(metrics);
+        }
+    }
+    infoLayout->addWidget(metricsPanel, 0);
+
+    connect(m_navBar, &NavigationBar::millingStartRequested,
             this, &MainWindow::startDemoMilling);
-    connect(m_machinePanel, &MachineStatusPanel::pauseMillingRequested,
+    connect(m_navBar, &NavigationBar::millingPauseRequested,
             this, &MainWindow::pauseDemoMilling);
-    connect(m_machinePanel, &MachineStatusPanel::stopMillingRequested,
+    connect(m_navBar, &NavigationBar::millingStopRequested,
             this, &MainWindow::stopDemoMilling);
-    m_queuePanel = new PathQueuePanel(rightColumn);
-    m_queuePanel->setMinimumHeight(180);
+    m_queuePanel = new PathQueuePanel(infoColumn);
     m_dataStatisticsPanel = m_queuePanel->telemetry();
-    rightColumnLayout->addWidget(m_queuePanel, 3);
+    infoLayout->addWidget(m_queuePanel, 1);
+    m_machinePanel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    infoLayout->addWidget(m_machinePanel, 0);
+    rightColumnLayout->addWidget(infoColumn, 1);
     middleLayout->addWidget(rightColumn, 1);
     monitorLayout->addWidget(middle, 1);
     m_contentStack->addWidget(m_monitorPage);
@@ -544,6 +586,12 @@ void MainWindow::buildMainView()
                     m_settingsPage->setHikCameraStatus(connected, message);
                 }
             });
+    connect(m_hikCameraClient, &HikCameraClient::parametersUpdated, this,
+            [this](const HikCameraParameters &parameters) {
+                if (m_settingsPage) {
+                    m_settingsPage->setHikCameraParameters(parameters);
+                }
+            });
     connect(m_hikCameraClient, &HikCameraClient::infoMessage, this,
             [this](const QString &message) {
                 appendEventLog(QStringLiteral("INFO"), message);
@@ -560,6 +608,9 @@ void MainWindow::buildMainView()
     QTimer::singleShot(350, this, [this]() {
         ElaMessageBar::success(ElaMessageBarType::BottomRight, "界面初始化", "ElaWidgetTools 组件已接入。", 1800, this);
         appendEventLog("INFO", "界面初始化完成");
+        if (m_hikCameraClient && m_imagePanel && !m_shuttingDown) {
+            m_hikCameraClient->startPreview(m_imagePanel->liveVideoWindowId());
+        }
     });
 
     m_waveformTimer = new QTimer(this);
@@ -572,8 +623,6 @@ void MainWindow::buildMainView()
     m_demoPoseTimer = new QTimer(this);
     m_demoPoseTimer->setInterval(33);
     connect(m_demoPoseTimer, &QTimer::timeout, this, &MainWindow::onDemoPoseUpdate);
-
-    startRos2Bridge();
 
     // 历史查询页在首次进入时才创建（HistoryDialog 查库较重），占位由 showPage 处理。
     m_reportPage = new ReportPage(m_contentStack);
@@ -611,6 +660,23 @@ void MainWindow::buildMainView()
             m_imagePanel->setLiveCameraStatus(false, QStringLiteral("已从设备状态中断开预览"));
         }
     });
+    connect(m_settingsPage, &SettingsPage::hikCameraRefreshParametersRequested, this, [this]() {
+        if (m_hikCameraClient) {
+            m_hikCameraClient->refreshPreviewParameters();
+        }
+    });
+    connect(m_settingsPage, &SettingsPage::hikCameraParametersUpdateRequested, this,
+            [this](const HikCameraParameters &parameters) {
+                if (m_hikCameraClient) {
+                    m_hikCameraClient->updatePreviewParameters(parameters);
+                }
+            });
+    connect(m_settingsPage, &SettingsPage::sickCameraParametersUpdateRequested,
+            m_ros2Bridge, &Ros2Bridge::publishSickCameraParameters);
+    connect(m_ros2Bridge, &Ros2Bridge::sickCameraParametersReceived,
+            m_settingsPage, &SettingsPage::setSickCameraParameters);
+    connect(m_ros2Bridge, &Ros2Bridge::sickCameraParameterResultReceived,
+            m_settingsPage, &SettingsPage::setSickCameraParameterResult);
     connect(m_settingsPage, &SettingsPage::refreshCameraDiagnosticsRequested,
             m_ros2Bridge, &Ros2Bridge::refreshCameraStatusDiagnostics);
     m_settingsPage->setCameraTopicDiagnostics(m_ros2Bridge && m_ros2Bridge->isRunning(), -1);
@@ -626,6 +692,9 @@ void MainWindow::buildMainView()
     m_navBar->setCurrentPage(NavigationBar::Detection);
     m_contentStack->setCurrentWidget(m_monitorPage);
     refreshCalibrationStatus();
+
+    // 设置页先完成参数与状态信号连接，再启动 ROS，避免首次保留消息在界面创建前丢失。
+    startRos2Bridge();
 }
 
 void MainWindow::showPage(int page)
@@ -1651,6 +1720,9 @@ void MainWindow::setSimulationRunning(bool running)
     }
 
     m_simulationRunning = running;
+    if (m_navBar) {
+        m_navBar->setMillingRunning(running);
+    }
     if (running) {
         m_waveformTimer->start(100);
         m_simulationProgressTimer->start();

@@ -6,7 +6,9 @@
 #include "app/UiHelpers.h"
 #include "auth/AuthService.h"
 #include "ui/settings/AccountSettingsPage.h"
+#include "ui/settings/CalibrationPlaceholderPage.h"
 #include "ui/settings/NodeCommSettingsPage.h"
+#include "ui/settings/ProcessCraftPlaceholderPage.h"
 #include "ui/settings/ProcessSettingsPage.h"
 #include "ui/settings/SettingsSubPage.h"
 #include "ui/settings/VisionSettingsPage.h"
@@ -66,7 +68,7 @@ QString settingsPageStyleSheet()
              Theme::kTextPrimary,
              Theme::kBorder,
              Theme::kSelectionBg,
-             Theme::kSelectionText,
+             Theme::kFocusRing,
              Theme::kHoverBg);
 }
 
@@ -78,6 +80,7 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
                            QWidget *parent)
     : QWidget(parent)
 {
+    Q_UNUSED(bridge);
     Q_UNUSED(nodes);
     Q_UNUSED(eventLog);
     setObjectName(QStringLiteral("settingsPage"));
@@ -128,6 +131,7 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
     contentColumn->addWidget(m_stack, 1);
 
     auto *actionDivider = new QFrame(this);
+    actionDivider->setObjectName(QStringLiteral("settingsActionDivider"));
     actionDivider->setFixedHeight(1);
     actionDivider->setStyleSheet(QStringLiteral("background:%1;border:none;").arg(Theme::kDivider));
     contentColumn->addWidget(actionDivider);
@@ -157,7 +161,7 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
     contentColumn->addLayout(actionRow);
     root->addLayout(contentColumn, 1);
 
-    const auto addPage = [this](const QString &title, const QString &iconPath, SettingsSubPage *page) {
+    const auto addPage = [this](const QString &title, const QString &iconPath, QWidget *page) {
         auto *item = new QListWidgetItem(title, m_nav);
         item->setData(Qt::UserRole, iconPath);
         item->setTextAlignment(Qt::AlignCenter);
@@ -188,32 +192,33 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
         m_nav->setItemWidget(item, card);
 
         m_stack->addWidget(page);
-        connect(page, &SettingsSubPage::dirtyChanged, this, [this, page](bool) {
-            if (page == currentPage()) {
-                updateActions();
-            }
-        });
-        connect(page, &SettingsSubPage::editableChanged, this, [this, page]() {
-            if (page == currentPage()) {
-                updateActions();
-            }
-        });
-        connect(page, &SettingsSubPage::historyRequested, this, &SettingsPage::historyRequested);
-        connect(page, &SettingsSubPage::saveRequested, this, [this, page]() {
-            if (page == currentPage()) {
-                saveCurrent();
-            }
-        });
+        if (auto *subPage = qobject_cast<SettingsSubPage *>(page)) {
+            connect(subPage, &SettingsSubPage::dirtyChanged, this, [this, subPage](bool) {
+                if (subPage == currentPage()) {
+                    updateActions();
+                }
+            });
+            connect(subPage, &SettingsSubPage::editableChanged, this, [this, subPage]() {
+                if (subPage == currentPage()) {
+                    updateActions();
+                }
+            });
+            connect(subPage, &SettingsSubPage::historyRequested, this, &SettingsPage::historyRequested);
+            connect(subPage, &SettingsSubPage::saveRequested, this, [this, subPage]() {
+                if (subPage == currentPage()) {
+                    saveCurrent();
+                }
+            });
+        }
     };
-    addPage(QStringLiteral("设备与通信"), QStringLiteral(":/img/nav_settings.svg"),
-            new NodeCommSettingsPage(m_stack));
-    m_visionPage = new VisionSettingsPage(m_stack);
-    addPage(QStringLiteral("检测与标定"), QStringLiteral(":/img/nav_detect.svg"), m_visionPage);
+    m_nodeCommPage = new NodeCommSettingsPage(m_stack);
+    addPage(QStringLiteral("设备与通信"), QStringLiteral(":/img/nav_settings.svg"), m_nodeCommPage);
+    addPage(QStringLiteral("检测与标定"), QStringLiteral(":/img/nav_detect.svg"),
+            new CalibrationPlaceholderPage(m_stack));
     addPage(QStringLiteral("修磨工艺"), QStringLiteral(":/img/nav_process.svg"),
-            new ProcessSettingsPage(bridge, m_stack));
+            new ProcessCraftPlaceholderPage(m_stack));
     addPage(QStringLiteral("安全与权限"), QStringLiteral(":/img/nav_security.svg"),
             new AccountSettingsPage(m_stack));
-    m_nodeCommPage = qobject_cast<NodeCommSettingsPage *>(m_stack->widget(0));
     connect(m_nodeCommPage, &NodeCommSettingsPage::startNodesRequested,
             this, &SettingsPage::startNodesRequested);
     connect(m_nodeCommPage, &NodeCommSettingsPage::stopNodesRequested,
@@ -222,17 +227,12 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
             this, &SettingsPage::hikCameraConnectRequested);
     connect(m_nodeCommPage, &NodeCommSettingsPage::hikCameraDisconnectRequested,
             this, &SettingsPage::hikCameraDisconnectRequested);
-    connect(m_visionPage, &VisionSettingsPage::previewRequested,
-            this, &SettingsPage::hikCameraPreviewRequested);
-    connect(m_visionPage, &VisionSettingsPage::stopPreviewRequested,
-            this, &SettingsPage::hikCameraDisconnectRequested);
-    connect(m_visionPage, &VisionSettingsPage::refreshCameraDiagnosticsRequested,
-            this, &SettingsPage::refreshCameraDiagnosticsRequested);
-    connect(m_visionPage, &VisionSettingsPage::processSettingsRequested, this, [this]() {
-        if (m_nav) {
-            m_nav->setCurrentRow(2);
-        }
-    });
+    connect(m_nodeCommPage, &NodeCommSettingsPage::hikCameraRefreshParametersRequested,
+            this, &SettingsPage::hikCameraRefreshParametersRequested);
+    connect(m_nodeCommPage, &NodeCommSettingsPage::hikCameraParametersUpdateRequested,
+            this, &SettingsPage::hikCameraParametersUpdateRequested);
+    connect(m_nodeCommPage, &NodeCommSettingsPage::sickCameraParametersUpdateRequested,
+            this, &SettingsPage::sickCameraParametersUpdateRequested);
 
     connect(m_nav, &QListWidget::currentRowChanged, this, [this](int row) {
         if (m_updatingNav || row < 0 || row == m_currentRow) {
@@ -405,6 +405,29 @@ void SettingsPage::setHikCameraStatus(bool connected, const QString &detail)
     }
 }
 
+void SettingsPage::setHikCameraParameters(const HikCameraParameters &parameters)
+{
+    if (m_nodeCommPage) {
+        m_nodeCommPage->setHikCameraParameters(parameters);
+    }
+}
+
+void SettingsPage::setSickCameraParameters(const SickCameraParametersVM &parameters)
+{
+    if (m_nodeCommPage) {
+        m_nodeCommPage->setSickCameraParameters(parameters);
+    }
+}
+
+void SettingsPage::setSickCameraParameterResult(bool success,
+                                                const QString &message,
+                                                const SickCameraParametersVM &parameters)
+{
+    if (m_nodeCommPage) {
+        m_nodeCommPage->setSickCameraParameterResult(success, message, parameters);
+    }
+}
+
 void SettingsPage::setPlcDeviceStatus(const QString &status, const QString &detail)
 {
     if (m_nodeCommPage) {
@@ -465,16 +488,24 @@ void SettingsPage::updateActions()
     const bool hasFields = page && page->isEditable();
     const bool editable = hasFields && canWrite(page);
     const bool dirty = page && page->isDirty();
+    // 设备与通信页在相机卡片内提供应用/恢复默认，避免底部出现双层操作栏。
+    const bool showGlobalActions = hasFields && page != m_nodeCommPage;
+    if (auto *divider = findChild<QFrame *>(QStringLiteral("settingsActionDivider"))) {
+        divider->setVisible(showGlobalActions);
+    }
+    if (m_status) {
+        m_status->setVisible(showGlobalActions);
+    }
     if (m_saveButton) {
-        m_saveButton->setVisible(hasFields);
+        m_saveButton->setVisible(showGlobalActions);
         m_saveButton->setEnabled(editable && dirty);
     }
     if (m_cancelButton) {
-        m_cancelButton->setVisible(hasFields);
+        m_cancelButton->setVisible(showGlobalActions);
         m_cancelButton->setEnabled(editable && dirty);
     }
     if (m_defaultButton) {
-        m_defaultButton->setVisible(hasFields);
+        m_defaultButton->setVisible(showGlobalActions);
         m_defaultButton->setEnabled(editable);
     }
 }

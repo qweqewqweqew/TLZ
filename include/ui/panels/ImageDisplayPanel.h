@@ -31,6 +31,8 @@ public:
     void show2D();
     void setLiveCameraStatus(bool connected, const QString &message);
     WId liveVideoWindowId();
+    // 从左侧视图栈取出实时画面，放到右侧卡片。句柄仍由 liveVideoWindowId 提供。
+    QWidget *detachLiveView();
 
     // 设置/清除叠加显示的打磨路径（来自 MillingPaths msg）。
     void setMillingPaths(const QVector<MillingPathVM> &paths);
@@ -79,8 +81,6 @@ private:
     ElaPushButton *m_algorithmImageButton{nullptr};
     ElaPushButton *m_pointCloudButton{nullptr};
     QLabel *m_boardLabel{nullptr};
-    QLabel *m_footerLeft{nullptr};
-    QLabel *m_footerRight{nullptr};
 
     QImage m_rangeImage;      // Range，Mono16 → Grayscale8（拉伸后）
     QImage m_intensityImage;  // Intensity，Mono8

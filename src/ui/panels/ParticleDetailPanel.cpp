@@ -5,7 +5,6 @@
 #include "vision/HeightMap3DFrame.h"
 
 #include <QHBoxLayout>
-#include <QLabel>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -80,7 +79,7 @@ public:
     explicit ParticlePreview(QWidget *parent = nullptr)
         : QWidget(parent)
     {
-        setMinimumSize(280, 300);
+        setMinimumSize(180, 140);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
         auto *layout = new QVBoxLayout(this);
@@ -93,7 +92,7 @@ public:
 
     HeightMap3DFrame *cloud() const { return m_cloud; }
 
-    QSize sizeHint() const override { return QSize(320, 360); }
+    QSize sizeHint() const override { return QSize(240, 180); }
 
     void setFrame(const PointCloudFrame &frame)
     {
@@ -115,39 +114,30 @@ ParticleDetailPanel::ParticleDetailPanel(QWidget *parent)
     setFrameShape(QFrame::NoFrame);
     setStyleSheet(QStringLiteral("QFrame#particleStage { background: transparent; border: none; }"));
 
-    auto *body = new QHBoxLayout(this);
-    body->setContentsMargins(0, 0, 0, 0);
-    body->setSpacing(18);
+    auto *root = new QVBoxLayout(this);
+    root->setContentsMargins(0, 0, 0, 0);
+    auto *panel = createPanel(QStringLiteral("粒子三维点云"), nullptr, this);
+    root->addWidget(panel);
+    auto *panelLayout = qobject_cast<QVBoxLayout *>(panel->layout());
 
-    auto *cloudColumn = new QWidget(this);
-    cloudColumn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
-    auto *cloudLayout = new QVBoxLayout(cloudColumn);
-    cloudLayout->setContentsMargins(0, 0, 0, 0);
-    cloudLayout->setSpacing(8);
-    auto *cloudTitle = new QLabel(QStringLiteral("粒子三维点云"), cloudColumn);
-    Theme::bindStyle(cloudTitle, []() {
-        return QStringLiteral("color:%1;font-size:16px;font-weight:600;background:transparent;border:none;")
-            .arg(Theme::kTitle);
-    });
-    cloudLayout->addWidget(cloudTitle);
-    auto *preview = new ParticlePreview(cloudColumn);
+    auto *bodyHost = new QWidget(panel);
+    bodyHost->setObjectName(QStringLiteral("particleBody"));
+    auto *body = new QHBoxLayout(bodyHost);
+    body->setContentsMargins(0, 0, 0, 0);
+    body->setSpacing(8);
+
+    auto *preview = new ParticlePreview(bodyHost);
     m_preview = preview;
     m_heightMap = preview->cloud();
-    cloudLayout->addWidget(preview, 1);
-    body->addWidget(cloudColumn, 1);
+    body->addWidget(preview, 1);
+    panelLayout->addWidget(bodyHost, 1);
 
-    m_sideHost = new QWidget(this);
+    m_sideHost = new QWidget(bodyHost);
+    m_sideHost->hide();
     m_sideHost->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     m_sideLayout = new QVBoxLayout(m_sideHost);
     m_sideLayout->setContentsMargins(0, 0, 0, 0);
     m_sideLayout->setSpacing(8);
-    auto *dataTitle = new QLabel(QStringLiteral("实时数据"), m_sideHost);
-    Theme::bindStyle(dataTitle, []() {
-        return QStringLiteral("color:%1;font-size:16px;font-weight:600;background:transparent;border:none;")
-            .arg(Theme::kTitle);
-    });
-    m_sideLayout->addWidget(dataTitle, 0);
-    body->addWidget(m_sideHost, 1);
 
     clear();
     Theme::watch(this, [this]() { refresh(); });
@@ -222,6 +212,14 @@ void ParticleDetailPanel::setSideContent(QWidget *content)
     if (!content || !m_sideLayout || !m_sideHost) {
         return;
     }
+    if (QWidget *bodyHost = findChild<QWidget *>(QStringLiteral("particleBody"))) {
+        if (auto *body = qobject_cast<QHBoxLayout *>(bodyHost->layout())) {
+            if (body->indexOf(m_sideHost) < 0) {
+                body->addWidget(m_sideHost, 1);
+            }
+        }
+    }
+    m_sideHost->show();
     content->setParent(m_sideHost);
     content->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     m_sideLayout->addWidget(content, 1);

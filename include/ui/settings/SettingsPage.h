@@ -1,6 +1,9 @@
 #ifndef SETTINGSPAGE_H
 #define SETTINGSPAGE_H
 
+#include "camera/HikCameraParameters.h"
+#include "bridge/SickCameraParametersVM.h"
+
 #include <QWidget>
 #include <QtGui/qwindowdefs.h>
 
@@ -37,6 +40,11 @@ public slots:
     void setCameraNodeStatus(bool connected, const QString &detail);
     void setCameraTopicDiagnostics(bool bridgeRunning, int publisherCount);
     void setHikCameraStatus(bool connected, const QString &detail);
+    void setHikCameraParameters(const HikCameraParameters &parameters);
+    void setSickCameraParameters(const SickCameraParametersVM &parameters);
+    void setSickCameraParameterResult(bool success,
+                                      const QString &message,
+                                      const SickCameraParametersVM &parameters);
     void setPlcDeviceStatus(const QString &status, const QString &detail = QString());
 
 signals:
@@ -47,6 +55,9 @@ signals:
     void hikCameraConnectRequested();
     void hikCameraPreviewRequested(WId targetWindow);
     void hikCameraDisconnectRequested();
+    void hikCameraRefreshParametersRequested();
+    void hikCameraParametersUpdateRequested(const HikCameraParameters &parameters);
+    void sickCameraParametersUpdateRequested(const SickCameraParametersVM &parameters);
     void refreshCameraDiagnosticsRequested();
 
 private:

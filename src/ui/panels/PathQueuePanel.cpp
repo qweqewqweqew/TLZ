@@ -6,26 +6,20 @@
 #include "ui/panels/DataStatisticsPanel.h"
 
 #include <QEvent>
-#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QSizePolicy>
 #include <QStackedWidget>
 #include <QTableWidget>
 #include <QVBoxLayout>
-
-#include <cmath>
 
 namespace {
 
 enum Column {
     ColIndex = 0,
-    ColType,
     ColStart,
     ColEnd,
-    ColLength,
-    ColSpindle,
-    ColFeed,
     ColStatus,
     ColCount,
 };
@@ -35,28 +29,30 @@ enum Column {
 PathQueuePanel::PathQueuePanel(QWidget *parent)
     : QFrame(parent)
 {
-    auto *header = new QWidget(this);
-    auto *headerLayout = new QHBoxLayout(header);
+    setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+
+    auto *toggleRow = new QWidget(this);
+    auto *headerLayout = new QHBoxLayout(toggleRow);
     headerLayout->setContentsMargins(0, 0, 0, 0);
     headerLayout->setSpacing(6);
-    m_summary = new QLabel(header);
+    m_summary = new QLabel(toggleRow);
     m_summary->setStyleSheet(QStringLiteral("color:%1;font-size:12px;background:transparent;border:none;")
                                  .arg(Theme::kTextSecondary));
-    headerLayout->addWidget(m_summary);
-    headerLayout->addSpacing(10);
-    m_queueButton = new ElaPushButton(QStringLiteral("修磨队列"), header);
-    m_curveButton = new ElaPushButton(QStringLiteral("动态曲线"), header);
+    headerLayout->addWidget(m_summary, 1);
+    m_queueButton = new ElaPushButton(QStringLiteral("队列"), toggleRow);
+    m_curveButton = new ElaPushButton(QStringLiteral("曲线"), toggleRow);
     for (ElaPushButton *button : {m_queueButton, m_curveButton}) {
-        button->setFixedSize(84, 26);
+        button->setFixedSize(56, 26);
         button->setCheckable(true);
         headerLayout->addWidget(button);
     }
 
-    auto *panel = createPanel(QStringLiteral("粒子修磨队列"), header, this);
+    auto *panel = createPanel(QStringLiteral("修磨队列"), nullptr, this);
     auto *rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);
     rootLayout->addWidget(panel);
     auto *panelLayout = qobject_cast<QVBoxLayout *>(panel->layout());
+    panelLayout->addWidget(toggleRow);
 
     m_stack = new QStackedWidget(panel);
     panelLayout->addWidget(m_stack, 1);
@@ -64,12 +60,8 @@ PathQueuePanel::PathQueuePanel(QWidget *parent)
     m_table = new QTableWidget(0, ColCount, m_stack);
     m_table->setObjectName(QStringLiteral("queueTable"));
     m_table->setHorizontalHeaderLabels({QStringLiteral("编号"),
-                                        QStringLiteral("类型"),
-                                        QStringLiteral("起点 X,Y (mm)"),
-                                        QStringLiteral("终点 X,Y (mm)"),
-                                        QStringLiteral("长度 (mm)"),
-                                        QStringLiteral("主轴 (rpm)"),
-                                        QStringLiteral("进给 (mm/min)"),
+                                        QStringLiteral("起点"),
+                                        QStringLiteral("终点"),
                                         QStringLiteral("状态")});
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -78,13 +70,13 @@ PathQueuePanel::PathQueuePanel(QWidget *parent)
     m_table->setShowGrid(false);
     m_table->setFrameShape(QFrame::NoFrame);
     m_table->verticalHeader()->setVisible(false);
-    m_table->verticalHeader()->setDefaultSectionSize(30);
+    m_table->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+    m_table->verticalHeader()->setDefaultSectionSize(26);
     m_table->horizontalHeader()->setHighlightSections(false);
     m_table->horizontalHeader()->setDefaultAlignment(Qt::AlignCenter);
     m_table->horizontalHeader()->setTextElideMode(Qt::ElideNone);
     m_table->horizontalHeader()->setStretchLastSection(false);
-    m_table->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
-    m_table->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_table->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_table->viewport()->installEventFilter(this);
     layoutQueueColumns();
     m_table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
@@ -157,26 +149,12 @@ void PathQueuePanel::layoutQueueColumns()
     m_layingOutColumns = true;
 
     auto *header = m_table->horizontalHeader();
-    QFont font = header->font();
-    font.setBold(true);
-    const QFontMetrics metrics(font);
-    QVector<int> widths(ColCount);
-    int sum = 0;
-    for (int column = 0; column < ColCount; ++column) {
-        const QString text = m_table->model()->headerData(column, Qt::Horizontal).toString();
-        widths[column] = metrics.horizontalAdvance(text) + 28;
-        sum += widths[column];
-    }
-    const int available = m_table->viewport()->width();
-    if (available > sum) {
-        const int extra = available - sum;
-        widths[ColStart] += extra / 2;
-        widths[ColEnd] += extra - extra / 2;
-    }
-    header->setSectionResizeMode(QHeaderView::Fixed);
-    for (int column = 0; column < ColCount; ++column) {
-        m_table->setColumnWidth(column, widths[column]);
-    }
+    header->setSectionResizeMode(ColIndex, QHeaderView::Fixed);
+    header->setSectionResizeMode(ColStatus, QHeaderView::Fixed);
+    header->setSectionResizeMode(ColStart, QHeaderView::Stretch);
+    header->setSectionResizeMode(ColEnd, QHeaderView::Stretch);
+    m_table->setColumnWidth(ColIndex, 48);
+    m_table->setColumnWidth(ColStatus, 68);
     m_layingOutColumns = false;
 }
 
@@ -204,11 +182,11 @@ void PathQueuePanel::showQueue(bool queue)
 QString PathQueuePanel::metricPoint(int u, int v) const
 {
     if (!m_frame.hasMetricGeometry) {
-        return QStringLiteral("%1, %2 px").arg(u).arg(v);
+        return QStringLiteral("%1,%2").arg(u).arg(v);
     }
-    const double x = m_frame.xOffsetMm + u * m_frame.xScaleMm;
-    const double y = m_frame.yOffsetMm + v * m_frame.yScaleMm;
-    return QStringLiteral("%1, %2").arg(x, 0, 'f', 1).arg(y, 0, 'f', 1);
+    const int x = qRound(m_frame.xOffsetMm + u * m_frame.xScaleMm);
+    const int y = qRound(m_frame.yOffsetMm + v * m_frame.yScaleMm);
+    return QStringLiteral("%1,%2").arg(x).arg(y);
 }
 
 void PathQueuePanel::setMillingPaths(const QVector<MillingPathVM> &paths)
@@ -263,33 +241,20 @@ void PathQueuePanel::rebuildRows()
     m_updatingSelection = true;
     m_table->setRowCount(m_paths.size());
     int cut = 0;
-    const double scale = m_frame.hasMetricGeometry
-                             ? (std::abs(m_frame.xScaleMm) + std::abs(m_frame.yScaleMm)) / 2.0
-                             : 0.0;
     for (int i = 0; i < m_paths.size(); ++i) {
         const MillingPathVM &path = m_paths.at(i);
         if (path.doCut) {
             ++cut;
         }
-        const double lengthPx = std::hypot(double(path.uEnd - path.uStart), double(path.vEnd - path.vStart));
         const QStringList cells{
             QStringLiteral("%1").arg(i + 1, 2, 10, QLatin1Char('0')),
-            path.doCut ? QStringLiteral("切削") : QStringLiteral("空移"),
             metricPoint(path.uStart, path.vStart),
             metricPoint(path.uEnd, path.vEnd),
-            scale > 0.0 ? QString::number(lengthPx * scale, 'f', 1) : QStringLiteral("%1 px").arg(lengthPx, 0, 'f', 0),
-            path.rSpeed > 0.0f ? QString::number(double(path.rSpeed), 'f', 0) : QStringLiteral("--"),
-            QString::number(std::hypot(double(path.xSpeed), double(path.ySpeed)), 'f', 1),
             QString(),
         };
         for (int column = 0; column < cells.size(); ++column) {
             auto *item = new QTableWidgetItem(cells.at(column));
-            item->setTextAlignment(column == ColIndex || column == ColType || column == ColStatus
-                                       ? Qt::AlignCenter
-                                       : (Qt::AlignRight | Qt::AlignVCenter));
-            if (column == ColType) {
-                item->setForeground(QColor(path.doCut ? Theme::kStateWarning : Theme::kStateSuccess));
-            }
+            item->setTextAlignment(Qt::AlignCenter);
             m_table->setItem(i, column, item);
         }
     }

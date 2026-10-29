@@ -11,7 +11,7 @@
 
 namespace {
 
-constexpr int kTileHeight = 84;
+constexpr int kTileHeight = 76;
 constexpr int kIconBox = 40;
 
 } // namespace
@@ -21,7 +21,7 @@ KpiStripPanel::KpiStripPanel(QWidget *parent)
 {
     auto *layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(10);
+    layout->setSpacing(8);
     layout->addWidget(makeTile(QStringLiteral("检测粒子"), QStringLiteral("个"),
                                QStringLiteral(":/img/kpi_target.svg"), Theme::kAccent, m_detected));
     layout->addWidget(makeTile(QStringLiteral("待修磨"), QStringLiteral("个"),
@@ -55,8 +55,8 @@ QWidget *KpiStripPanel::makeTile(const QString &title, const QString &unit, cons
     tile->setObjectName(QStringLiteral("panel"));
     tile->setFixedHeight(kTileHeight);
     auto *layout = new QHBoxLayout(tile);
-    layout->setContentsMargins(18, 10, 18, 10);
-    layout->setSpacing(12);
+    layout->setContentsMargins(12, 8, 12, 8);
+    layout->setSpacing(8);
 
     auto *texts = new QVBoxLayout();
     texts->setContentsMargins(0, 0, 0, 0);

@@ -323,11 +323,12 @@ void AuthTest::onlyAdministratorManagesAccounts()
 
     QVERIFY(!m_auth->createUser(QStringLiteral("sneaky"), Role::Administrator,
                                 QStringLiteral("Sneaky2026")).ok);
-    QVERIFY(m_auth->listUsers().isEmpty());
+    QCOMPARE(m_auth->listUsers().size(), 2);
     QVERIFY(m_auth->recentAudit(10).isEmpty());
     QVERIFY(!m_auth->setSessionTimeoutMinutes(60).ok);
 
     m_auth->logout();
+    QCOMPARE(m_auth->listUsers().size(), 2);
     QVERIFY(!m_auth->createUser(QStringLiteral("sneaky"), Role::Operator,
                                 QStringLiteral("Sneaky2026")).ok);
 }

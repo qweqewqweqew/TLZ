@@ -6,6 +6,7 @@
 #include <QEvent>
 #include <QFontMetrics>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QPainter>
 #include <QPainterPath>
@@ -137,9 +138,30 @@ NavigationBar::NavigationBar(QWidget *parent)
     divider->setFixedHeight(1);
     layout->addWidget(divider);
     layout->addSpacing(4);
-    layout->addWidget(createThemeButton());
+
+    auto *millingRow = new QWidget(this);
+    auto *millingLayout = new QVBoxLayout(millingRow);
+    millingLayout->setContentsMargins(0, 0, 0, 0);
+    millingLayout->setSpacing(6);
+    m_startButton = new QPushButton(QStringLiteral("开始"), millingRow);
+    m_stopButton = new QPushButton(QStringLiteral("停止"), millingRow);
+    for (QPushButton *button : {m_startButton, m_stopButton}) {
+        button->setCursor(Qt::PointingHandCursor);
+        button->setFocusPolicy(Qt::NoFocus);
+        button->setFixedHeight(36);
+        millingLayout->addWidget(button, 1);
+    }
+    connect(m_startButton, &QPushButton::clicked, this, [this]() {
+        if (m_millingRunning) {
+            emit millingPauseRequested();
+        } else {
+            emit millingStartRequested();
+        }
+    });
+    connect(m_stopButton, &QPushButton::clicked, this, &NavigationBar::millingStopRequested);
+    layout->addWidget(millingRow);
     layout->addSpacing(4);
-    layout->addWidget(createUserBlock());
+    layout->addWidget(createThemeButton());
 
     setUserIdentity(QString(), Role::None);
     setCurrentPage(Detection);
@@ -160,53 +182,40 @@ QPushButton *NavigationBar::createThemeButton()
     return m_themeButton;
 }
 
-QWidget *NavigationBar::createUserBlock()
+void NavigationBar::setMillingRunning(bool running)
 {
-    m_userButton = new QPushButton(this);
-    m_userButton->setObjectName(QStringLiteral("navUser"));
-    m_userButton->setFixedHeight(56);
-    m_userButton->setCursor(Qt::PointingHandCursor);
-    m_userButton->setFocusPolicy(Qt::NoFocus);
-    m_userButton->setStyleSheet(QStringLiteral(
-                                    "QPushButton#navUser { background:transparent; border:1px solid transparent;"
-                                    "  border-radius:8px; text-align:left; }"
-                                    "QPushButton#navUser:hover { background:%1; border-color:%2; }"
-                                    "QPushButton#navUser:pressed { background:%3; }")
-                                    .arg(Theme::kHoverBg, Theme::kBorder, Theme::kPressedBg));
-
-    auto *layout = new QHBoxLayout(m_userButton);
-    layout->setContentsMargins(8, 0, 8, 0);
-    layout->setSpacing(10);
-
-    m_userAvatar = new QLabel(m_userButton);
-    m_userAvatar->setFixedSize(34, 34);
-    m_userAvatar->setAlignment(Qt::AlignCenter);
-    layout->addWidget(m_userAvatar);
-
-    auto *texts = new QVBoxLayout();
-    texts->setContentsMargins(0, 0, 0, 0);
-    texts->setSpacing(1);
-    m_userName = new QLabel(m_userButton);
-    m_userName->setStyleSheet(QStringLiteral("color:%1;font-size:14px;font-weight:600;background:transparent;border:none;")
-                                  .arg(Theme::kTextPrimary));
-    m_userRole = new QLabel(m_userButton);
-    texts->addStretch(1);
-    texts->addWidget(m_userName);
-    texts->addWidget(m_userRole);
-    texts->addStretch(1);
-    layout->addLayout(texts, 1);
-
-    for (QLabel *label : {m_userAvatar, m_userName, m_userRole}) {
-        label->setAttribute(Qt::WA_TransparentForMouseEvents);
-    }
-    connect(m_userButton, &QPushButton::clicked, this, [this]() {
-        emit userRequested(m_userButton->mapToGlobal(QPoint(m_userButton->width(), 0)));
-    });
-    return m_userButton;
+    m_millingRunning = running;
+    applyTheme();
 }
 
 void NavigationBar::applyTheme()
 {
+    const auto paintAction = [](QPushButton *button, const char *fill, const QString &text,
+                                const QString &iconPath) {
+        if (!button) {
+            return;
+        }
+        const QColor base(fill);
+        const int hue = base.hue();
+        const QColor textColor = (hue >= 25 && hue <= 70) ? QColor(0x1A, 0x1A, 0x1A) : QColor(Qt::white);
+        button->setText(text);
+        button->setIcon(QIcon(tintedIcon(iconPath, textColor, 16, button->devicePixelRatioF())));
+        button->setIconSize(QSize(16, 16));
+        button->setStyleSheet(QStringLiteral(
+                                   "QPushButton { background:%1; color:%2; border:none; border-radius:6px;"
+                                   " font-size:13px; font-weight:600; }"
+                                   "QPushButton:hover { background:%3; }"
+                                   "QPushButton:pressed { background:%4; }")
+                                   .arg(base.name(),
+                                        textColor.name(),
+                                        base.darker(110).name(),
+                                        base.darker(128).name()));
+    };
+    paintAction(m_startButton,
+                m_millingRunning ? Theme::kStateWarning : Theme::kStateSuccess,
+                m_millingRunning ? QStringLiteral("暂停") : QStringLiteral("开始"),
+                m_millingRunning ? QStringLiteral(":/img/pause.svg") : QStringLiteral(":/img/play.svg"));
+    paintAction(m_stopButton, Theme::kStateError, QStringLiteral("停止"), QStringLiteral(":/img/stop.svg"));
     if (m_themeButton) {
         const Theme::Id next = Theme::current() == Theme::Id::Dark ? Theme::Id::Light : Theme::Id::Dark;
         m_themeButton->setText(Theme::displayName(next));
