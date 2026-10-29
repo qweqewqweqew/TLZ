@@ -52,7 +52,7 @@ public:
     int currentPage() const { return m_current; }
     void setUserIdentity(const QString &username, Role role);
     void applyTheme();
-    // 修磨进行中时，开始按钮显示为暂停。
+    // 已向后端请求启动或恢复时，开始按钮显示为暂停。
     void setMillingRunning(bool running);
 
 signals:

@@ -1,6 +1,7 @@
 #ifndef ROS2BRIDGE_H
 #define ROS2BRIDGE_H
 
+#include "bridge/MillingCommand.h"
 #include "bridge/MillingPathVM.h"
 #include "bridge/PlcFeedbackVM.h"
 #include "bridge/SickCameraParametersVM.h"
@@ -48,6 +49,8 @@ public:
     void publishDispatchPathsToPlc(bool enabled);
     // 写入 SICK 采集参数，实际结果由 sickCameraParameterResultReceived 返回。
     void publishSickCameraParameters(const SickCameraParametersVM &parameters);
+    // 写入修磨启停。节点未运行时返回 false，不改本地状态。
+    bool publishMillingCommand(MillingCommand command, quint64 taskId);
 
 signals:
     void infoMessage(const QString &message);
@@ -91,6 +94,12 @@ signals:
 
     // PLC 反馈（后端 → 前端）：状态字、路径计数、故障码、当前位置/速度/主轴参数。
     void plcFeedbackReceived(const PlcFeedbackVM &feedback);
+
+    // 后端是否接受 milling/command。accepted 为 false 时 message 是拒绝原因。
+    void millingCommandResultReceived(quint8 command,
+                                      quint64 taskId,
+                                      bool accepted,
+                                      const QString &message);
 
 private:
     void handleBackendState(const std::string &state);

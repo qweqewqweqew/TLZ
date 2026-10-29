@@ -514,11 +514,11 @@ void MainWindow::buildMainView()
     infoLayout->addWidget(metricsPanel, 0);
 
     connect(m_navBar, &NavigationBar::millingStartRequested,
-            this, &MainWindow::startDemoMilling);
+            this, &MainWindow::requestMillingStart);
     connect(m_navBar, &NavigationBar::millingPauseRequested,
-            this, &MainWindow::pauseDemoMilling);
+            this, &MainWindow::requestMillingPause);
     connect(m_navBar, &NavigationBar::millingStopRequested,
-            this, &MainWindow::stopDemoMilling);
+            this, &MainWindow::requestMillingStop);
     m_queuePanel = new PathQueuePanel(infoColumn);
     m_dataStatisticsPanel = m_queuePanel->telemetry();
     infoLayout->addWidget(m_queuePanel, 1);
@@ -1065,6 +1065,8 @@ void MainWindow::startRos2Bridge()
     connect(m_ros2Bridge, &Ros2Bridge::errorMessage, this, [this](const QString &message) {
         appendEventLog("ERROR", message);
     });
+    connect(m_ros2Bridge, &Ros2Bridge::millingCommandResultReceived, this,
+            &MainWindow::applyMillingCommandResult);
     connect(m_ros2Bridge, &Ros2Bridge::scanResultReceived, this,
             [this](quint8 imageType,
                    quint64 frameId,
@@ -1174,6 +1176,13 @@ void MainWindow::startRos2Bridge()
                 m_activePathTotal = pathTotal;
                 m_activeCompletedPath = 0;
                 m_activeBoardGrade = particleBoardGrade.trimmed();
+                if (!m_debugFakeActive) {
+                    m_millingControlState = MillingControlState::Idle;
+                    m_lastMillingCommand = 0;
+                    if (m_navBar) {
+                        m_navBar->setMillingRunning(false);
+                    }
+                }
                 if (m_imagePanel) {
                     m_imagePanel->setMillingPaths(paths);
                     m_imagePanel->setAlgorithmImagePath(drawimagePath);
@@ -1670,6 +1679,13 @@ void MainWindow::applyMillingProgress(quint64 taskId,
 
     m_activeTaskFinished = true;
     m_activeBackendTaskId = 0;
+    if (!m_debugFakeActive) {
+        m_millingControlState = MillingControlState::Idle;
+        m_lastMillingCommand = 0;
+        if (m_navBar) {
+            m_navBar->setMillingRunning(false);
+        }
+    }
     if (m_machinePanel) {
         m_machinePanel->setTaskFinished(success);
     }
@@ -1843,6 +1859,129 @@ void MainWindow::onDemoPoseUpdate()
         m_demoPathT = 0.0;
         ++m_demoPathIndex;
     }
+}
+
+void MainWindow::requestMillingStart()
+{
+    if (m_debugFakeActive) {
+        startDemoMilling();
+        return;
+    }
+    const MillingCommand command = m_millingControlState == MillingControlState::Paused
+        ? MillingCommand::Resume
+        : MillingCommand::Start;
+    if (m_currentBackendTaskId == 0) {
+        appendEventLog(QStringLiteral("WARN"),
+                       QStringLiteral("没有当前修磨任务，未向后端发送%1")
+                           .arg(millingCommandLabel(command)));
+        return;
+    }
+    if (m_activePaths.isEmpty()) {
+        appendEventLog(QStringLiteral("WARN"),
+                       QStringLiteral("当前任务没有修磨路径，未向后端发送%1")
+                           .arg(millingCommandLabel(command)));
+        return;
+    }
+    if (!m_ros2Bridge
+        || !m_ros2Bridge->publishMillingCommand(command, m_currentBackendTaskId)) {
+        return;
+    }
+    m_millingControlStateBeforeCommand = m_millingControlState;
+    m_lastMillingCommand = static_cast<quint8>(command);
+    m_lastMillingCommandTaskId = m_currentBackendTaskId;
+    m_millingControlState = MillingControlState::Running;
+    if (m_navBar) {
+        m_navBar->setMillingRunning(true);
+    }
+}
+
+void MainWindow::requestMillingPause()
+{
+    if (m_debugFakeActive) {
+        pauseDemoMilling();
+        return;
+    }
+    if (m_currentBackendTaskId == 0) {
+        appendEventLog(QStringLiteral("WARN"),
+                       QStringLiteral("没有当前修磨任务，未向后端发送暂停"));
+        return;
+    }
+    if (!m_ros2Bridge
+        || !m_ros2Bridge->publishMillingCommand(MillingCommand::Pause, m_currentBackendTaskId)) {
+        return;
+    }
+    m_millingControlStateBeforeCommand = m_millingControlState;
+    m_lastMillingCommand = static_cast<quint8>(MillingCommand::Pause);
+    m_lastMillingCommandTaskId = m_currentBackendTaskId;
+    m_millingControlState = MillingControlState::Paused;
+    if (m_navBar) {
+        m_navBar->setMillingRunning(false);
+    }
+}
+
+void MainWindow::requestMillingStop()
+{
+    if (m_debugFakeActive) {
+        stopDemoMilling();
+        return;
+    }
+    if (m_currentBackendTaskId == 0) {
+        appendEventLog(QStringLiteral("WARN"),
+                       QStringLiteral("没有当前修磨任务，未向后端发送停止"));
+        return;
+    }
+    if (!m_ros2Bridge
+        || !m_ros2Bridge->publishMillingCommand(MillingCommand::Stop, m_currentBackendTaskId)) {
+        return;
+    }
+    m_millingControlStateBeforeCommand = m_millingControlState;
+    m_lastMillingCommand = static_cast<quint8>(MillingCommand::Stop);
+    m_lastMillingCommandTaskId = m_currentBackendTaskId;
+    m_millingControlState = MillingControlState::Idle;
+    if (m_navBar) {
+        m_navBar->setMillingRunning(false);
+    }
+}
+
+void MainWindow::applyMillingCommandResult(quint8 command,
+                                           quint64 taskId,
+                                           bool accepted,
+                                           const QString &message)
+{
+    MillingCommand parsed = MillingCommand::Start;
+    const bool known = command == static_cast<quint8>(MillingCommand::Start)
+        || command == static_cast<quint8>(MillingCommand::Pause)
+        || command == static_cast<quint8>(MillingCommand::Resume)
+        || command == static_cast<quint8>(MillingCommand::Stop);
+    if (known) {
+        parsed = static_cast<MillingCommand>(command);
+    }
+    const QString action = known ? millingCommandLabel(parsed) : QStringLiteral("未知指令");
+    if (command != m_lastMillingCommand || taskId != m_lastMillingCommandTaskId) {
+        appendEventLog(QStringLiteral("WARN"),
+                       QStringLiteral("收到过期的修磨%1结果，任务 #%2，已忽略")
+                           .arg(action)
+                           .arg(taskId));
+        return;
+    }
+    if (!accepted) {
+        m_millingControlState = m_millingControlStateBeforeCommand;
+        m_lastMillingCommand = 0;
+        if (m_navBar && !m_debugFakeActive) {
+            m_navBar->setMillingRunning(m_millingControlState == MillingControlState::Running);
+        }
+        QString text = QStringLiteral("后端拒绝修磨%1，任务 #%2").arg(action).arg(taskId);
+        if (!message.isEmpty()) {
+            text += QStringLiteral("：") + message;
+        }
+        appendEventLog(QStringLiteral("ERROR"), text);
+        return;
+    }
+    QString text = QStringLiteral("后端已接受修磨%1，任务 #%2").arg(action).arg(taskId);
+    if (!message.isEmpty()) {
+        text += QStringLiteral("：") + message;
+    }
+    appendEventLog(QStringLiteral("INFO"), text);
 }
 
 void MainWindow::startDemoMilling()

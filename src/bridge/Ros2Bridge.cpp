@@ -4,6 +4,8 @@
 #include "bridge/ShmImageReader.h"
 
 #include <mz_interfaces/msg/camera_status.hpp>
+#include <mz_interfaces/msg/milling_command.hpp>
+#include <mz_interfaces/msg/milling_command_result.hpp>
 #include <mz_interfaces/msg/milling_path.hpp>
 #include <mz_interfaces/msg/milling_paths.hpp>
 #include <mz_interfaces/msg/milling_progress.hpp>
@@ -44,6 +46,8 @@ constexpr char kBackendStateTopic[] = "backend_state";
 constexpr char kTeachRequestTopic[] = "teach_request";
 constexpr char kMillingPathsTopic[] = "milling/paths";
 constexpr char kMillingProgressTopic[] = "milling/progress";
+constexpr char kMillingCommandTopic[] = "milling/command";
+constexpr char kMillingCommandResultTopic[] = "milling/command_result";
 constexpr char kPlcFeedbackTopic[] = "plc/feedback";
 constexpr char kCoordinateOffsetTopic[] = "plc/coordinate_offset";
 constexpr char kDispatchPathsToPlcTopic[] = "plc/dispatch_paths_to_plc";
@@ -244,6 +248,8 @@ struct Ros2BridgeEntities final
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr teachRequest;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr coordinateOffset;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr dispatchPathsToPlc;
+    rclcpp::Publisher<mz_interfaces::msg::MillingCommand>::SharedPtr millingCommand;
+    rclcpp::Subscription<mz_interfaces::msg::MillingCommandResult>::SharedPtr millingCommandResult;
 
     bool pendingHasRange{false};
     bool pendingHasIntensity{false};
@@ -767,6 +773,21 @@ bool Ros2Bridge::start()
                 emit plcFeedbackReceived(vm);
             });
 
+        m_entities->millingCommandResult =
+            m_node->create_subscription<mz_interfaces::msg::MillingCommandResult>(
+                kMillingCommandResultTopic,
+                qos,
+                [this](const mz_interfaces::msg::MillingCommandResult::SharedPtr msg) {
+                    if (!msg) {
+                        return;
+                    }
+                    emit millingCommandResultReceived(
+                        msg->command,
+                        msg->task_id,
+                        msg->accepted,
+                        QString::fromStdString(msg->message));
+                });
+
         m_entities->teachRequest = m_node->create_publisher<std_msgs::msg::String>(
             kTeachRequestTopic, qos);
         m_entities->coordinateOffset = m_node->create_publisher<std_msgs::msg::String>(
@@ -777,6 +798,9 @@ bool Ros2Bridge::start()
             m_node->create_publisher<mz_interfaces::msg::SickCameraParameters>(
                 kSickSetParametersTopic,
                 rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+        m_entities->millingCommand = m_node->create_publisher<mz_interfaces::msg::MillingCommand>(
+            kMillingCommandTopic,
+            qos);
 
         m_executor = std::make_unique<rclcpp::executors::SingleThreadedExecutor>();
         m_executor->add_node(m_node);
@@ -790,7 +814,7 @@ bool Ros2Bridge::start()
             }
         });
 
-        emit infoMessage("ROS2 通信节点已启动，监听 camera/status / scan_range / scan_intensity / scan_geometry / backend_state / milling/paths / milling/progress / plc/feedback");
+        emit infoMessage("ROS2 通信节点已启动，监听 camera/status / scan_range / scan_intensity / scan_geometry / backend_state / milling/paths / milling/progress / milling/command_result / plc/feedback");
         return true;
     } catch (const std::exception &ex) {
         emit errorMessage(QString("ROS2 通信节点启动失败: %1").arg(QString::fromStdString(ex.what())));
@@ -1005,4 +1029,24 @@ void Ros2Bridge::publishSickCameraParameters(const SickCameraParametersVM &param
         .arg(parameters.exposureTimeUs)
         .arg(parameters.hdrMode)
         .arg(parameters.yResolutionMm));
+}
+
+bool Ros2Bridge::publishMillingCommand(MillingCommand command, quint64 taskId)
+{
+    if (!m_running || !m_entities || !m_entities->millingCommand) {
+        emit errorMessage(QStringLiteral("ROS2 节点未运行，无法发送修磨启停"));
+        return false;
+    }
+
+    mz_interfaces::msg::MillingCommand message;
+    message.command = static_cast<std::uint8_t>(command);
+    message.task_id = taskId;
+    m_entities->millingCommand->publish(message);
+    LOG("[修磨启停] 已发送 milling/command: command=%u task_id=%llu",
+        static_cast<unsigned>(message.command),
+        static_cast<unsigned long long>(taskId));
+    emit infoMessage(QStringLiteral("已发送修磨%1 (milling/command, task_id=%2)")
+                         .arg(millingCommandLabel(command))
+                         .arg(taskId));
+    return true;
 }

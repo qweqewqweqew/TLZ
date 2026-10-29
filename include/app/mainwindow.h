@@ -116,10 +116,17 @@ private slots:
     void onSimulationProgressUpdate();
     void onDemoPoseUpdate();
     void resetDemoPoseAnimation();
-    // Ctrl+T 演示模式下的打磨控制：开始/继续、暂停、停止并复位。
+    // 演示模式仍走本地动画。否则把启停发给后端 milling/command。
+    void requestMillingStart();
+    void requestMillingPause();
+    void requestMillingStop();
     void startDemoMilling();
     void pauseDemoMilling();
     void stopDemoMilling();
+    void applyMillingCommandResult(quint8 command,
+                                   quint64 taskId,
+                                   bool accepted,
+                                   const QString &message);
 
 private:
     struct PendingScanFrame
@@ -168,6 +175,15 @@ private:
     quint64 m_lastLoggedIgnoredProgressTaskId{0};
     float m_lastMillingProgress{-1.0f};
     bool m_activeTaskFinished{false};
+    enum class MillingControlState {
+        Idle,
+        Running,
+        Paused,
+    };
+    MillingControlState m_millingControlState{MillingControlState::Idle};
+    MillingControlState m_millingControlStateBeforeCommand{MillingControlState::Idle};
+    quint8 m_lastMillingCommand{0};
+    quint64 m_lastMillingCommandTaskId{0};
     QHash<quint64, PendingMillingProgress> m_pendingMillingProgress;
     QSet<quint64> m_pendingDatabaseTaskIds;
     QVector<PendingScanFrame> m_pendingDatabaseFrames;

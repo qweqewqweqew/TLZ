@@ -9,7 +9,7 @@ class QWidget;
 struct PlcFeedbackVM;
 
 // 「修磨实时状态」卡：PLC 状态、任务进度、主轴 / 进给 / 坐标实时值。
-// 启动 / 暂停 / 停止按钮已配色并带图标，控制指令仍等待后端接口。
+// 修磨启停在左侧导航，经 milling/command 发给后端。
 class MachineStatusPanel : public QFrame
 {
     Q_OBJECT
