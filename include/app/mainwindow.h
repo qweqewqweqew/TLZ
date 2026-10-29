@@ -175,13 +175,6 @@ private:
     quint64 m_lastLoggedIgnoredProgressTaskId{0};
     float m_lastMillingProgress{-1.0f};
     bool m_activeTaskFinished{false};
-    enum class MillingControlState {
-        Idle,
-        Running,
-        Paused,
-    };
-    MillingControlState m_millingControlState{MillingControlState::Idle};
-    MillingControlState m_millingControlStateBeforeCommand{MillingControlState::Idle};
     quint8 m_lastMillingCommand{0};
     quint64 m_lastMillingCommandTaskId{0};
     QHash<quint64, PendingMillingProgress> m_pendingMillingProgress;

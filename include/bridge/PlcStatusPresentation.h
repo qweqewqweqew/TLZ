@@ -58,4 +58,20 @@ inline PlcStatusPresentation plcStatusPresentation(quint16 statusWord,
     }
 }
 
+// 这些状态表示流程已经在进行，开始按钮应显示为暂停。空闲、暂停、完成仍显示开始。
+inline bool plcStatusShowsPauseButton(quint16 statusWord)
+{
+    switch (statusWord) {
+    case 4:  // 拍照完成
+    case 12: // 任务执行中
+    case 30: // 路径请求
+    case 40: // 拍照请求
+    case 50: // 换刀中
+    case 60: // 换刀完成
+        return true;
+    default:
+        return false;
+    }
+}
+
 #endif // PLCSTATUSPRESENTATION_H

@@ -52,7 +52,7 @@ public:
     int currentPage() const { return m_current; }
     void setUserIdentity(const QString &username, Role role);
     void applyTheme();
-    // 已向后端请求启动或恢复时，开始按钮显示为暂停。
+    // true 时开始按钮显示为暂停。真实模式由 PLC 状态驱动，演示模式由本地动画驱动。
     void setMillingRunning(bool running);
 
 signals:
