@@ -1,11 +1,36 @@
 #ifndef INSPECTIONREPOSITORY_H
 #define INSPECTIONREPOSITORY_H
 
+#include "bridge/MillingPathVM.h"
+
 #include <QDateTime>
 #include <QList>
 #include <QString>
 #include <QStringList>
 #include <QtGlobal>
+
+// 打磨是否正常结束。0 表示还没有结束结果。
+enum class ProcessOutcome {
+    None = 0,
+    Abnormal = 1,
+    Completed = 2
+};
+
+// 人工在历史记录里做的标记。只有打磨正常结束后才能标。
+enum class ManualReview {
+    None = 0,
+    Passed = 1,
+    Abnormal = 2
+};
+
+// 一条记录当前展示的状态。复核完成要等打磨后的第二次扫描，现在不会写入。
+enum class TaskStatus {
+    Unset = 0,
+    Abnormal = 1,
+    MillCompleted = 2,
+    ReviewCompleted = 3,
+    ManualPassed = 4
+};
 
 // 检测记录一行（历史查询列表用）
 struct InspectionRecordRow
@@ -24,8 +49,57 @@ struct InspectionRecordRow
     QString    remark;
     QString    plateNo;           // 用户填写的板号；空表示未编号
     QString    shift;             // 建记录时的当前班次；空表示当时未选班次
+    ProcessOutcome processOutcome = ProcessOutcome::None;
+    ManualReview manualReview = ManualReview::None;
+    bool       reviewCompleted = false; // 仅演示数据使用；真实记录保持 false
     QDateTime  createdAt;
 };
+
+inline TaskStatus taskStatusOf(const InspectionRecordRow &row)
+{
+    if (row.manualReview == ManualReview::Abnormal
+        || row.processOutcome == ProcessOutcome::Abnormal) {
+        return TaskStatus::Abnormal;
+    }
+    if (row.manualReview == ManualReview::Passed) {
+        return TaskStatus::ManualPassed;
+    }
+    if (row.reviewCompleted && row.processOutcome == ProcessOutcome::Completed) {
+        return TaskStatus::ReviewCompleted;
+    }
+    if (row.processOutcome == ProcessOutcome::Completed) {
+        return TaskStatus::MillCompleted;
+    }
+    return TaskStatus::Unset;
+}
+
+inline QString taskStatusText(TaskStatus status)
+{
+    switch (status) {
+    case TaskStatus::Abnormal:
+        return QStringLiteral("异常");
+    case TaskStatus::MillCompleted:
+        return QStringLiteral("修磨完成");
+    case TaskStatus::ReviewCompleted:
+        return QStringLiteral("复核完成");
+    case TaskStatus::ManualPassed:
+        return QStringLiteral("人工审核");
+    case TaskStatus::Unset:
+        break;
+    }
+    return QStringLiteral("未结束");
+}
+
+inline QString taskStatusDetail(const InspectionRecordRow &row)
+{
+    if (row.manualReview == ManualReview::Abnormal) {
+        return QStringLiteral("异常（人工审核）");
+    }
+    if (row.manualReview == ManualReview::Passed) {
+        return QStringLiteral("人工审核（通过）");
+    }
+    return taskStatusText(taskStatusOf(row));
+}
 
 // 单颗颗粒明细
 struct ParticleDetectionRow
@@ -134,6 +208,25 @@ public:
 
     // 把已经写入记录的班次名称改成新名称。历史行跟着改，避免汇总表对不上。
     static bool renameShift(const QString &from, const QString &to, QString *errorMessage = nullptr);
+
+    // 写入打磨结束结果。已有人工标记时不再改写；正常结束后不再被改成异常。
+    static bool setProcessOutcomeForTask(quint64 backendTaskId,
+                                         ProcessOutcome outcome,
+                                         QString *errorMessage = nullptr);
+
+    // 人工审核：通过或异常。只有打磨正常结束的记录可以标记，两种结果可以互相改。
+    static bool setManualReview(int inspectionRecordId,
+                                ManualReview review,
+                                QString *errorMessage = nullptr);
+
+    // 用这次任务的粒子轮廓结果替换 ParticleDetection。高度单位毫米。
+    static bool replaceParticlesForTask(quint64 backendTaskId,
+                                        const QVector<ParticleRegionVM> &particles,
+                                        QString *errorMessage = nullptr);
+
+    // 这些检测记录下已保存的粒子高度，单位毫米。
+    static QList<double> loadParticleHeights(const QList<int> &inspectionRecordIds,
+                                             QString *errorMessage = nullptr);
 
     // 保存一帧扫描映射（task_id + frame_id 唯一，重发时补全 HasRange/HasIntensity）。
     // task_id 对应的 InspectionRecord 不存在时会先自动创建。

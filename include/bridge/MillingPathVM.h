@@ -18,7 +18,22 @@ struct MillingPathVM
     bool doCut{false};
 };
 
+// 算法给出的一颗粒子。轮廓与扫描图像素坐标一致。
+struct ParticleRegionVM
+{
+    int index{0};
+    float height{0.0f};
+    int uMin{0};
+    int vMin{0};
+    int uMax{0};
+    int vMax{0};
+    QVector<int> contourU;
+    QVector<int> contourV;
+};
+
 Q_DECLARE_METATYPE(MillingPathVM)
 Q_DECLARE_METATYPE(QVector<MillingPathVM>)
+Q_DECLARE_METATYPE(ParticleRegionVM)
+Q_DECLARE_METATYPE(QVector<ParticleRegionVM>)
 
 #endif // MILLINGPATHVM_H

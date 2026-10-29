@@ -7,3 +7,5 @@ string particle_board_grade
 # 算法 JSON drawimage_path，任务级，原样转发给前端
 string drawimage_path
 MillingPath[] paths
+# 算法 JSON particles，每颗粒子的高度和像素轮廓
+ParticleRegion[] particles

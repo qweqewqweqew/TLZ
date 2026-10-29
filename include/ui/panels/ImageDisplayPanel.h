@@ -40,6 +40,8 @@ public:
     // 设置/清除叠加显示的打磨路径（来自 MillingPaths msg）。
     void setMillingPaths(const QVector<MillingPathVM> &paths);
     void clearMillingPaths();
+    void setParticleRegions(const QVector<ParticleRegionVM> &particles);
+    void setSelectedParticle(int particleIndex);
 
     // Forward PLC tool pose / path progress onto the 2D ImageViewFrame.
     void setToolPose(double xMm, double yMm, double zMm, bool valid,
@@ -68,6 +70,7 @@ signals:
     void livePreviewExpandRequested();
     // 2D 图上单击路径线：0-based。
     void millingPathClicked(int pathIndex);
+    void particleClicked(int particleIndex);
     // 用户离开板号输入框。空字符串表示未编号。
     void plateNumberEdited(const QString &plateNo);
 

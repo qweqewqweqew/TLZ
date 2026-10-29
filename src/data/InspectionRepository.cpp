@@ -155,6 +155,19 @@ void fillRecord(const QSqlQuery &query, InspectionRecordRow &row)
     row.remark = query.value(QStringLiteral("Remark")).toString();
     row.plateNo = query.value(QStringLiteral("PlateNo")).toString();
     row.shift = query.value(QStringLiteral("Shift")).toString();
+    const int processValue = query.value(QStringLiteral("ProcessOutcome")).toInt();
+    row.processOutcome = processValue == static_cast<int>(ProcessOutcome::Abnormal)
+                             ? ProcessOutcome::Abnormal
+                             : processValue == static_cast<int>(ProcessOutcome::Completed)
+                                   ? ProcessOutcome::Completed
+                                   : ProcessOutcome::None;
+    const int reviewValue = query.value(QStringLiteral("ManualReview")).toInt();
+    row.manualReview = reviewValue == static_cast<int>(ManualReview::Passed)
+                           ? ManualReview::Passed
+                           : reviewValue == static_cast<int>(ManualReview::Abnormal)
+                                 ? ManualReview::Abnormal
+                                 : ManualReview::None;
+    row.reviewCompleted = false;
     row.createdAt = query.value(QStringLiteral("CreatedAt")).toDateTime();
 }
 
@@ -186,7 +199,8 @@ QString buildRecentSql(const InspectionQuery &q,
     QString sql =
         "SELECT Id, BackendTaskId, RecipeName, ProcessStartAt, ProcessEndAt, "
         "       InspectStartAt, InspectEndAt, ParticleCount, ClearedCount, "
-        "       MaxParticleHeight, OverviewImagePath, Remark, PlateNo, Shift, CreatedAt "
+        "       MaxParticleHeight, OverviewImagePath, Remark, PlateNo, Shift, "
+        "       ProcessOutcome, ManualReview, CreatedAt "
         "FROM InspectionRecord ";
 
     QStringList clauses;
@@ -328,7 +342,8 @@ InspectionDetail InspectionRepository::loadDetail(int inspectionRecordId,
         QSqlQuery q(db);
         q.prepare("SELECT Id, BackendTaskId, RecipeName, ProcessStartAt, ProcessEndAt, "
                   "       InspectStartAt, InspectEndAt, ParticleCount, ClearedCount, "
-                  "       MaxParticleHeight, OverviewImagePath, Remark, PlateNo, Shift, CreatedAt "
+                  "       MaxParticleHeight, OverviewImagePath, Remark, PlateNo, Shift, "
+        "       ProcessOutcome, ManualReview, CreatedAt "
                   "FROM InspectionRecord WHERE Id = ?");
         q.addBindValue(inspectionRecordId);
         if (!q.exec()) {
@@ -544,6 +559,24 @@ bool InspectionRepository::ensureSchema(QString *errorMessage)
         }
     }
 
+    if (!columnExists(db, QStringLiteral("InspectionRecord"), QStringLiteral("ProcessOutcome"))) {
+        if (!execSql(db,
+                     QStringLiteral(
+                         "ALTER TABLE InspectionRecord ADD COLUMN ProcessOutcome INTEGER NOT NULL DEFAULT 0"),
+                     errorMessage)) {
+            return false;
+        }
+    }
+
+    if (!columnExists(db, QStringLiteral("InspectionRecord"), QStringLiteral("ManualReview"))) {
+        if (!execSql(db,
+                     QStringLiteral(
+                         "ALTER TABLE InspectionRecord ADD COLUMN ManualReview INTEGER NOT NULL DEFAULT 0"),
+                     errorMessage)) {
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -693,6 +726,88 @@ bool InspectionRepository::renameShift(const QString &from, const QString &to, Q
     return true;
 }
 
+bool InspectionRepository::replaceParticlesForTask(quint64 backendTaskId,
+                                                  const QVector<ParticleRegionVM> &particles,
+                                                  QString *errorMessage)
+{
+    const int recordId = ensureRecordForTask(backendTaskId, errorMessage);
+    if (recordId <= 0) {
+        return false;
+    }
+
+    QSqlDatabase db = Database::instance().handle();
+    QSqlQuery remove(db);
+    remove.prepare(QStringLiteral("DELETE FROM ParticleDetection WHERE InspectionRecordId = ?"));
+    remove.addBindValue(recordId);
+    if (!remove.exec()) {
+        reportError(errorMessage, QStringLiteral("清理粒子明细失败: %1").arg(takeError(remove)));
+        return false;
+    }
+
+    QSqlQuery insert(db);
+    insert.prepare(QStringLiteral(
+        "INSERT INTO ParticleDetection "
+        "(InspectionRecordId, ParticleIndex, PositionX, PositionY, PositionZ, Height) "
+        "VALUES (?, ?, ?, ?, 0, ?)"));
+    for (int i = 0; i < particles.size(); ++i) {
+        const ParticleRegionVM &particle = particles.at(i);
+        const double u = (particle.uMin + particle.uMax) * 0.5;
+        const double v = (particle.vMin + particle.vMax) * 0.5;
+        insert.bindValue(0, recordId);
+        insert.bindValue(1, particle.index >= 0 ? particle.index : i);
+        insert.bindValue(2, u);
+        insert.bindValue(3, v);
+        insert.bindValue(4, double(particle.height));
+        if (!insert.exec()) {
+            reportError(errorMessage, QStringLiteral("写入粒子明细失败: %1").arg(takeError(insert)));
+            return false;
+        }
+    }
+    return true;
+}
+
+QList<double> InspectionRepository::loadParticleHeights(const QList<int> &inspectionRecordIds,
+                                                        QString *errorMessage)
+{
+    QList<double> heights;
+    if (inspectionRecordIds.isEmpty()) {
+        return heights;
+    }
+    QSqlDatabase db = Database::instance().handle();
+    if (!db.isOpen()) {
+        reportError(errorMessage, QStringLiteral("数据库未连接"));
+        return heights;
+    }
+    if (!ensureSchema(errorMessage)) {
+        return heights;
+    }
+
+    for (int offset = 0; offset < inspectionRecordIds.size(); offset += 200) {
+        const int count = qMin(200, inspectionRecordIds.size() - offset);
+        QStringList marks;
+        marks.reserve(count);
+        for (int i = 0; i < count; ++i) {
+            marks << QStringLiteral("?");
+        }
+        QSqlQuery query(db);
+        query.prepare(QStringLiteral(
+                          "SELECT Height FROM ParticleDetection "
+                          "WHERE InspectionRecordId IN (%1) AND Height > 0")
+                          .arg(marks.join(QStringLiteral(","))));
+        for (int i = 0; i < count; ++i) {
+            query.addBindValue(inspectionRecordIds.at(offset + i));
+        }
+        if (!query.exec()) {
+            reportError(errorMessage, QStringLiteral("查询粒子高度失败: %1").arg(takeError(query)));
+            return heights;
+        }
+        while (query.next()) {
+            heights.append(query.value(0).toDouble());
+        }
+    }
+    return heights;
+}
+
 bool InspectionRepository::saveFrameForTask(quint64 backendTaskId,
                                             quint64 frameId,
                                             quint64 timestampNs,
@@ -784,6 +899,110 @@ bool InspectionRepository::saveFrameForTask(quint64 backendTaskId,
 
     if (!db.commit()) {
         reportError(errorMessage, QStringLiteral("提交事务失败: %1").arg(db.lastError().text()));
+        return false;
+    }
+    return true;
+}
+
+bool InspectionRepository::setProcessOutcomeForTask(quint64 backendTaskId,
+                                                    ProcessOutcome outcome,
+                                                    QString *errorMessage)
+{
+    if (outcome != ProcessOutcome::Abnormal && outcome != ProcessOutcome::Completed) {
+        reportError(errorMessage, QStringLiteral("打磨结果无效"));
+        return false;
+    }
+
+    const int recordId = ensureRecordForTask(backendTaskId, errorMessage);
+    if (recordId <= 0) {
+        return false;
+    }
+
+    QSqlDatabase db = Database::instance().handle();
+    QSqlQuery read(db);
+    read.prepare(QStringLiteral(
+        "SELECT ProcessOutcome, ManualReview FROM InspectionRecord WHERE Id = ?"));
+    read.addBindValue(recordId);
+    if (!read.exec()) {
+        reportError(errorMessage, QStringLiteral("查询打磨结果失败: %1").arg(takeError(read)));
+        return false;
+    }
+    if (!read.next()) {
+        reportError(errorMessage, QStringLiteral("找不到该检测记录"));
+        return false;
+    }
+
+    const int current = read.value(0).toInt();
+    const int manual = read.value(1).toInt();
+    if (manual == static_cast<int>(ManualReview::Passed)
+        || manual == static_cast<int>(ManualReview::Abnormal)) {
+        return true;
+    }
+    if (outcome == ProcessOutcome::Abnormal
+        && current == static_cast<int>(ProcessOutcome::Completed)) {
+        return true;
+    }
+    if (current == static_cast<int>(outcome)) {
+        return true;
+    }
+
+    QSqlQuery update(db);
+    update.prepare(QStringLiteral(
+        "UPDATE InspectionRecord SET ProcessOutcome = ?, UpdatedAt = datetime('now') WHERE Id = ?"));
+    update.addBindValue(static_cast<int>(outcome));
+    update.addBindValue(recordId);
+    if (!update.exec()) {
+        reportError(errorMessage, QStringLiteral("保存打磨结果失败: %1").arg(takeError(update)));
+        return false;
+    }
+    return true;
+}
+
+bool InspectionRepository::setManualReview(int inspectionRecordId,
+                                           ManualReview review,
+                                           QString *errorMessage)
+{
+    if (review != ManualReview::Passed && review != ManualReview::Abnormal) {
+        reportError(errorMessage, QStringLiteral("人工审核结果无效"));
+        return false;
+    }
+    if (inspectionRecordId <= 0) {
+        reportError(errorMessage, QStringLiteral("检测记录无效"));
+        return false;
+    }
+
+    QSqlDatabase db = Database::instance().handle();
+    if (!db.isOpen()) {
+        reportError(errorMessage, QStringLiteral("数据库未连接"));
+        return false;
+    }
+    if (!ensureSchema(errorMessage)) {
+        return false;
+    }
+
+    QSqlQuery read(db);
+    read.prepare(QStringLiteral("SELECT ProcessOutcome FROM InspectionRecord WHERE Id = ?"));
+    read.addBindValue(inspectionRecordId);
+    if (!read.exec()) {
+        reportError(errorMessage, QStringLiteral("查询打磨结果失败: %1").arg(takeError(read)));
+        return false;
+    }
+    if (!read.next()) {
+        reportError(errorMessage, QStringLiteral("找不到该检测记录"));
+        return false;
+    }
+    if (read.value(0).toInt() != static_cast<int>(ProcessOutcome::Completed)) {
+        reportError(errorMessage, QStringLiteral("只有打磨正常结束后才能人工审核"));
+        return false;
+    }
+
+    QSqlQuery update(db);
+    update.prepare(QStringLiteral(
+        "UPDATE InspectionRecord SET ManualReview = ?, UpdatedAt = datetime('now') WHERE Id = ?"));
+    update.addBindValue(static_cast<int>(review));
+    update.addBindValue(inspectionRecordId);
+    if (!update.exec()) {
+        reportError(errorMessage, QStringLiteral("保存人工审核失败: %1").arg(takeError(update)));
         return false;
     }
     return true;

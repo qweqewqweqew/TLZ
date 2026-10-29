@@ -12,6 +12,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPolygon>
 #include <QPen>
 #include <QPointF>
 #include <QLineF>
@@ -27,6 +28,27 @@
 #include <cstdint>
 
 namespace {
+
+bool pointInContour(int u, int v, const QVector<int> &xs, const QVector<int> &ys)
+{
+    bool inside = false;
+    const int count = xs.size();
+    for (int i = 0, j = count - 1; i < count; j = i++) {
+        const double yi = ys.at(i);
+        const double yj = ys.at(j);
+        const bool crosses = (yi > v) != (yj > v);
+        if (!crosses || yi == yj) {
+            continue;
+        }
+        const double xi = xs.at(i);
+        const double xj = xs.at(j);
+        const double x = (xj - xi) * (double(v) - yi) / (yj - yi) + xi;
+        if (u < x) {
+            inside = !inside;
+        }
+    }
+    return inside;
+}
 
 constexpr int kCutLineWidth = 2;
 constexpr int kMoveLineWidth = 1;
@@ -155,6 +177,77 @@ void ImageViewFrame::clearMillingPaths()
     m_tooltipPathIndex = -1;
     QToolTip::hideText();
     refreshDynamic();
+}
+
+void ImageViewFrame::setParticleRegions(const QVector<ParticleRegionVM> &particles)
+{
+    m_particles = particles;
+    m_selectedParticle = particles.isEmpty() ? -1 : 0;
+    refreshDynamic();
+}
+
+void ImageViewFrame::setSelectedParticle(int particleIndex)
+{
+    m_selectedParticle = particleIndex;
+    refreshDynamic();
+}
+
+int ImageViewFrame::hitTestParticle(const QPointF &widgetPos) const
+{
+    if (m_particles.isEmpty() || m_image.isNull()) {
+        return -1;
+    }
+    const QPoint pixel = mapWidgetToImage(widgetPos);
+    if (pixel.x() < 0 || pixel.y() < 0) {
+        return -1;
+    }
+    for (int i = m_particles.size() - 1; i >= 0; --i) {
+        const ParticleRegionVM &particle = m_particles.at(i);
+        if (pixel.x() < particle.uMin || pixel.x() > particle.uMax
+            || pixel.y() < particle.vMin || pixel.y() > particle.vMax) {
+            continue;
+        }
+        if (pointInContour(pixel.x(), pixel.y(), particle.contourU, particle.contourV)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void ImageViewFrame::drawParticleContours(QPainter &painter,
+                                          const QRectF &dstRect,
+                                          const QRect &clip) const
+{
+    if (m_particles.isEmpty() || dstRect.isEmpty() || m_image.isNull()) {
+        return;
+    }
+    painter.save();
+    painter.setClipRect(dstRect.intersected(QRectF(clip)));
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QTransform xform;
+    xform.translate(dstRect.left(), dstRect.top());
+    xform.scale(dstRect.width() / double(m_image.width()),
+                dstRect.height() / double(m_image.height()));
+    painter.setTransform(xform, true);
+    for (int i = 0; i < m_particles.size(); ++i) {
+        const ParticleRegionVM &particle = m_particles.at(i);
+        if (particle.contourU.size() < 3) {
+            continue;
+        }
+        QPolygon polygon;
+        polygon.reserve(particle.contourU.size());
+        for (int point = 0; point < particle.contourU.size(); ++point) {
+            polygon << QPoint(particle.contourU.at(point), particle.contourV.at(point));
+        }
+        QColor ink(i == m_selectedParticle ? QColor("#E74C3C") : QColor("#2F80ED"));
+        ink.setAlpha(i == m_selectedParticle ? 230 : 180);
+        QPen pen(ink, i == m_selectedParticle ? 2.4 : 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        pen.setCosmetic(true);
+        painter.setPen(pen);
+        painter.setBrush(Qt::NoBrush);
+        painter.drawPolygon(polygon);
+    }
+    painter.restore();
 }
 
 void ImageViewFrame::setMetricFrame(const PointCloudFrame &frame)
@@ -812,6 +905,7 @@ void ImageViewFrame::paintDynamic(QPainter &painter)
     m_lastImageSize = m_image.size();
 
     drawGrindPaths(painter, dstRect, area);
+    drawParticleContours(painter, dstRect, area);
 
     if (!m_paths.isEmpty()) {
         painter.save();
@@ -1198,6 +1292,13 @@ void ImageViewFrame::mouseReleaseEvent(QMouseEvent *event)
     }
 
     if (wasDrag) {
+        event->accept();
+        return;
+    }
+
+    const int particleIndex = hitTestParticle(event->pos());
+    if (particleIndex >= 0) {
+        emit particleClicked(particleIndex);
         event->accept();
         return;
     }

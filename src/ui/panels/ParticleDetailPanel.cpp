@@ -17,6 +17,54 @@ namespace {
 // TODO(粒子数据): 这是占位实现。算法侧已有粒子识别结果，但尚未通过 ROS topic 下发，
 // 目前只能用铣削路径的 u/v 包围盒近似粒子范围。算法数据接入后，把入参换成粒子 bbox，
 // 并同步替换 ImageViewFrame 里基于路径线的命中测试。详见 README「粒子信息与粒子三维点云」。
+PointCloudFrame cropParticleRegion(const PointCloudFrame &frame, const ParticleRegionVM &particle)
+{
+    if (!frame.hasFloatRange() || particle.contourU.size() < 3) {
+        return PointCloudFrame();
+    }
+    const int w = int(frame.width);
+    const int h = int(frame.height);
+    const int span = std::max(particle.uMax - particle.uMin, particle.vMax - particle.vMin);
+    const int margin = std::max(16, span / 2);
+    const int x0 = std::clamp(particle.uMin - margin, 0, std::max(0, w - 1));
+    const int x1 = std::clamp(particle.uMax + margin, 0, std::max(0, w - 1));
+    const int y0 = std::clamp(particle.vMin - margin, 0, std::max(0, h - 1));
+    const int y1 = std::clamp(particle.vMax + margin, 0, std::max(0, h - 1));
+    const int cw = x1 - x0 + 1;
+    const int ch = y1 - y0 + 1;
+    if (cw < 8 || ch < 8) {
+        return PointCloudFrame();
+    }
+
+    PointCloudFrame out;
+    out.frameId = frame.frameId;
+    out.taskId = frame.taskId;
+    out.timestampNs = frame.timestampNs;
+    out.width = quint32(cw);
+    out.height = quint32(ch);
+    out.rangePixelFormat = frame.rangePixelFormat;
+    out.intensityPixelFormat = frame.intensityPixelFormat;
+    out.hasMetricGeometry = frame.hasMetricGeometry;
+    out.xScaleMm = frame.xScaleMm;
+    out.yScaleMm = frame.yScaleMm;
+    out.missingValue = frame.missingValue;
+    out.encoderResolutionMm = frame.encoderResolutionMm;
+    out.xOffsetMm = frame.xOffsetMm + double(x0) * frame.xScaleMm;
+    out.yOffsetMm = frame.yOffsetMm + double(y0) * frame.yScaleMm;
+    if (!frame.encoderValues.isEmpty() && frame.encoderValues.size() == h) {
+        out.encoderValues = frame.encoderValues.mid(y0, ch);
+    }
+    out.rangeFloat32.resize(int(std::size_t(cw) * std::size_t(ch) * sizeof(float)));
+    const float *src = reinterpret_cast<const float *>(frame.rangeFloat32.constData());
+    float *dst = reinterpret_cast<float *>(out.rangeFloat32.data());
+    for (int row = 0; row < ch; ++row) {
+        std::memcpy(dst + std::size_t(row) * std::size_t(cw),
+                    src + std::size_t(y0 + row) * std::size_t(w) + std::size_t(x0),
+                    std::size_t(cw) * sizeof(float));
+    }
+    return out;
+}
+
 PointCloudFrame cropParticleCloud(const PointCloudFrame &frame, const MillingPathVM &path)
 {
     if (!frame.hasFloatRange()) {
@@ -155,8 +203,24 @@ void ParticleDetailPanel::setMillingPaths(const QVector<MillingPathVM> &paths)
 {
     m_paths = paths;
     m_selected = -1;
+    m_selectedParticle = -1;
     m_completed = 0;
     m_current = 0;
+    refreshParticleCloud();
+    refresh();
+}
+
+void ParticleDetailPanel::setParticleRegions(const QVector<ParticleRegionVM> &particles)
+{
+    m_particles = particles;
+    m_selectedParticle = particles.isEmpty() ? -1 : 0;
+    refreshParticleCloud();
+    refresh();
+}
+
+void ParticleDetailPanel::selectParticle(int particleIndex)
+{
+    m_selectedParticle = (particleIndex >= 0 && particleIndex < m_particles.size()) ? particleIndex : -1;
     refreshParticleCloud();
     refresh();
 }
@@ -164,7 +228,9 @@ void ParticleDetailPanel::setMillingPaths(const QVector<MillingPathVM> &paths)
 void ParticleDetailPanel::refreshParticleCloud()
 {
     PointCloudFrame particleFrame;
-    if (m_selected >= 0 && m_selected < m_paths.size()) {
+    if (m_selectedParticle >= 0 && m_selectedParticle < m_particles.size()) {
+        particleFrame = cropParticleRegion(m_frame, m_particles.at(m_selectedParticle));
+    } else if (m_selected >= 0 && m_selected < m_paths.size()) {
         particleFrame = cropParticleCloud(m_frame, m_paths[m_selected]);
     }
     if (auto *preview = static_cast<ParticlePreview *>(m_preview)) {
@@ -229,6 +295,8 @@ void ParticleDetailPanel::clear()
 {
     m_frame = PointCloudFrame();
     m_paths.clear();
+    m_particles.clear();
+    m_selectedParticle = -1;
     m_selected = -1;
     m_completed = 0;
     m_current = 0;

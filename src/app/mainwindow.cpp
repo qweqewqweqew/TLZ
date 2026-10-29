@@ -544,6 +544,10 @@ void MainWindow::buildMainView()
         m_particlePanel->selectPath(pathIndex);
         m_queuePanel->selectPath(pathIndex);
     });
+    connect(m_imagePanel, &ImageDisplayPanel::particleClicked, this, [this](int particleIndex) {
+        m_imagePanel->setSelectedParticle(particleIndex);
+        m_particlePanel->selectParticle(particleIndex);
+    });
     connect(m_queuePanel, &PathQueuePanel::pathSelected, this, [this](int pathIndex) {
         m_particlePanel->selectPath(pathIndex);
     });
@@ -1173,7 +1177,8 @@ void MainWindow::startRos2Bridge()
                    int maxParticleHeight,
                    const QString &particleBoardGrade,
                    const QString &drawimagePath,
-                   const QVector<MillingPathVM> &paths) {
+                   const QVector<MillingPathVM> &paths,
+                   const QVector<ParticleRegionVM> &particles) {
                 const quint64 previousTaskId = m_currentBackendTaskId;
                 m_currentBackendTaskId = taskId;
                 m_activeBackendTaskId = taskId;
@@ -1183,6 +1188,13 @@ void MainWindow::startRos2Bridge()
                 if (taskId != 0) {
                     persistTaskRecord(taskId);
                 }
+                if (!m_debugFakeActive && taskId != 0 && taskId != 9001 && !particles.isEmpty()) {
+                    QString error;
+                    if (!InspectionRepository::replaceParticlesForTask(taskId, particles, &error)) {
+                        appendEventLog(QStringLiteral("ERROR"),
+                                       QStringLiteral("保存粒子高度失败: %1").arg(error));
+                    }
+                }
                 m_activePaths = paths;
                 m_activePathTotal = pathTotal;
                 m_activeCompletedPath = 0;
@@ -1190,6 +1202,7 @@ void MainWindow::startRos2Bridge()
                 if (m_imagePanel) {
                     const QString typedPlate = m_imagePanel->plateNumber();
                     m_imagePanel->setMillingPaths(paths);
+                    m_imagePanel->setParticleRegions(particles);
                     m_imagePanel->setAlgorithmImagePath(drawimagePath);
                     m_imagePanel->setTaskId(taskId);
                     if (previousTaskId != taskId) {
@@ -1218,6 +1231,7 @@ void MainWindow::startRos2Bridge()
                 }
                 if (m_particlePanel) {
                     m_particlePanel->setMillingPaths(paths);
+                    m_particlePanel->setParticleRegions(particles);
                     m_particlePanel->setTaskInfo(maxParticleHeight, particleBoardGrade);
                 }
                 if (m_queuePanel) {
@@ -1446,7 +1460,8 @@ void MainWindow::toggleDemoMode()
                 /*maxParticleHeight*/ 5,
                 /*particleBoardGrade*/ QString(),
                 /*drawimagePath*/ QString(),
-                paths);
+                paths,
+                QVector<ParticleRegionVM>());
             emit m_ros2Bridge->millingProgressReceived(
                 9001, 0.0f, /*finished*/ false, /*success*/ false, QString());
 
@@ -1742,6 +1757,15 @@ void MainWindow::applyMillingProgress(quint64 taskId,
         text += QStringLiteral("：") + message;
     }
     appendEventLog(level, text);
+
+    if (!m_debugFakeActive && taskId != 9001) {
+        QString error;
+        const ProcessOutcome outcome = success ? ProcessOutcome::Completed : ProcessOutcome::Abnormal;
+        if (!InspectionRepository::setProcessOutcomeForTask(taskId, outcome, &error)) {
+            appendEventLog(QStringLiteral("ERROR"),
+                           QStringLiteral("保存打磨结果失败: %1").arg(error));
+        }
+    }
 }
 
 void MainWindow::toggleMaximized()
@@ -1965,6 +1989,13 @@ void MainWindow::applyMillingCommandResult(quint8 command,
         text += QStringLiteral("：") + message;
     }
     appendEventLog(accepted ? QStringLiteral("INFO") : QStringLiteral("ERROR"), text);
+    if (accepted && parsed == MillingCommand::Stop && taskId != 0 && !m_debugFakeActive) {
+        QString error;
+        if (!InspectionRepository::setProcessOutcomeForTask(taskId, ProcessOutcome::Abnormal, &error)) {
+            appendEventLog(QStringLiteral("ERROR"),
+                           QStringLiteral("保存打磨结果失败: %1").arg(error));
+        }
+    }
 }
 
 void MainWindow::startDemoMilling()

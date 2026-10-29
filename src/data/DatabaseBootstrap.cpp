@@ -98,6 +98,8 @@ bool ensureBaseSchema(QSqlDatabase &db, QString *errorMessage)
         " Remark TEXT NULL,"
         " PlateNo TEXT NOT NULL DEFAULT '',"
         " Shift TEXT NOT NULL DEFAULT '',"
+        " ProcessOutcome INTEGER NOT NULL DEFAULT 0,"
+        " ManualReview INTEGER NOT NULL DEFAULT 0,"
         " CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),"
         " UpdatedAt TEXT NOT NULL DEFAULT (datetime('now'))"
         ")",

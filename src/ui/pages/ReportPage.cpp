@@ -25,6 +25,7 @@
 #include <QSignalBlocker>
 #include <QStandardPaths>
 #include <QTableWidget>
+#include <QVector>
 #include <QTextDocument>
 #include <QVBoxLayout>
 
@@ -261,6 +262,29 @@ QList<InspectionRecordRow> makeDemoRows(int count, const QDate &from, const QDat
             row.maxParticleHeight = pattern % 4 == 0 ? 0.6 : pattern % 4 == 1 ? 1.8 : pattern % 4 == 2 ? 3.8 : 5.8;
         }
         row.remark = QStringLiteral("界面预览用演示数据");
+        row.processOutcome = ProcessOutcome::Completed;
+        row.manualReview = ManualReview::None;
+        row.reviewCompleted = false;
+        switch (pattern) {
+        case 0:
+        case 6:
+            row.processOutcome = ProcessOutcome::Abnormal;
+            break;
+        case 1:
+        case 11:
+            row.manualReview = ManualReview::Abnormal;
+            break;
+        case 3:
+        case 10:
+            row.reviewCompleted = true;
+            break;
+        case 4:
+        case 7:
+            row.manualReview = ManualReview::Passed;
+            break;
+        default:
+            break;
+        }
         const QStringList demoShifts = ShiftConfig::names();
         if (!demoShifts.isEmpty()) {
             row.shift = demoShifts.at(i % demoShifts.size());
@@ -557,9 +581,8 @@ QWidget *ReportPage::buildDailyTable()
     m_resultPlot = new QCustomPlot(resultPanel);
     m_resultPlot->setMinimumHeight(190);
     styleAxes(m_resultPlot);
-    const QList<QColor> resultColors{QColor(Theme::kStateSuccess), QColor(Theme::kStateWarning),
-                                     QColor(Theme::kStateError), QColor(Theme::kAccent),
-                                     QColor(Theme::kStateRunning)};
+    const QList<QColor> resultColors{QColor(Theme::kStateError), QColor(Theme::kStateSuccess),
+                                     QColor(Theme::kStateWarning), QColor(Theme::kAccent)};
     for (const QColor &color : resultColors) {
         auto *bars = new QCPBars(m_resultPlot->yAxis, m_resultPlot->xAxis);
         bars->setPen(Qt::NoPen);
@@ -853,13 +876,13 @@ void ReportPage::reload()
         stat.cleared += row.clearedCount;
         if (row.particleCount > 0) {
             ++stat.boardsWithParticles;
-            if (row.clearedCount >= row.particleCount) {
+            if (row.processOutcome == ProcessOutcome::Completed) {
                 ++stat.boardsCompleted;
             }
         }
         if (!row.shift.isEmpty()) {
             ++stat.shiftBoards[row.shift];
-            if (row.particleCount > 0 && row.clearedCount >= row.particleCount) {
+            if (row.particleCount > 0 && row.processOutcome == ProcessOutcome::Completed) {
                 ++stat.shiftCompleted[row.shift];
             }
         }
@@ -890,7 +913,7 @@ void ReportPage::updateKpis(const QList<InspectionRecordRow> &rows)
     for (const InspectionRecordRow &row : rows) {
         if (row.particleCount > 0) {
             ++particleBoards;
-            if (row.clearedCount >= row.particleCount) {
+            if (row.processOutcome == ProcessOutcome::Completed) {
                 ++completed;
             }
         }
@@ -958,11 +981,36 @@ void ReportPage::updateDailyChart(const QMap<QDate, DailyStat> &daily)
 
 void ReportPage::updateHeightChart(const QList<InspectionRecordRow> &rows)
 {
-    // 非演示模式不展示高度分片，按「≤ 1 mm 占 100%」显示完整圆环。
     if (!m_demoModeActive) {
-        m_heightPie->setPlaceholder(true);
-        m_heightCaption->setText(QStringLiteral("还没有每个粒子的高度，暂不按颗粒统计"));
-        m_lastHeightBuckets.clear();
+        QList<int> recordIds;
+        for (const InspectionRecordRow &row : rows) {
+            if (row.id > 0) {
+                recordIds.append(row.id);
+            }
+        }
+        const QList<double> heights = InspectionRepository::loadParticleHeights(recordIds, nullptr);
+        if (heights.isEmpty()) {
+            m_heightPie->setPlaceholder(true);
+            m_heightCaption->setText(QStringLiteral("还没有每个粒子的高度，暂不按颗粒统计"));
+            m_lastHeightBuckets.clear();
+            return;
+        }
+        QList<int> buckets{0, 0, 0, 0};
+        for (double height : heights) {
+            if (height < 1.0) {
+                ++buckets[0];
+            } else if (height < 3.0) {
+                ++buckets[1];
+            } else if (height < 5.0) {
+                ++buckets[2];
+            } else {
+                ++buckets[3];
+            }
+        }
+        m_heightPie->setPlaceholder(false);
+        m_heightPie->setValues({buckets[0], buckets[1], buckets[2], buckets[3]});
+        m_heightCaption->setText(QStringLiteral("%1 颗粒子 · 按每颗高度").arg(heights.size()));
+        m_lastHeightBuckets = buckets;
         return;
     }
     m_heightPie->setPlaceholder(false);
@@ -994,46 +1042,37 @@ void ReportPage::updateHeightChart(const QList<InspectionRecordRow> &rows)
 
 void ReportPage::updateResultChart(const QList<InspectionRecordRow> &rows)
 {
-    int completed = 0;
-    int review = 0;
     int abnormal = 0;
-    int partial = 0;
-    int clean = 0;
+    int completed = 0;
+    int reviewed = 0;
+    int manualPassed = 0;
     for (const InspectionRecordRow &row : rows) {
-        if (isDemoRow(row)) {
-            const int demoIndex = -row.id - 100000;
-            switch (demoIndex % 12) {
-            case 0:
-                ++review;
-                continue;
-            case 1:
-                ++abnormal;
-                continue;
-            default:
-                break;
-            }
-        }
-        if (row.particleCount <= 0) {
-            ++clean;
-        } else if (row.clearedCount >= row.particleCount) {
+        switch (taskStatusOf(row)) {
+        case TaskStatus::Abnormal:
+            ++abnormal;
+            break;
+        case TaskStatus::MillCompleted:
             ++completed;
-        } else {
-            ++partial;
+            break;
+        case TaskStatus::ReviewCompleted:
+            ++reviewed;
+            break;
+        case TaskStatus::ManualPassed:
+            ++manualPassed;
+            break;
+        case TaskStatus::Unset:
+            break;
         }
     }
-    const QVector<double> ticks{0, 1, 2, 3, 4};
-    const QVector<QString> labels{QStringLiteral("复测通过"), QStringLiteral("待复核"), QStringLiteral("异常"),
-                                 QStringLiteral("修磨中"), QStringLiteral("待修磨")};
-    // 状态字段尚未由后端提供；非 Ctrl+T 演示模式不展示推导/占位结果，保持空图表。
-    const QVector<double> values{m_demoModeActive ? double(completed) : 0.0,
-                                 m_demoModeActive ? double(review) : 0.0,
-                                 m_demoModeActive ? double(abnormal) : 0.0,
-                                 m_demoModeActive ? double(partial) : 0.0,
-                                 m_demoModeActive ? double(clean) : 0.0};
+    const QVector<double> ticks{0, 1, 2, 3};
+    const QVector<QString> labels{QStringLiteral("异常"), QStringLiteral("修磨完成"),
+                                 QStringLiteral("复核完成"), QStringLiteral("人工审核")};
+    const QVector<double> values{double(abnormal), double(completed), double(reviewed),
+                                 double(manualPassed)};
     QSharedPointer<QCPAxisTickerText> ticker(new QCPAxisTickerText);
     ticker->addTicks(ticks, labels);
     m_resultPlot->yAxis->setTicker(ticker);
-    m_resultPlot->yAxis->setRange(-0.6, 4.6);
+    m_resultPlot->yAxis->setRange(-0.6, 3.6);
     m_resultPlot->yAxis->setRangeReversed(true);
     for (int i = 0; i < m_resultCategoryBars.size() && i < values.size(); ++i) {
         m_resultCategoryBars.at(i)->setData(QVector<double>{ticks.at(i)},
@@ -1043,8 +1082,8 @@ void ReportPage::updateResultChart(const QList<InspectionRecordRow> &rows)
     m_resultPlot->xAxis->setRange(0, std::max(4.0, maxValue * 1.2));
     m_resultPlot->replot();
     m_resultCaption->setText(m_demoModeActive
-                                 ? QStringLiteral("按铜板计 · 演示状态已填充 · 共 %1 张").arg(rows.size())
-                                 : QStringLiteral("状态字段待后端 · 暂不展示状态分布"));
+                                 ? QStringLiteral("按记录计 · 演示状态已填充 · 共 %1 条").arg(rows.size())
+                                 : QStringLiteral("按记录计 · 未结束不计入 · 复核完成待第二次扫描"));
 }
 
 void ReportPage::updateDailyTable(const QMap<QDate, DailyStat> &daily)
@@ -1170,7 +1209,8 @@ void ReportPage::exportExcel()
                                     QStringLiteral("粒子数"),
                                     QStringLiteral("已清除"),
                                     QStringLiteral("最大高度 mm"),
-                                    QStringLiteral("配方")};
+                                    QStringLiteral("配方"),
+                                    QStringLiteral("任务状态")};
     for (int i = 0; i < recordHeaders.size(); ++i) {
         xlsx.write(1, i + 1, recordHeaders.at(i));
     }
@@ -1187,6 +1227,7 @@ void ReportPage::exportExcel()
         xlsx.write(excelRow, 5, row.clearedCount);
         xlsx.write(excelRow, 6, row.maxParticleHeight);
         xlsx.write(excelRow, 7, row.recipeName);
+        xlsx.write(excelRow, 8, taskStatusDetail(row));
         ++excelRow;
     }
 

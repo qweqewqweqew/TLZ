@@ -34,6 +34,7 @@
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTableWidgetItem>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <utility>
@@ -56,58 +57,32 @@ constexpr int kPageSize = 8;
 constexpr int kMainTableColumnWeights[kColumnCount] = { 16, 16, 6, 8, 12, 8, 10, 8 };
 constexpr int kMainTableColumnWeightTotal = 84;
 
-enum class BoardResult {
-    NoNeed,
-    Completed,
-    Running
-};
-
-BoardResult boardResult(const InspectionRecordRow &row)
+QColor resultColor(TaskStatus status)
 {
-    if (row.particleCount <= 0) {
-        return BoardResult::NoNeed;
-    }
-    if (row.clearedCount >= row.particleCount) {
-        return BoardResult::Completed;
-    }
-    return BoardResult::Running;
-}
-
-QString resultText(BoardResult result)
-{
-    switch (result) {
-    case BoardResult::Completed:
-        return QStringLiteral("已复核");
-    case BoardResult::Running:
-        return QStringLiteral("待复核");
-    case BoardResult::NoNeed:
-        return QStringLiteral("无需修磨");
-    }
-    return QString();
-}
-
-QColor resultColor(BoardResult result)
-{
-    switch (result) {
-    case BoardResult::Completed:
+    switch (status) {
+    case TaskStatus::MillCompleted:
+    case TaskStatus::ReviewCompleted:
+    case TaskStatus::ManualPassed:
         return QColor(Theme::kStateSuccess);
-    case BoardResult::Running:
+    case TaskStatus::Abnormal:
         return QColor(Theme::kStateError);
-    case BoardResult::NoNeed:
-        return QColor(Theme::kTextMuted);
+    case TaskStatus::Unset:
+        break;
     }
     return QColor(Theme::kTextMuted);
 }
 
-const char *resultBackground(BoardResult result)
+const char *resultBackground(TaskStatus status)
 {
-    switch (result) {
-    case BoardResult::Completed:
+    switch (status) {
+    case TaskStatus::MillCompleted:
+    case TaskStatus::ReviewCompleted:
+    case TaskStatus::ManualPassed:
         return Theme::kSuccessBg;
-    case BoardResult::Running:
+    case TaskStatus::Abnormal:
         return Theme::kErrorBg;
-    case BoardResult::NoNeed:
-        return Theme::kControlBg;
+    case TaskStatus::Unset:
+        break;
     }
     return Theme::kControlBg;
 }
@@ -128,19 +103,19 @@ QIcon downloadIcon()
     return QIcon(pixmap);
 }
 
-QWidget *makeResultPill(BoardResult result, QWidget *parent)
+QWidget *makeResultPill(TaskStatus status, QWidget *parent)
 {
     auto *host = new QWidget(parent);
     auto *layout = new QHBoxLayout(host);
     layout->setContentsMargins(4, 2, 4, 2);
     layout->addStretch(1);
-    auto *pill = new QLabel(resultText(result), host);
+    auto *pill = new QLabel(taskStatusText(status), host);
     pill->setAlignment(Qt::AlignCenter);
-    const QColor color = resultColor(result);
+    const QColor color = resultColor(status);
     pill->setStyleSheet(QStringLiteral(
         "color:%1;background:%2;border:1px solid %1;border-radius:4px;"
         "font-size:12px;font-weight:600;padding:1px 8px;")
-                            .arg(color.name(), QLatin1String(resultBackground(result))));
+                            .arg(color.name(), QLatin1String(resultBackground(status))));
     pill->setFixedHeight(22);
     layout->addWidget(pill);
     layout->addStretch(1);
@@ -508,9 +483,10 @@ QWidget *HistoryDialog::buildFilterBar()
     layout->addWidget(makeLabel(QStringLiteral("任务状态"), QStringLiteral("sectionHint")));
     m_statusCombo = new ElaComboBox(bar);
     m_statusCombo->addItems({QStringLiteral("全部"),
-                             QStringLiteral("已复核"),
-                             QStringLiteral("待复核"),
-                             QStringLiteral("无需修磨")});
+                             QStringLiteral("异常"),
+                             QStringLiteral("修磨完成"),
+                             QStringLiteral("复核完成"),
+                             QStringLiteral("人工审核")});
     m_statusCombo->setMinimumWidth(120);
     layout->addWidget(m_statusCombo);
 
@@ -539,7 +515,7 @@ QWidget *HistoryDialog::buildSummaryRow()
                                QString::fromLatin1(Theme::kStateWarning), m_tileParticles));
     layout->addWidget(makeTile(QStringLiteral("修磨完成率"), QStringLiteral("%"),
                                QString::fromLatin1(Theme::kStateSuccess), m_tileClearRate));
-    layout->addWidget(makeTile(QStringLiteral("待复核"), QStringLiteral("张"),
+    layout->addWidget(makeTile(QStringLiteral("异常"), QStringLiteral("张"),
                                QString::fromLatin1(Theme::kStateError), m_tilePending));
 
     return host;
@@ -841,14 +817,17 @@ void HistoryDialog::reloadRecords()
         if (!plate.isEmpty() && !plateNumber(row).contains(plate)) {
             continue;
         }
-        const BoardResult result = boardResult(row);
-        if (statusIndex == 1 && result != BoardResult::Completed) {
+        const TaskStatus status = taskStatusOf(row);
+        if (statusIndex == 1 && status != TaskStatus::Abnormal) {
             continue;
         }
-        if (statusIndex == 2 && result != BoardResult::Running) {
+        if (statusIndex == 2 && status != TaskStatus::MillCompleted) {
             continue;
         }
-        if (statusIndex == 3 && result != BoardResult::NoNeed) {
+        if (statusIndex == 3 && status != TaskStatus::ReviewCompleted) {
+            continue;
+        }
+        if (statusIndex == 4 && status != TaskStatus::ManualPassed) {
             continue;
         }
         m_filtered.append(row);
@@ -860,11 +839,12 @@ void HistoryDialog::reloadRecords()
         sum.totalParticles += row.particleCount;
         if (row.particleCount > 0) {
             ++sum.particleBoards;
-            if (boardResult(row) == BoardResult::Completed) {
+            if (row.processOutcome == ProcessOutcome::Completed) {
                 ++sum.completedBoards;
-            } else {
-                ++sum.pendingBoards;
             }
+        }
+        if (taskStatusOf(row) == TaskStatus::Abnormal) {
+            ++sum.pendingBoards;
         }
     }
     updateSummary(sum);
@@ -950,7 +930,7 @@ void HistoryDialog::exportCurrentList()
             << row.particleCount << ','
             << QString::number(row.maxParticleHeight, 'f', 3) << ','
             << row.clearedCount << ','
-            << resultText(boardResult(row)) << ','
+            << taskStatusDetail(row) << ','
             << row.recipeName << ','
             << QString(row.remark).replace(',', QStringLiteral("，")) << '\n';
     }
@@ -962,7 +942,7 @@ void HistoryDialog::populateTable(const QList<InspectionRecordRow> &rows)
     m_table->setRowCount(rows.size());
     for (int i = 0; i < rows.size(); ++i) {
         const InspectionRecordRow &row = rows.at(i);
-        const BoardResult result = boardResult(row);
+        const TaskStatus result = taskStatusOf(row);
         int col = 0;
         auto *idItem = new QTableWidgetItem(plateNumber(row));
         idItem->setData(Qt::UserRole, row.id);
@@ -1044,9 +1024,9 @@ void HistoryDialog::openReviewPage(int recordId)
     }
 
     QDialog dialog(this);
-    dialog.setWindowTitle(QStringLiteral("复核"));
+    dialog.setWindowTitle(QStringLiteral("查看"));
     dialog.setModal(true);
-    dialog.resize(720, 480);
+    dialog.resize(780, 560);
     dialog.setStyleSheet(QStringLiteral(
         "QDialog { background:%1; }"
         "QLabel#reviewTitle { color:%2; font-size:16px; font-weight:700; border:none; background:transparent; }"
@@ -1059,13 +1039,70 @@ void HistoryDialog::openReviewPage(int recordId)
     layout->setContentsMargins(20, 16, 20, 16);
     layout->setSpacing(8);
 
-    auto *title = new QLabel(QStringLiteral("复核"), &dialog);
+    auto *title = new QLabel(QStringLiteral("查看"), &dialog);
     title->setObjectName(QStringLiteral("reviewTitle"));
     auto *plateLabel = new QLabel(QStringLiteral("铜板编号：%1").arg(plate), &dialog);
     plateLabel->setObjectName(QStringLiteral("reviewPlate"));
 
-    auto *body = new QWidget(&dialog);
-    body->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    InspectionRecordRow record;
+    bool found = false;
+    for (const InspectionRecordRow &row : m_filtered) {
+        if (row.id == recordId) {
+            record = row;
+            found = true;
+            break;
+        }
+    }
+
+    auto *image = new QLabel(QStringLiteral("打磨后画面尚未保存"), &dialog);
+    image->setAlignment(Qt::AlignCenter);
+    image->setMinimumHeight(220);
+    image->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    image->setStyleSheet(QStringLiteral(
+        "QLabel { color:%1; background:%2; border:1px solid %3; border-radius:6px; font-size:14px; }")
+                             .arg(QLatin1String(Theme::kTextMuted),
+                                  QLatin1String(Theme::kCanvasBg),
+                                  QLatin1String(Theme::kBorder)));
+
+    const bool canReview = found && record.processOutcome == ProcessOutcome::Completed;
+    QString hintText = QStringLiteral("打磨还没有正常结束，暂时不能人工审核。");
+    if (!found) {
+        hintText = QStringLiteral("找不到这条检测记录。");
+    } else if (record.processOutcome == ProcessOutcome::Abnormal) {
+        hintText = QStringLiteral("这次打磨没有正常结束，已记为异常。人工审核要等打磨正常结束后再做。");
+    } else if (canReview && record.manualReview == ManualReview::Passed) {
+        hintText = QStringLiteral("当前为人工审核通过。可以改成异常。");
+    } else if (canReview && record.manualReview == ManualReview::Abnormal) {
+        hintText = QStringLiteral("当前为人工审核异常。可以改成通过。");
+    } else if (canReview) {
+        hintText = QStringLiteral("看打磨后的画面，标记通过或异常。复核用的第二次扫描尚未接入。");
+    }
+
+    auto *hint = new QLabel(hintText, &dialog);
+    hint->setWordWrap(true);
+    hint->setStyleSheet(QStringLiteral("color:%1; font-size:13px; border:none; background:transparent;")
+                            .arg(QLatin1String(Theme::kTextSecondary)));
+
+    const QString buttonStyle = QStringLiteral(
+        "QPushButton { color:%1; background:%2; border:1px solid %3; border-radius:6px; padding:0 16px; }"
+        "QPushButton:hover { background:%4; }"
+        "QPushButton:disabled { color:%5; background:%2; }")
+                                    .arg(QLatin1String(Theme::kTextPrimary),
+                                         QLatin1String(Theme::kPanelBg),
+                                         QLatin1String(Theme::kBorder),
+                                         QLatin1String(Theme::kHoverBg),
+                                         QLatin1String(Theme::kTextMuted));
+
+    auto *passButton = new QPushButton(QStringLiteral("通过"), &dialog);
+    auto *abnormalButton = new QPushButton(QStringLiteral("异常"), &dialog);
+    passButton->setCursor(Qt::PointingHandCursor);
+    abnormalButton->setCursor(Qt::PointingHandCursor);
+    passButton->setFixedHeight(32);
+    abnormalButton->setFixedHeight(32);
+    passButton->setEnabled(canReview);
+    abnormalButton->setEnabled(canReview);
+    passButton->setStyleSheet(buttonStyle);
+    abnormalButton->setStyleSheet(buttonStyle);
 
     auto *closeButton = new QPushButton(QStringLiteral("关闭"), &dialog);
     closeButton->setCursor(Qt::PointingHandCursor);
@@ -1078,16 +1115,41 @@ void HistoryDialog::openReviewPage(int recordId)
                                         QLatin1String(Theme::kBorder),
                                         QLatin1String(Theme::kHoverBg)));
     connect(closeButton, &QPushButton::clicked, &dialog, &QDialog::accept);
+    bool reviewChanged = false;
+    const auto markReview = [this, recordId, hint, &reviewChanged](ManualReview review) {
+        QString error;
+        if (!InspectionRepository::setManualReview(recordId, review, &error)) {
+            hint->setText(error.isEmpty() ? QStringLiteral("保存人工审核失败") : error);
+            return;
+        }
+        reviewChanged = true;
+        hint->setText(review == ManualReview::Passed
+                          ? QStringLiteral("已标记通过。这条记录计入人工审核。")
+                          : QStringLiteral("已标记异常。这条记录计入异常。"));
+    };
+    connect(passButton, &QPushButton::clicked, &dialog, [markReview]() {
+        markReview(ManualReview::Passed);
+    });
+    connect(abnormalButton, &QPushButton::clicked, &dialog, [markReview]() {
+        markReview(ManualReview::Abnormal);
+    });
 
     auto *footer = new QHBoxLayout();
+    footer->addWidget(passButton);
+    footer->addWidget(abnormalButton);
     footer->addStretch(1);
     footer->addWidget(closeButton);
 
     layout->addWidget(title);
     layout->addWidget(plateLabel);
-    layout->addWidget(body, 1);
+    layout->addWidget(image, 1);
+    layout->addWidget(hint);
     layout->addLayout(footer);
     dialog.exec();
+    if (reviewChanged) {
+        // 等「查看」按钮的点击处理返回后再刷新，避免刷新表格时删掉还在回调里的按钮。
+        QTimer::singleShot(0, this, [this]() { reloadRecords(); });
+    }
 }
 
 void HistoryDialog::onRowClicked(int row, int /*column*/)
@@ -1142,7 +1204,7 @@ QWidget *HistoryDialog::createDetailWidget(int recordId)
     }
 
     const InspectionRecordRow &head = detail.head;
-    const BoardResult result = boardResult(head);
+    const TaskStatus result = taskStatusOf(head);
     auto *title = makeLabel(QStringLiteral("铜板编号：%1").arg(plateNumber(head)), QStringLiteral("panelTitle"));
     hostLayout->addWidget(title);
 
@@ -1184,7 +1246,7 @@ QWidget *HistoryDialog::createDetailWidget(int recordId)
     addField(QStringLiteral("最大高度"), QStringLiteral("%1 mm").arg(head.maxParticleHeight, 0, 'f', 1));
     auto *statusName = makeLabel(QStringLiteral("任务状态"), QStringLiteral("sectionHint"));
     statusName->setFixedWidth(72);
-    auto *statusValue = makeLabel(resultText(result));
+    auto *statusValue = makeLabel(taskStatusDetail(head));
     statusValue->setStyleSheet(QStringLiteral("color:%1;font-size:13px;font-weight:700;border:none;background:transparent;")
                                    .arg(resultColor(result).name()));
     auto *statusRow = new QHBoxLayout();
@@ -1200,9 +1262,9 @@ QWidget *HistoryDialog::createDetailWidget(int recordId)
 
     hostLayout->addWidget(makeLabel(QStringLiteral("任务进度"), QStringLiteral("panelTitle")));
     auto *steps = new QHBoxLayout();
-    const QStringList stepNames{QStringLiteral("扫描完成"), QStringLiteral("任务下发"), resultText(result)};
+    const QStringList stepNames{QStringLiteral("扫描完成"), QStringLiteral("任务下发"), taskStatusText(result)};
     for (int i = 0; i < stepNames.size(); ++i) {
-        const bool current = (result == BoardResult::Running && i == stepNames.size() - 1);
+        const bool current = (result == TaskStatus::Unset && i == stepNames.size() - 1);
         auto *step = makeLabel(stepNames.at(i));
         step->setStyleSheet(QStringLiteral("color:%1;font-size:13px;font-weight:600;border:none;background:transparent;")
                                 .arg(current ? Theme::kAccent : Theme::kStateSuccess));
@@ -1251,7 +1313,7 @@ QWidget *HistoryDialog::createDetailWidget(int recordId)
     resultLayout->addWidget(makeLabel(QStringLiteral("配方：%1").arg(head.recipeName.isEmpty()
                                                                       ? QStringLiteral("--")
                                                                       : head.recipeName)));
-    resultLayout->addWidget(makeLabel(QStringLiteral("结果：%1").arg(resultText(result))));
+    resultLayout->addWidget(makeLabel(QStringLiteral("结果：%1").arg(taskStatusDetail(head))));
     resultLayout->addWidget(makeLabel(QStringLiteral("粒子 %1 个，已修磨 %2 个")
                                           .arg(head.particleCount)
                                           .arg(head.clearedCount)));

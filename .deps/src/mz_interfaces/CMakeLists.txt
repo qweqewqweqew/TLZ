@@ -22,6 +22,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 
   # 打磨路径 / 进度
   "msg/MillingPath.msg"
+  "msg/ParticleRegion.msg"
   "msg/MillingPaths.msg"
   "msg/MillingProgress.msg"
   "msg/MillingCommand.msg"

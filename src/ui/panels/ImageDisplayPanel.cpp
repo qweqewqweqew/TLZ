@@ -192,6 +192,8 @@ ImageDisplayPanel::ImageDisplayPanel(QWidget *parent)
     });
     connect(m_imageArea, &ImageViewFrame::millingPathClicked,
             this, &ImageDisplayPanel::millingPathClicked);
+    connect(m_imageArea, &ImageViewFrame::particleClicked,
+            this, &ImageDisplayPanel::particleClicked);
     connect(m_liveViewArea, &HikLiveView::expandRequested,
             this, &ImageDisplayPanel::livePreviewExpandRequested);
 
@@ -260,8 +262,23 @@ void ImageDisplayPanel::clearMillingPaths()
     m_paths.clear();
     if (m_imageArea) {
         m_imageArea->clearMillingPaths();
+        m_imageArea->setParticleRegions({});
     }
     refreshPathSummary();
+}
+
+void ImageDisplayPanel::setParticleRegions(const QVector<ParticleRegionVM> &particles)
+{
+    if (m_imageArea) {
+        m_imageArea->setParticleRegions(particles);
+    }
+}
+
+void ImageDisplayPanel::setSelectedParticle(int particleIndex)
+{
+    if (m_imageArea) {
+        m_imageArea->setSelectedParticle(particleIndex);
+    }
 }
 
 void ImageDisplayPanel::setToolPose(double xMm, double yMm, double zMm, bool valid,

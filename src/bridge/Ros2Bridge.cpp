@@ -281,6 +281,8 @@ Ros2Bridge::Ros2Bridge(QObject *parent)
     // 让 QVector<MillingPathVM> 能通过 Qt::QueuedConnection 跨线程传递（ROS 回调线程 → GUI 线程）
     qRegisterMetaType<MillingPathVM>("MillingPathVM");
     qRegisterMetaType<QVector<MillingPathVM>>("QVector<MillingPathVM>");
+    qRegisterMetaType<ParticleRegionVM>("ParticleRegionVM");
+    qRegisterMetaType<QVector<ParticleRegionVM>>("QVector<ParticleRegionVM>");
     qRegisterMetaType<PlcFeedbackVM>("PlcFeedbackVM");
     qRegisterMetaType<PointCloudFrame>("PointCloudFrame");
     qRegisterMetaType<SickCameraParametersVM>("SickCameraParametersVM");
@@ -685,9 +687,32 @@ bool Ros2Bridge::start()
                     QString::fromStdString(msg->particle_board_grade);
                 const QString drawimagePath =
                     QString::fromStdString(msg->drawimage_path);
+                QVector<ParticleRegionVM> particles;
+                particles.reserve(int(msg->particles.size()));
+                for (const auto &region : msg->particles) {
+                    if (region.contour_u.size() < 3 || region.contour_u.size() != region.contour_v.size()) {
+                        continue;
+                    }
+                    ParticleRegionVM particle;
+                    particle.index = int(region.particle_index);
+                    particle.height = region.height;
+                    particle.uMin = region.u_min;
+                    particle.vMin = region.v_min;
+                    particle.uMax = region.u_max;
+                    particle.vMax = region.v_max;
+                    particle.contourU.reserve(int(region.contour_u.size()));
+                    particle.contourV.reserve(int(region.contour_v.size()));
+                    for (int coordinate : region.contour_u) {
+                        particle.contourU.push_back(coordinate);
+                    }
+                    for (int coordinate : region.contour_v) {
+                        particle.contourV.push_back(coordinate);
+                    }
+                    particles.push_back(particle);
+                }
 
                 LOG("[ROS][MillingPaths] received topic=/%s task_id=%llu path_total=%u "
-                    "max_particle_height=%u grade=%s drawimage=%s paths=%d cut=%d move=%d",
+                    "max_particle_height=%u grade=%s drawimage=%s paths=%d particles=%d cut=%d move=%d",
                     kMillingPathsTopic,
                     static_cast<unsigned long long>(taskId),
                     static_cast<unsigned int>(msg->path_total),
@@ -695,6 +720,7 @@ bool Ros2Bridge::start()
                     qUtf8Printable(particleBoardGrade),
                     qUtf8Printable(drawimagePath),
                     paths.size(),
+                    particles.size(),
                     cutCount,
                     moveCount);
                 for (int i = 0; i < paths.size(); ++i) {
@@ -718,7 +744,8 @@ bool Ros2Bridge::start()
                     int(msg->max_particle_height),
                     particleBoardGrade,
                     drawimagePath,
-                    paths);
+                    paths,
+                    particles);
 
                 emit infoMessage(QString("收到打磨路径: task=%1 total=%2 maxH=%3 grade=%4 image=%5 size=%6 cut=%7 move=%8")
                                      .arg(taskId)

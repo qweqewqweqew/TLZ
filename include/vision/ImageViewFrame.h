@@ -41,6 +41,8 @@ public:
     // 叠加打磨路径。paths 为空即清空。
     void setMillingPaths(const QVector<MillingPathVM> &paths);
     void clearMillingPaths();
+    void setParticleRegions(const QVector<ParticleRegionVM> &particles);
+    void setSelectedParticle(int particleIndex);
     void setMetricFrame(const PointCloudFrame &frame);
 
     // PLC tool pose in millimetres (same metric space as hover readout).
@@ -60,6 +62,8 @@ public:
 signals:
     // 单击叠加路径线：0-based 下标。
     void millingPathClicked(int pathIndex);
+    // 单击粒子轮廓：0-based 下标。
+    void particleClicked(int particleIndex);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -83,6 +87,8 @@ private:
     QRect hoverBoxRect(const QPointF &anchor, const QString &text, const QRect &area) const;
     QString coordinateTextAt(int column, int row) const;
     int hitTestPath(const QPointF &widgetPos) const;
+    int hitTestParticle(const QPointF &widgetPos) const;
+    void drawParticleContours(QPainter &painter, const QRectF &dstRect, const QRect &clip) const;
     // 同上，但使用自定义命中半径（用于"点击粒子附近"的宽容命中）。
     int hitTestPathInRange(const QPointF &widgetPos, double thresholdPx) const;
     QString tooltipForPath(const MillingPathVM &path, int indexOneBased) const;
@@ -106,6 +112,8 @@ private:
     QString m_overlayText;
     PointCloudFrame m_metricFrame;
     QVector<MillingPathVM> m_paths;
+    QVector<ParticleRegionVM> m_particles;
+    int m_selectedParticle{-1};
     QPointF m_hoverWidgetPos;
     QString m_hoverCoordinateText;
     bool m_hoverCoordinateValid{false};

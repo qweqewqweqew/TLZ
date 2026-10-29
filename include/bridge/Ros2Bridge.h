@@ -83,7 +83,8 @@ signals:
                               int maxParticleHeight,
                               const QString &particleBoardGrade,
                               const QString &drawimagePath,
-                              const QVector<MillingPathVM> &paths);
+                              const QVector<MillingPathVM> &paths,
+                              const QVector<ParticleRegionVM> &particles);
 
     // 打磨进度（后端 → 前端）。progress 按 0~100 显示。
     void millingProgressReceived(quint64 taskId,
