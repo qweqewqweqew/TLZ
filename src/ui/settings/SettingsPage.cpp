@@ -12,6 +12,7 @@
 #include "ui/settings/ProcessSettingsPage.h"
 #include "ui/settings/SettingsSubPage.h"
 #include "ui/settings/VisionSettingsPage.h"
+#include "vision/PointCloudFrame.h"
 
 #include <QAbstractItemView>
 #include <QColor>
@@ -213,8 +214,9 @@ SettingsPage::SettingsPage(Ros2Bridge *bridge,
     };
     m_nodeCommPage = new NodeCommSettingsPage(m_stack);
     addPage(QStringLiteral("设备与通信"), QStringLiteral(":/img/nav_settings.svg"), m_nodeCommPage);
+    m_calibrationPage = new CalibrationPlaceholderPage(m_stack);
     addPage(QStringLiteral("检测与标定"), QStringLiteral(":/img/nav_detect.svg"),
-            new CalibrationPlaceholderPage(m_stack));
+            m_calibrationPage);
     addPage(QStringLiteral("修磨工艺"), QStringLiteral(":/img/nav_process.svg"),
             new ProcessCraftPlaceholderPage(m_stack));
     addPage(QStringLiteral("安全与权限"), QStringLiteral(":/img/nav_security.svg"),
@@ -425,6 +427,13 @@ void SettingsPage::setSickCameraParameterResult(bool success,
 {
     if (m_nodeCommPage) {
         m_nodeCommPage->setSickCameraParameterResult(success, message, parameters);
+    }
+}
+
+void SettingsPage::setScanFrame(const PointCloudFrame &frame)
+{
+    if (m_calibrationPage) {
+        m_calibrationPage->setScanFrame(frame);
     }
 }
 

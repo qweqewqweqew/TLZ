@@ -1125,6 +1125,9 @@ void MainWindow::startRos2Bridge()
                 if (m_particlePanel) {
                     m_particlePanel->setPointCloudFrame(frame);
                 }
+                if (m_settingsPage) {
+                    m_settingsPage->setScanFrame(frame);
+                }
                 if (m_queuePanel) {
                     m_queuePanel->setMetricFrame(frame);
                 }

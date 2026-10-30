@@ -7,7 +7,9 @@
 #include <QWidget>
 #include <QtGui/qwindowdefs.h>
 
+struct PointCloudFrame;
 class EventLogPanel;
+class CalibrationPlaceholderPage;
 class NodeCommSettingsPage;
 class NodeLifecycleMonitor;
 class QLabel;
@@ -46,6 +48,7 @@ public slots:
                                       const QString &message,
                                       const SickCameraParametersVM &parameters);
     void setPlcDeviceStatus(const QString &status, const QString &detail = QString());
+    void setScanFrame(const PointCloudFrame &frame);
 
 signals:
     void historyRequested();
@@ -80,6 +83,7 @@ private:
     QStackedWidget *m_stack{nullptr};
     NodeCommSettingsPage *m_nodeCommPage{nullptr};
     VisionSettingsPage *m_visionPage{nullptr};
+    CalibrationPlaceholderPage *m_calibrationPage{nullptr};
     QLabel *m_pageTitle{nullptr};
     QLabel *m_accessBanner{nullptr};
     QLabel *m_status{nullptr};

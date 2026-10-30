@@ -2,6 +2,7 @@
 
 #include "app/Theme.h"
 #include "ui/settings/CraftPlaceholder.h"
+#include "ui/settings/ProgramParamDisplay.h"
 
 #include <QAbstractSpinBox>
 #include <QButtonGroup>
@@ -218,6 +219,7 @@ ProcessCraftPlaceholderPage::ProcessCraftPlaceholderPage(QWidget *parent)
     tabs->addTab(standardPage, QStringLiteral("工艺规划"));
     tabs->addTab(createAlgorithmPage(tabs), QStringLiteral("算法"));
     tabs->setCurrentWidget(standardPage);
+    attachProgramParamDisplay(this);
     outer->addWidget(tabs);
 
     auto *content = new QWidget(scroll);

@@ -234,6 +234,8 @@ add_executable(MzTLZ
     include/ui/settings/ProcessSettingsPage.h
     src/ui/settings/CraftPlaceholder.cpp
     include/ui/settings/CraftPlaceholder.h
+    src/ui/settings/ProgramParamDisplay.cpp
+    include/ui/settings/ProgramParamDisplay.h
     src/ui/settings/CalibrationPlaceholderPage.cpp
     include/ui/settings/CalibrationPlaceholderPage.h
     src/ui/settings/ProcessCraftPlaceholderPage.cpp

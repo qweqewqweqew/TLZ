@@ -2,11 +2,16 @@
 
 #include "app/Theme.h"
 #include "ui/settings/CraftPlaceholder.h"
+#include "ui/settings/ProgramParamDisplay.h"
+#include "vision/HeightMap3DFrame.h"
+#include "vision/PointCloudFrame.h"
 
+#include <QAbstractItemView>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QTableWidget>
 #include <QTabWidget>
@@ -145,6 +150,7 @@ CalibrationPlaceholderPage::CalibrationPlaceholderPage(QWidget *parent)
     standardLayout->addWidget(scroll);
     tabs->insertTab(0, standardPage, QStringLiteral("标定与点云"));
     tabs->setCurrentWidget(standardPage);
+    attachProgramParamDisplay(this);
 
     auto *content = new QWidget(scroll);
     content->setObjectName(QStringLiteral("craftContent"));
@@ -164,16 +170,22 @@ CalibrationPlaceholderPage::CalibrationPlaceholderPage(QWidget *parent)
     pageLayout->addLayout(columns, 1);
 
     auto *particle = craftCard(content, left,
-                               QStringLiteral("粒子三维点云"),
-                               QStringLiteral("等待真实扫描与粒子区域数据 · 当前未采集"));
+                               QStringLiteral("扫描点云"),
+                               QStringLiteral("SICK 扫描点云 · 尚未收到扫图"));
+    if (QLayoutItem *cloudItem = particle->itemAt(1)) {
+        m_cloudStatus = qobject_cast<QLabel *>(cloudItem->widget());
+        if (m_cloudStatus) {
+            m_cloudStatus->setObjectName(QStringLiteral("craftCloudStatus"));
+        }
+    }
     auto *preview = new QFrame(content);
     preview->setObjectName(QStringLiteral("craftPreview"));
     preview->setMinimumHeight(240);
     auto *previewLayout = new QVBoxLayout(preview);
-    auto *previewText = new QLabel(QStringLiteral("3D 点云预览\n\n未采集"), preview);
-    previewText->setObjectName(QStringLiteral("craftPreviewText"));
-    previewText->setAlignment(Qt::AlignCenter);
-    previewLayout->addWidget(previewText);
+    previewLayout->setContentsMargins(0, 0, 0, 0);
+    m_cloud = new HeightMap3DFrame(preview);
+    m_cloud->setProperty("mztlzNoFade", true);
+    previewLayout->addWidget(m_cloud, 1);
     particle->addWidget(preview, 1);
     left->setStretch(0, 1);
 
@@ -181,10 +193,11 @@ CalibrationPlaceholderPage::CalibrationPlaceholderPage(QWidget *parent)
                              QStringLiteral("坐标点对与转换模式"),
                              QStringLiteral("图像坐标与机床坐标的对应关系"));
     auto *pointsEmpty = craftNote(content, QStringLiteral("未采集坐标点对"));
-    pointsEmpty->setObjectName(QStringLiteral("craftInfo"));
+    pointsEmpty->setObjectName(QStringLiteral("craftPointsStatus"));
     points->addWidget(pointsEmpty);
     auto *table = new QTableWidget(0, 8, content);
     table->setObjectName(QStringLiteral("craftTable"));
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table->setHorizontalHeaderLabels({QStringLiteral("#"), QStringLiteral("Img X"),
                                       QStringLiteral("Img Y"), QStringLiteral("Img Z"),
                                       QStringLiteral("Rob X"), QStringLiteral("Rob Y"),
@@ -196,15 +209,27 @@ CalibrationPlaceholderPage::CalibrationPlaceholderPage(QWidget *parent)
     table->setAlternatingRowColors(true);
     table->setMinimumHeight(200);
     points->addWidget(table, 1);
-    points->addWidget(craftNote(content, QStringLiteral("坐标转换模式 · 未设置")));
+    auto *modeNote = craftNote(content, QStringLiteral("坐标转换模式 · 未设置 · 算法没有这个字段"));
+    modeNote->setObjectName(QStringLiteral("craftTransformStatus"));
+    points->addWidget(modeNote);
     craftSegments(content, points,
                   {QStringLiteral("刚性"), QStringLiteral("等比缩放"),
                    QStringLiteral("非等比缩放"), QStringLiteral("仿射")}, -1);
+    const auto modeButtons = points->parentWidget()->findChildren<QPushButton *>(QStringLiteral("craftSeg"));
+    for (QPushButton *button : modeButtons) {
+        button->setEnabled(false);
+        button->setCursor(Qt::ArrowCursor);
+    }
     right->setStretch(0, 1);
 
     auto *matrixCard = craftCard(content, pageLayout,
                                  QStringLiteral("坐标转换矩阵"),
                                  QStringLiteral("未标定 · 尚无真实转换结果"));
+    if (QLayoutItem *matrixItem = matrixCard->itemAt(1)) {
+        if (auto *matrixStatus = qobject_cast<QLabel *>(matrixItem->widget())) {
+            matrixStatus->setObjectName(QStringLiteral("craftMatrixStatus"));
+        }
+    }
     auto *matrix = new QFrame(content);
     matrix->setObjectName(QStringLiteral("craftMatrix"));
     auto *grid = new QGridLayout(matrix);
@@ -220,5 +245,27 @@ CalibrationPlaceholderPage::CalibrationPlaceholderPage(QWidget *parent)
         }
     }
     matrixCard->addWidget(matrix);
-    pageLayout->addWidget(craftNote(content, QStringLiteral("数据状态 · 未接入真实采集与标定数据时仅显示空状态。")));
+    auto *calibrationState = craftNote(content, QStringLiteral("数据状态 · 未接入真实采集与标定数据时仅显示空状态。"));
+    calibrationState->setObjectName(QStringLiteral("craftCalibrationState"));
+    pageLayout->addWidget(calibrationState);
+}
+
+void CalibrationPlaceholderPage::setScanFrame(const PointCloudFrame &frame)
+{
+    if (!m_cloud) {
+        return;
+    }
+    if (!frame.hasFloatRange()) {
+        m_cloud->clearPointCloud();
+        if (m_cloudStatus) {
+            m_cloudStatus->setText(QStringLiteral("SICK 扫描点云 · 尚未收到扫图"));
+        }
+        return;
+    }
+    m_cloud->setPointCloudFrame(frame);
+    if (m_cloudStatus) {
+        m_cloudStatus->setText(QStringLiteral("只读 · SICK 扫描点云 · %1×%2")
+                                   .arg(frame.width)
+                                   .arg(frame.height));
+    }
 }
